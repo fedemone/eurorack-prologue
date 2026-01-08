@@ -1,47 +1,51 @@
-TOPTARGETS := all clean
+PLATFORMDIR = $(INSTALLDIR)/$(platform)
 
-OSCILLATORS := $(wildcard *mk)
+.PHONY: all clean install
 
-VERSION=1.6-1
+all: prologue minilogue-xd nutekt-digital drumlogue
+	@echo "Build complete"
 
-$(TOPTARGETS): $(OSCILLATORS) package_prologue package_minilogue-xd package_nutekt-digital
-$(OSCILLATORS):
-	@rm -fR .dep ./build
-	@PLATFORM=prologue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
-	@rm -fR .dep ./build
-	@PLATFORM=minilogue-xd VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
-	@rm -fR .dep ./build
-	@PLATFORM=nutekt-digital VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+prologue: 
+	@echo "Building prologue"
+	$(MAKE) -f prologue.mk clean
+	$(MAKE) -f prologue.mk
+	$(MAKE) -f prologue.mk install INSTALLDIR=$(INSTALLDIR)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS)
+drumlogue:
+	@echo "Building drumlogue"
+	$(MAKE) -f drumlogue.mk clean
+	$(MAKE) -f drumlogue.mk
+	$(MAKE) -f drumlogue.mk install INSTALLDIR=$(INSTALLDIR)
 
-PROLOGUE_PACKAGE=eurorack_prologue
-MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
-NUTEKT_DIGITAL_PACKAGE=eurorack_nutekt-digital
+minilogue-xd: 
+	@echo "Building minilogue-xd"
+	$(MAKE) -f minilogue-xd.mk clean
+	$(MAKE) -f minilogue-xd.mk
+	$(MAKE) -f minilogue-xd.mk install INSTALLDIR=$(INSTALLDIR)
+
+nutekt-digital: 
+	@echo "Building nutekt-digital"
+	$(MAKE) -f nutekt-digital.mk clean
+	$(MAKE) -f nutekt-digital.mk
+	$(MAKE) -f nutekt-digital.mk install INSTALLDIR=$(INSTALLDIR)
+
+clean: 
+	$(MAKE) -f prologue.mk clean
+	$(MAKE) -f minilogue-xd.mk clean
+	$(MAKE) -f nutekt-digital.mk clean
+	$(MAKE) -f drumlogue.mk clean
+
+install: all
+	@echo "Installing to: " $(INSTALLDIR)
 
 package_prologue:
-	@echo Packaging to ./${PROLOGUE_PACKAGE}.zip
-	@rm -f ${PROLOGUE_PACKAGE}.zip
-	@rm -rf ${PROLOGUE_PACKAGE}
-	@mkdir ${PROLOGUE_PACKAGE}
-	@cp -a *.prlgunit ${PROLOGUE_PACKAGE}/
-	@cp -a credits.txt ${PROLOGUE_PACKAGE}/
-	@zip -rq9m ${PROLOGUE_PACKAGE}.zip ${PROLOGUE_PACKAGE}/
+	cd $(INSTALLDIR)/prologue && zip -r ../../prologue.zip .
 
 package_minilogue-xd:
-	@echo Packaging to ./${MINILOGUE_XD_PACKAGE}.zip
-	@rm -f ${MINILOGUE_XD_PACKAGE}.zip
-	@rm -rf ${MINILOGUE_XD_PACKAGE}
-	@mkdir ${MINILOGUE_XD_PACKAGE}
-	@cp -a *.mnlgxdunit ${MINILOGUE_XD_PACKAGE}/
-	@cp -a credits.txt ${MINILOGUE_XD_PACKAGE}/
-	@zip -rq9m ${MINILOGUE_XD_PACKAGE}.zip ${MINILOGUE_XD_PACKAGE}/
+	cd $(INSTALLDIR)/minilogue-xd && zip -r ../../minilogue-xd.zip .
 
 package_nutekt-digital:
-	@echo Packaging to ./${NUTEKT_DIGITAL_PACKAGE}.zip
-	@rm -f ${NUTEKT_DIGITAL_PACKAGE}.zip
-	@rm -rf ${NUTEKT_DIGITAL_PACKAGE}
-	@mkdir ${NUTEKT_DIGITAL_PACKAGE}
-	@cp -a *.ntkdigunit ${NUTEKT_DIGITAL_PACKAGE}/
-	@cp -a credits.txt ${NUTEKT_DIGITAL_PACKAGE}/
-	@zip -rq9m ${NUTEKT_DIGITAL_PACKAGE}.zip ${NUTEKT_DIGITAL_PACKAGE}/
+	cd $(INSTALLDIR)/nutekt-digital && zip -r ../../nutekt-digital.zip .
+
+package_drumlogue:
+	cd $(INSTALLDIR)/drumlogue && zip -r ../../drumlogue.zip .
