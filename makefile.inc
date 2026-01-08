@@ -1,259 +1,181 @@
-# #############################################################################
-# Oscillator Makefile
-# #############################################################################
+# makefile.inc - Build configuration for eurorack-prologue
+# Supports multiple platforms: prologue, minilogue-xd, nts-1, drumlogue
 
-ifeq ($(OS),Windows_NT)
-ifeq ($(MSYSTEM), MSYS)
-    detected_OS := $(shell uname -s)
+# Platform detection and configuration
+ifeq ($(PLATFORM),prologue)
+    PLATFORM_NAME = prologue
+    PLATFORM_FLAGS = -DPLATFORM_PROLOGUE
+else ifeq ($(PLATFORM),minilogue-xd)
+    PLATFORM_NAME = minilogue-xd
+    PLATFORM_FLAGS = -DPLATFORM_MINILOGUEXD
+else ifeq ($(PLATFORM),nts-1)
+    PLATFORM_NAME = nts-1
+    PLATFORM_FLAGS = -DPLATFORM_NTS1
+else ifeq ($(PLATFORM),drumlogue)
+    PLATFORM_NAME = drumlogue
+    PLATFORM_FLAGS = -DPLATFORM_DRUMLOGUE
 else
-    detected_OS := Windows
+    $(error PLATFORM not specified. Set PLATFORM=prologue, minilogue-xd, nts-1, or drumlogue)
 endif
+
+# Common toolchain settings
+ifeq ($(PLATFORM),drumlogue)
+    # Drumlogue uses ARM Cortex-A7 architecture
+    PREFIX = arm-linux-gnueabihf-
+    CC = $(PREFIX)gcc
+    CXX = $(PREFIX)g++
+    LD = $(PREFIX)ld
+    AR = $(PREFIX)ar
+    AS = $(PREFIX)as
+    OBJCOPY = $(PREFIX)objcopy
+    OBJDUMP = $(PREFIX)objdump
+    SIZE = $(PREFIX)size
+    
+    # ARM Cortex-A7 specific flags
+    MCU = -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
+    ARCH_FLAGS = -march=armv7ve+simd
+    
+    # NEON vectorization support
+    NEON_FLAGS = -mfpu=neon-vfpv4 -ftree-vectorize -ffast-math
+    
+    # Shared library compilation flags
+    FPIC = -fPIC
+    SHARED_FLAGS = -shared -Wl,-soname,$(TARGET).so
+    
+    # Platform-specific optimization
+    OPT_FLAGS = -O3 -funroll-loops -fomit-frame-pointer
+    
 else
-    detected_OS := $(shell uname -s)
+    # Other platforms use ARM Cortex-M4
+    PREFIX = arm-none-eabi-
+    CC = $(PREFIX)gcc
+    CXX = $(PREFIX)g++
+    LD = $(PREFIX)ld
+    AR = $(PREFIX)ar
+    AS = $(PREFIX)as
+    OBJCOPY = $(PREFIX)objcopy
+    OBJDUMP = $(PREFIX)objdump
+    SIZE = $(PREFIX)size
+    
+    # ARM Cortex-M4 specific flags
+    MCU = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+    ARCH_FLAGS = -march=armv7e-m
+    
+    FPIC =
+    SHARED_FLAGS =
+    OPT_FLAGS = -O2 -flto
+    NEON_FLAGS =
 endif
 
-OSCILLATOR_UC := $(shell echo $(OSCILLATOR) | tr a-z A-Z)
-ifeq ($(MANIFEST),)
-	MANIFEST := manifest_$(OSCILLATOR).json
+# Common compiler flags
+CFLAGS = $(MCU) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
+CFLAGS += -Wall -Wextra -Werror
+CFLAGS += -ffunction-sections -fdata-sections
+CFLAGS += -std=c11
+
+CXXFLAGS = $(MCU) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
+CXXFLAGS += -Wall -Wextra -Werror
+CXXFLAGS += -ffunction-sections -fdata-sections
+CXXFLAGS += -fno-exceptions -fno-rtti
+CXXFLAGS += -std=c++11
+
+# Add NEON flags for drumlogue
+ifeq ($(PLATFORM),drumlogue)
+    CFLAGS += $(NEON_FLAGS)
+    CXXFLAGS += $(NEON_FLAGS)
 endif
 
-PLATFORMDIR = logue-sdk/platform/$(PLATFORM)
-PROJECTDIR = .
-TOOLSDIR = $(PLATFORMDIR)/../../tools
-EXTDIR = $(PLATFORMDIR)/../ext
-TEMPLATEDIR = $(PLATFORMDIR)/osc
+# Linker flags
+LDFLAGS = $(MCU) $(ARCH_FLAGS)
+LDFLAGS += -Wl,--gc-sections
 
-CMSISDIR = $(EXTDIR)/CMSIS/CMSIS
-
-# #############################################################################
-# configure archive utility
-# #############################################################################
-
-ZIP = /usr/bin/zip
-ZIP_ARGS = -r -m -q -9
-
-ifeq ($(OS),Windows_NT)
-ifneq ($(MSYSTEM), MSYS)
-  ZIP = $(TOOLSDIR)/zip/bin/zip
-endif
+ifeq ($(PLATFORM),drumlogue)
+    LDFLAGS += $(SHARED_FLAGS)
+    LDFLAGS += -Wl,--as-needed -Wl,-z,relro -Wl,-z,now
+else
+    LDFLAGS += -specs=nano.specs -specs=nosys.specs
 endif
 
-# #############################################################################
-# Set platform specific options
-# #############################################################################
+# Include paths
+INCLUDES = -I. -Iinc
 
-ifeq ($(PLATFORM), prologue)
-    PKGSUFFIX = prlgunit
-	BLOCKSIZE = 16
+# Library paths and libraries
+ifeq ($(PLATFORM),drumlogue)
+    LIBS = -lm -lpthread
+else
+    LIBS = -lm
 endif
 
-ifeq ($(PLATFORM), minilogue-xd)
-    PKGSUFFIX = mnlgxdunit
-	BLOCKSIZE = 16
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+
+# Target output
+ifeq ($(PLATFORM),drumlogue)
+    TARGET_EXT = .so
+else
+    TARGET_EXT = .bin
 endif
 
-ifeq ($(PLATFORM), nutekt-digital)
-    PKGSUFFIX = ntkdigunit
-	BLOCKSIZE = 64
+# Debug build configuration
+DEBUG ?= 0
+ifeq ($(DEBUG),1)
+    CFLAGS += -g -DDEBUG -O0
+    CXXFLAGS += -g -DDEBUG -O0
+    OPT_FLAGS = -O0
+else
+    CFLAGS += -DNDEBUG
+    CXXFLAGS += -DNDEBUG
 endif
 
-# #############################################################################
-# configure cross compilation
-# #############################################################################
+# Verbose output
+VERBOSE ?= 0
+ifeq ($(VERBOSE),1)
+    Q =
+else
+    Q = @
+endif
 
-MCU = cortex-m4
+# Color output
+NO_COLOR=\033[0m
+OK_COLOR=\033[32;01m
+ERROR_COLOR=\033[31;01m
+WARN_COLOR=\033[33;01m
 
-GCC_TARGET = arm-none-eabi-
-GCC_BIN_PATH = $(TOOLSDIR)/gcc/gcc-arm-none-eabi-5_4-2016q3/bin
+# Build messages
+define print_build
+	@echo "$(OK_COLOR)[BUILD]$(NO_COLOR) $(1)"
+endef
 
-CC   = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc
-CXXC = $(GCC_BIN_PATH)/$(GCC_TARGET)g++
-LD   = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc
-#LD  = $(GCC_BIN_PATH)/$(GCC_TARGET)g++
-CP   = $(GCC_BIN_PATH)/$(GCC_TARGET)objcopy
-AS   = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc -x assembler-with-cpp
-AR   = $(GCC_BIN_PATH)/$(GCC_TARGET)ar
-OD   = $(GCC_BIN_PATH)/$(GCC_TARGET)objdump
-SZ   = $(GCC_BIN_PATH)/$(GCC_TARGET)size
+define print_link
+	@echo "$(OK_COLOR)[LINK]$(NO_COLOR) $(1)"
+endef
 
-HEX  = $(CP) -O ihex
-BIN  = $(CP) -O binary
+define print_clean
+	@echo "$(WARN_COLOR)[CLEAN]$(NO_COLOR) $(1)"
+endef
 
-LDDIR = $(TEMPLATEDIR)/ld
-RULESPATH = $(LDDIR)
-LDSCRIPT = $(LDDIR)/userosc.ld
-DLIBS = -lm
+# Common rules
+%.o: %.c
+	$(call print_build,$<)
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
-DADEFS = -DSTM32F401xC -DCORTEX_USE_FPU=TRUE -DARM_MATH_CM4 
-DDEFS = -DSTM32F401xC -DSTM32F401xx \
-    -DCORTEX_USE_FPU=TRUE -DARM_MATH_CM4 -D__FPU_PRESENT -D_USE_MATH_DEFINES -DM_PI=3.14159265358979323846 \
-    -DOSC_$(OSCILLATOR_UC) -DOSCILLATOR_TYPE=$(OSCILLATOR) -DBLOCKSIZE=$(BLOCKSIZE)
+%.o: %.cpp
+	$(call print_build,$<)
+	$(Q)$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-DDEFS += $(OSC_DDEFS)
+%.o: %.s
+	$(call print_build,$<)
+	$(Q)$(AS) $(MCU) -c $< -o $@
 
-COPT = -std=c11 -mstructure-size-boundary=8
-CXXOPT = -std=c++11 -fno-rtti -fno-exceptions -fno-non-call-exceptions -fno-use-cxa-atexit -ffunction-sections -fdata-sections -funroll-loops
-
-LDOPT = -Xlinker --just-symbols=$(LDDIR)/osc_api.syms -Wl,--gc-sections
-
-CWARN = -W -Wall -Wextra
-CXXWARN =
-
-FPU_OPTS = -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant -fcheck-new 
-
-OPT = -g -O3 -mlittle-endian
-OPT += $(FPU_OPTS)
-#OPT += -flto
-
-TOPT = -mthumb -mno-thumb-interwork -DTHUMB_NO_INTERWORKING -DTHUMB_PRESENT
-
-
-# #############################################################################
-# set targets and directories
-# #############################################################################
-
-PKGDIR = $(PROJECT)
-PKGARCH = $(PROJECT).$(PKGSUFFIX)
-PAYLOAD = payload.bin
-BUILDDIR = $(PROJECTDIR)/build
-OBJDIR = $(BUILDDIR)/obj
-LSTDIR = $(BUILDDIR)/lst
-
-ASMSRC = $(UASMSRC)
-
-ASMXSRC = $(UASMXSRC)
-
-UCSRC = logue-sdk/platform/ext/CMSIS/CMSIS/DSP_Lib/Source/SupportFunctions/arm_fill_f32.c
-CSRC = $(TEMPLATEDIR)/tpl/_unit.c $(UCSRC)
-
-CXXSRC = $(UCXXSRC)
-
-vpath %.s $(sort $(dir $(ASMSRC)))
-vpath %.S $(sort $(dir $(ASMXSRC)))
-vpath %.c $(sort $(dir $(CSRC)))
-vpath %.cc $(sort $(dir $(CXXSRC)))
-
-ASMOBJS := $(addprefix $(OBJDIR)/, $(notdir $(ASMSRC:.s=.o)))
-ASMXOBJS := $(addprefix $(OBJDIR)/, $(notdir $(ASMXSRC:.S=.o)))
-COBJS := $(addprefix $(OBJDIR)/, $(notdir $(CSRC:.c=.o)))
-CXXOBJS := $(addprefix $(OBJDIR)/, $(notdir $(CXXSRC:.cc=.o)))
-
-OBJS := $(ASMXOBJS) $(ASMOBJS) $(COBJS) $(CXXOBJS)
-
-DINCDIR = $(TEMPLATEDIR)/inc \
-	  $(TEMPLATEDIR)/inc/api \
-	  $(PROJECTDIR)/eurorack \
-	  $(PROJECTDIR)/eurorack/stmlib/third_party/STM \
-	  $(PROJECTDIR)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx \
-	  $(PROJECTDIR)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc \
-          $(PLATFORMDIR)/inc \
-	  $(PLATFORMDIR)/inc/dsp \
-	  $(PLATFORMDIR)/inc/utils \
-          $(CMSISDIR)/Include
-
-INCDIR := $(patsubst %,-I%,$(DINCDIR) $(UINCDIR))
-
-DEFS := $(DDEFS) $(UDEFS)
-ADEFS := $(DADEFS) $(UADEFS)
-
-LIBS := $(DLIBS) $(ULIBS)
-
-LIBDIR := $(patsubst %,-I%,$(DLIBDIR) $(ULIBDIR))
-
-
-# #############################################################################
-# compiler flags
-# #############################################################################
-
-MCFLAGS   := -mcpu=$(MCU)
-ODFLAGS	  = -x --syms
-ASFLAGS   = $(MCFLAGS) -g $(TOPT) -Wa,-alms=$(LSTDIR)/$(notdir $(<:.s=.lst)) $(ADEFS)
-ASXFLAGS  = $(MCFLAGS) -g $(TOPT) -Wa,-alms=$(LSTDIR)/$(notdir $(<:.S=.lst)) $(ADEFS)
-CFLAGS    = $(MCFLAGS) $(TOPT) $(OPT) $(COPT) $(CWARN) -Wa,-alms=$(LSTDIR)/$(notdir $(<:.c=.lst)) $(DEFS)
-CXXFLAGS  = $(MCFLAGS) $(TOPT) $(OPT) $(CXXOPT) $(CXXWARN) -Wa,-alms=$(LSTDIR)/$(notdir $(<:.cc=.lst)) $(DEFS)
-LDFLAGS   = $(MCFLAGS) $(TOPT) $(OPT) -nostartfiles $(LIBDIR) -Wl,-Map=$(BUILDDIR)/$(PROJECT).map,--cref,--no-warn-mismatch,--library-path=$(RULESPATH),--script=$(LDSCRIPT) $(LDOPT)
-
-OUTFILES := $(BUILDDIR)/$(PROJECT).elf \
-	    $(BUILDDIR)/$(PROJECT).hex \
-	    $(BUILDDIR)/$(PROJECT).bin \
-	    $(BUILDDIR)/$(PROJECT).dmp \
-	    $(BUILDDIR)/$(PROJECT).list
-
-###############################################################################
-# targets
-###############################################################################
-
-all: PRE_ALL $(OBJS) $(OUTFILES) POST_ALL
-
-PRE_ALL:
-
-POST_ALL: package
-
-$(OBJS): | $(BUILDDIR) $(OBJDIR) $(LSTDIR)
-
-$(BUILDDIR):
-	@echo Compiler Options
-	@echo $(CC) -c $(CFLAGS) -I. $(INCDIR)
-	@echo
-	@mkdir -p $(BUILDDIR)
-
-$(OBJDIR):
-	@mkdir -p $(OBJDIR)
-
-$(LSTDIR):
-	@mkdir -p $(LSTDIR)
-
-$(ASMOBJS) : $(OBJDIR)/%.o : %.s Makefile
-	@echo Assembling $(<F)
-	@$(AS) -c $(ASFLAGS) -I. $(INCDIR) $< -o $@
-
-$(ASMXOBJS) : $(OBJDIR)/%.o : %.S Makefile
-	@echo Assembling $(<F)
-	@$(CC) -c $(ASXFLAGS) -I. $(INCDIR) $< -o $@
-
-$(COBJS) : $(OBJDIR)/%.o : %.c Makefile
-	@echo Compiling $(<F)
-	@$(CC) -c $(CFLAGS) -I. $(INCDIR) $< -o $@
-
-$(CXXOBJS) : $(OBJDIR)/%.o : %.cc Makefile
-	@echo Compiling $(<F)
-	@$(CXXC) -c $(CXXFLAGS) -I. $(INCDIR) $< -o $@
-
-$(BUILDDIR)/%.elf: $(OBJS) $(LDSCRIPT)
-	@echo Linking $@
-	@$(LD) $(OBJS) $(LDFLAGS) $(LIBS) -o $@
-
-%.hex: %.elf
-	@echo Creating $@
-	@$(HEX) $< $@
-
-%.bin: %.elf
-	@echo Creating $@
-	@$(BIN) $< $@
-
-%.dmp: %.elf
-	@echo Creating $@
-	@$(OD) $(ODFLAGS) $< > $@
-	@echo
-	@$(SZ) $<
-	@echo
-
-%.list: %.elf
-	@echo Creating $@
-	@$(OD) -S $< > $@
+# Phony targets
+.PHONY: all clean size
 
 clean:
-	@echo Cleaning
-	-rm -fR .dep $(BUILDDIR) $(PKGARCH)
-	@echo
-	@echo Done
+	$(call print_clean,$(BUILD_DIR))
+	$(Q)rm -rf $(BUILD_DIR)
 
-package:
-	@echo Packaging to ./$(PKGARCH)
-	@mkdir -p $(PKGDIR)
-	@cat $(MANIFEST) | jq '.header.platform="$(PLATFORM)"|.header.version="$(VERSION)"' > $(PKGDIR)/manifest.json
-	@cp -a $(BUILDDIR)/$(PROJECT).bin $(PKGDIR)/$(PAYLOAD)
-	@$(ZIP) $(ZIP_ARGS) $(PROJECT).zip $(PKGDIR)
-	@mv $(PROJECT).zip $(PKGARCH)
-	@echo
-	@echo Done
+size: $(TARGET)
+	@echo "Size of $(TARGET):"
+	$(Q)$(SIZE) $(TARGET)
