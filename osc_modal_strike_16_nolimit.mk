@@ -14,5 +14,9 @@ UCXXSRC = modal-strike.cc \
 	eurorack/stmlib/dsp/units.cc \
 	eurorack/stmlib/utils/random.cc
 
+# Add drumlogue wrapper for drumlogue platform
+ifeq ($(PLATFORM),drumlogue)
+    UCXXSRC += drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc
+endif
 
 include makefile.inc

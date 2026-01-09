@@ -194,6 +194,27 @@ bool osc_adapter_is_initialized() {
   return s_adapter.initialized;
 }
 
+void osc_adapter_param(user_osc_param_id_t id, const user_osc_param_t *param) {
+  if (!s_adapter.initialized) return;
+  
+  // Forward parameter change to OSC module
+  OSC_PARAM(id, param->value);
+}
+
+const char* osc_adapter_get_param_str(user_osc_param_id_t id, int32_t value) {
+  // OSC modules typically don't provide string representations
+  // Return nullptr to indicate no string available
+  (void)id;
+  (void)value;
+  return nullptr;
+}
+
+void osc_adapter_tempo_tick(uint32_t counter) {
+  // OSC modules don't have a direct tempo tick API
+  // This is a no-op for compatibility
+  (void)counter;
+}
+
 // ---- Parameter Utilities ----
 
 uint16_t osc_adapter_scale_param(float normalized) {
