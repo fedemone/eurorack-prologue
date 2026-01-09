@@ -2,5 +2,12 @@ build
 *.prlgunit
 *.mnlgxdunit
 *.ntkdigunit
+*.drmlgunit
+*.bin
+*.elf
+*.so
+*.o
+*.d
+.dep
 eurorack_*
 .vscode/ipch

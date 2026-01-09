@@ -160,6 +160,93 @@ void osc_adapter_reset(osc_adapter_state_t *state);
  */
 void osc_adapter_wave_func(osc_adapter_state_t *state, float *output, uint32_t frames);
 
+/*===========================================================================*/
+/* Additional Adapter Functions (for unit wrapper)                          */
+/*===========================================================================*/
+
+#include "userosc.h"
+
+/**
+ * @brief Initialize OSC adapter with platform and API version
+ * 
+ * @param platform Platform identifier
+ * @param api_version API version
+ */
+void osc_adapter_init(uint32_t platform, uint32_t api_version);
+
+/**
+ * @brief Trigger note on event
+ * 
+ * @param note MIDI note number
+ * @param velocity Note velocity
+ */
+void osc_adapter_note_on(uint8_t note, uint8_t velocity);
+
+/**
+ * @brief Trigger note off event
+ * 
+ * @param note MIDI note number
+ */
+void osc_adapter_note_off(uint8_t note);
+
+/**
+ * @brief Set pitch bend
+ * 
+ * @param bend Pitch bend value (signed)
+ */
+void osc_adapter_pitch_bend(int16_t bend);
+
+/**
+ * @brief Set parameter value
+ * 
+ * @param id Parameter ID
+ * @param param Parameter structure
+ */
+void osc_adapter_param(user_osc_param_id_t id, const user_osc_param_t *param);
+
+/**
+ * @brief Get parameter string representation
+ * 
+ * @param id Parameter ID
+ * @param value Parameter value
+ * @return String representation or nullptr
+ */
+const char* osc_adapter_get_param_str(user_osc_param_id_t id, int32_t value);
+
+/**
+ * @brief Set tempo
+ * 
+ * @param tempo_bpm_x10 Tempo in BPM * 10
+ */
+void osc_adapter_set_tempo(uint32_t tempo_bpm_x10);
+
+/**
+ * @brief Tempo clock tick
+ * 
+ * @param counter Tick counter
+ */
+void osc_adapter_tempo_tick(uint32_t counter);
+
+/**
+ * @brief Render audio
+ * 
+ * @param output Output buffer
+ * @param frames Number of frames to render
+ */
+void osc_adapter_render(float *output, uint32_t frames);
+
+/**
+ * @brief Reset adapter
+ */
+void osc_adapter_reset();
+
+/**
+ * @brief Check if adapter is initialized
+ * 
+ * @return true if initialized, false otherwise
+ */
+bool osc_adapter_is_initialized();
+
 #ifdef __cplusplus
 }
 #endif
