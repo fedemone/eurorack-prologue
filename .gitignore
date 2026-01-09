@@ -2,5 +2,15 @@ build
 *.prlgunit
 *.mnlgxdunit
 *.ntkdigunit
+*.drmlgunit
+*.o
+*.elf
+*.hex
+*.bin
+*.dmp
+*.list
+*.map
+*.d
 eurorack_*
 .vscode/ipch
+.DS_Store
