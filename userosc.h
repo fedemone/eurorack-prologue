@@ -27,7 +27,7 @@ extern "C" {
 #define k_note_mod_fscale (1.f / 255.f)
 
 /** Q31 fixed-point scale factor (2^31) */
-#define Q31_SCALE_FACTOR 2147483648.0f
+#define Q31_SCALE_FACTOR (1.0f * (1U << 31))
 
 /*===========================================================================*/
 /* Type Definitions                                                          */

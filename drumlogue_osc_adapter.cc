@@ -47,12 +47,12 @@ static struct {
 // Convert float (-1.0 to 1.0) to Q31 fixed-point
 static inline int32_t float_to_q31(float f) {
   f = (f < -1.0f) ? -1.0f : (f > 1.0f) ? 1.0f : f;
-  return static_cast<int32_t>(f * 2147483648.0f);
+  return static_cast<int32_t>(f * Q31_SCALE_FACTOR);
 }
 
 // Convert Q31 fixed-point to float
 static inline float q31_to_float(int32_t q31) {
-  return static_cast<float>(q31) * (1.0f / 2147483648.0f);
+  return static_cast<float>(q31) * (1.0f / Q31_SCALE_FACTOR);
 }
 
 // Convert MIDI note + pitch mod to OSC pitch format

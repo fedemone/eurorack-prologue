@@ -50,7 +50,7 @@ ifeq ($(PLATFORM),drumlogue)
     PREFIX = arm-linux-gnueabihf-
     CC = $(PREFIX)gcc
     CXX = $(PREFIX)g++
-    LD = $(PREFIX)g++
+    LD = $(PREFIX)g++  # Use g++ for C++ linking
     AR = $(PREFIX)ar
     AS = $(PREFIX)as
     OBJCOPY = $(PREFIX)objcopy
@@ -83,7 +83,7 @@ else
     
     CC = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc
     CXX = $(GCC_BIN_PATH)/$(GCC_TARGET)g++
-    LD = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc
+    LD = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc  # Use gcc as per logue-SDK convention
     AR = $(GCC_BIN_PATH)/$(GCC_TARGET)ar
     AS = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc -x assembler-with-cpp
     OBJCOPY = $(GCC_BIN_PATH)/$(GCC_TARGET)objcopy
