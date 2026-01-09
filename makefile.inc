@@ -99,6 +99,32 @@ endif
 # Include paths
 INCLUDES = -I. -Iinc
 
+# Platform-specific source files
+ifeq ($(PLATFORM),drumlogue)
+    # Add drumlogue wrapper and adapter files automatically
+    UCXXSRC += drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc
+endif
+
+# Automatically set OSC_* define based on OSCILLATOR variable
+ifdef OSCILLATOR
+    OSC_DEFINE = -DOSC_$(shell echo $(OSCILLATOR) | tr '[:lower:]' '[:upper:]')
+    CXXFLAGS += $(OSC_DEFINE)
+    CFLAGS += $(OSC_DEFINE)
+    
+    # Set manifest file based on platform
+    ifeq ($(PLATFORM),drumlogue)
+        MANIFEST = manifest_drumlogue_$(OSCILLATOR).json
+    else
+        MANIFEST = manifest_$(OSCILLATOR).json
+    endif
+endif
+
+# Add custom defines from OSC_DDEFS if present
+ifdef OSC_DDEFS
+    CXXFLAGS += $(OSC_DDEFS)
+    CFLAGS += $(OSC_DDEFS)
+endif
+
 # Library paths and libraries
 ifeq ($(PLATFORM),drumlogue)
     LIBS = -lm -lpthread
