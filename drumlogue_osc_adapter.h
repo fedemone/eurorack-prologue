@@ -160,6 +160,30 @@ void osc_adapter_reset(osc_adapter_state_t *state);
  */
 void osc_adapter_wave_func(osc_adapter_state_t *state, float *output, uint32_t frames);
 
+/**
+ * @brief Forward parameter change to OSC module (compatibility wrapper)
+ * 
+ * @param id Parameter ID from user_osc_param_id_t enum
+ * @param params Pointer to parameter structure
+ */
+void osc_adapter_param(uint16_t id, const void *params);
+
+/**
+ * @brief Get parameter string representation (compatibility wrapper)
+ * 
+ * @param id Parameter ID from user_osc_param_id_t enum
+ * @param value Parameter value
+ * @return String representation or NULL
+ */
+const char* osc_adapter_get_param_str(uint16_t id, int32_t value);
+
+/**
+ * @brief Handle tempo tick events (compatibility wrapper)
+ * 
+ * @param counter Tempo counter value
+ */
+void osc_adapter_tempo_tick(uint32_t counter);
+
 #ifdef __cplusplus
 }
 #endif
