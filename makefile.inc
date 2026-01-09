@@ -75,7 +75,11 @@ ifeq ($(PLATFORM),drumlogue)
 else
     # Other platforms use ARM Cortex-M4
     GCC_TARGET = arm-none-eabi-
-    GCC_BIN_PATH = $(TOOLSDIR)/gcc/gcc-arm-none-eabi-5_4-2016q3/bin
+    
+    # Allow override of GCC path via environment variable
+    ifeq ($(GCC_BIN_PATH),)
+        GCC_BIN_PATH = $(TOOLSDIR)/gcc/gcc-arm-none-eabi-5_4-2016q3/bin
+    endif
     
     CC = $(GCC_BIN_PATH)/$(GCC_TARGET)gcc
     CXX = $(GCC_BIN_PATH)/$(GCC_TARGET)g++

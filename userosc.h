@@ -26,6 +26,9 @@ extern "C" {
 /** Note modulation scale factor for pitch calculation */
 #define k_note_mod_fscale (1.f / 255.f)
 
+/** Q31 fixed-point scale factor (2^31) */
+#define Q31_SCALE_FACTOR 2147483648.0f
+
 /*===========================================================================*/
 /* Type Definitions                                                          */
 /*===========================================================================*/
@@ -70,14 +73,16 @@ static inline float param_val_to_f32(uint16_t value) {
  * @brief Convert Q31 fixed-point to float
  */
 static inline float q31_to_f32(int32_t q31) {
-  return q31 * (1.f / 2147483648.f);
+  return q31 * (1.f / Q31_SCALE_FACTOR);
 }
 
 /**
  * @brief Convert float to Q31 fixed-point
+ * Clamps input to valid range [-1.0, 1.0]
  */
 static inline int32_t f32_to_q31(float f) {
-  return (int32_t)(f * 2147483648.f);
+  f = (f < -1.f) ? -1.f : ((f > 1.f) ? 1.f : f);
+  return (int32_t)(f * Q31_SCALE_FACTOR);
 }
 
 /**
