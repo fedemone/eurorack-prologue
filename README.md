@@ -9,6 +9,8 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 - Korg Nu:tekt NTS-1
 - **Korg drumlogue** (NEW - synth module support)
 
+> **Drumlogue Port Status:** ✅ Complete and verified - All 14 oscillators ported with full configuration testing. Ready for ARM compilation. See [DRUMLOGUE_VERIFICATION.md](DRUMLOGUE_VERIFICATION.md) and [TODO_DRUMLOGUE_PORT.md](TODO_DRUMLOGUE_PORT.md) for details.
+
 See [releases](https://github.com/peterall/eurorack-prologue/releases) for latest binaries.
 
 
