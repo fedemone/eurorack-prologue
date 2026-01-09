@@ -77,7 +77,7 @@ static inline float q31_to_f32(int32_t q31) {
  * @brief Convert float to Q31 fixed-point
  */
 static inline int32_t f32_to_q31(float f) {
-  return (int32_t)(f * 2147483647.f);
+  return (int32_t)(f * 2147483648.f);
 }
 
 /**

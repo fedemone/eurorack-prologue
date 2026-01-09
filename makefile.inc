@@ -276,8 +276,10 @@ endif
 $(TARGET_PKG): $(BUILD_DIR)/$(TARGET_BIN)
 	$(call print_package,$@)
 ifeq ($(PLATFORM),drumlogue)
+	# Drumlogue: Copy shared library directly
 	$(Q)cp $(BUILD_DIR)/$(TARGET_BIN) $@
 else
+	# Other platforms: Create ZIP with manifest and binary
 	$(Q)cp $(BUILD_DIR)/$(PROJECT).bin $(PROJECT).bin
 	$(Q)if [ -f $(MANIFEST) ]; then \
 		jq --arg ver "$(VERSION)" '.header.version = $$ver' $(MANIFEST) > $(PROJECT)_tmp.json && \
