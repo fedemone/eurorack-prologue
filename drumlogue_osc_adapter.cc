@@ -47,12 +47,12 @@ static struct {
 // Convert float (-1.0 to 1.0) to Q31 fixed-point
 static inline int32_t float_to_q31(float f) {
   f = (f < -1.0f) ? -1.0f : (f > 1.0f) ? 1.0f : f;
-  return static_cast<int32_t>(f * 2147483647.0f);
+  return static_cast<int32_t>(f * Q31_SCALE_FACTOR);
 }
 
 // Convert Q31 fixed-point to float
 static inline float q31_to_float(int32_t q31) {
-  return static_cast<float>(q31) * (1.0f / 2147483648.0f);
+  return static_cast<float>(q31) * (1.0f / Q31_SCALE_FACTOR);
 }
 
 // Convert MIDI note + pitch mod to OSC pitch format
@@ -192,6 +192,27 @@ void osc_adapter_reset() {
 
 bool osc_adapter_is_initialized() {
   return s_adapter.initialized;
+}
+
+void osc_adapter_param(user_osc_param_id_t id, const user_osc_param_t *param) {
+  if (!s_adapter.initialized) return;
+  
+  // Forward parameter change to OSC module
+  OSC_PARAM(id, param->value);
+}
+
+const char* osc_adapter_get_param_str(user_osc_param_id_t id, int32_t value) {
+  // OSC modules typically don't provide string representations
+  // Return nullptr to indicate no string available
+  (void)id;
+  (void)value;
+  return nullptr;
+}
+
+void osc_adapter_tempo_tick(uint32_t counter) {
+  // OSC modules don't have a direct tempo tick API
+  // This is a no-op for compatibility
+  (void)counter;
 }
 
 // ---- Parameter Utilities ----
