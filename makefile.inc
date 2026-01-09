@@ -245,6 +245,10 @@ $(OBJ_DIR)/%.o: eurorack/plaits/dsp/fx/%.cc | $(OBJ_DIR)
 	$(call print_build,$<)
 	$(Q)$(CXX) -c $(CXXFLAGS) $< -o $@
 
+$(OBJ_DIR)/%.o: eurorack/plaits/%.cc | $(OBJ_DIR)
+	$(call print_build,$<)
+	$(Q)$(CXX) -c $(CXXFLAGS) $< -o $@
+
 $(OBJ_DIR)/%.o: eurorack/elements/dsp/%.cc | $(OBJ_DIR)
 	$(call print_build,$<)
 	$(Q)$(CXX) -c $(CXXFLAGS) $< -o $@
