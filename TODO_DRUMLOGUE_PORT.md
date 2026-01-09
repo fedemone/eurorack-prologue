@@ -43,6 +43,12 @@ Modal Strike oscillator:
 - [ ] Verify sample rate (48kHz) compatibility
 - [ ] Verify buffer size (48 samples) compatibility
 - [ ] Test NEON vectorization doesn't break functionality
+- [ ] Optimization based on vectorized operations using ARM NEON v7 (32-bit registers and 32k memory capable) intrinsics:
+  - [ ] Identify hot paths in DSP code using float32x4_t operations
+  - [ ] Replace scalar operations with NEON SIMD instructions
+  - [ ] Optimize buffer processing with vld1q_f32/vst1q_f32
+  - [ ] Use vmulq_f32, vaddq_f32 for parallel arithmetic
+  - [ ] Profile performance improvements on actual hardware
 
 ### 2. Documentation Updates
 - [ ] Update main README.md with drumlogue-specific instructions
