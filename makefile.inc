@@ -187,6 +187,10 @@ endef
 	$(call print_build,$<)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
+%.o: %.cc
+	$(call print_build,$<)
+	$(Q)$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
 %.o: %.cpp
 	$(call print_build,$<)
 	$(Q)$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
@@ -205,3 +209,53 @@ clean:
 size: $(TARGET)
 	@echo "Size of $(TARGET):"
 	$(Q)$(SIZE) $(TARGET)
+
+# Include SDK build rules based on platform
+ifeq ($(PLATFORM),prologue)
+    SDK_MAKEFILE = logue-sdk/platform/prologue/osc/Makefile
+else ifeq ($(PLATFORM),minilogue-xd)
+    SDK_MAKEFILE = logue-sdk/platform/minilogue-xd/osc/Makefile
+else ifeq ($(PLATFORM),nutekt-digital)
+    SDK_MAKEFILE = logue-sdk/platform/nutekt-digital/osc/Makefile
+else ifeq ($(PLATFORM),drumlogue)
+    # Drumlogue doesn't have SDK rules in v1.1.0, need to create custom rules
+    # or wait for SDK v2.0.0 support
+    SDK_MAKEFILE =
+endif
+
+ifneq ($(SDK_MAKEFILE),)
+    ifneq ($(wildcard $(SDK_MAKEFILE)),)
+        # SDK Makefile exists, but we're already in a .mk file, so we can't include it
+        # The .mk files would need to be restructured to work as project.mk files
+        # within the SDK directory structure
+    endif
+endif
+
+# Drumlogue-specific standalone build rules
+ifeq ($(PLATFORM),drumlogue)
+# Output file extension and target name
+UNIT_EXT = .drmlgunit
+TARGET = $(PROJECT)$(UNIT_EXT)
+
+# All source files combined
+ALLSRC = $(UCXXSRC) $(UCSRC)
+
+# Object files (keep paths for now, will compile in place)
+CXXOBJS = $(UCXXSRC:.cc=.o)
+COBJS = $(UCSRC:.c=.o)
+OBJS = $(CXXOBJS) $(COBJS)
+
+.PHONY: all
+all: $(TARGET)
+
+# Link rule for drumlogue
+$(TARGET): $(OBJS)
+	$(call print_link,$@)
+	$(Q)$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
+	@echo "Build complete: $@"
+
+# Generic pattern rules will handle compilation
+# (The rules defined earlier in makefile.inc will apply)
+
+endif
+
