@@ -11,3 +11,4 @@ build
 .dep
 eurorack_*
 .vscode/ipch
+.DS_Store

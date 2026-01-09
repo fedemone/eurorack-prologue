@@ -358,6 +358,31 @@ void osc_adapter_convert_float_to_q31(const float *input, int32_t *q31, uint32_t
   }
 }
 
+// ---- Compatibility Wrappers for Unit Wrapper ----
+
+void osc_adapter_param(uint16_t id, const void *params) {
+  if (!s_adapter.initialized || !params) return;
+  
+  const user_osc_param_t *p = static_cast<const user_osc_param_t*>(params);
+  OSC_PARAM(id, p->value);
+}
+
+const char* osc_adapter_get_param_str(uint16_t id, int32_t value) {
+  // OSC modules don't typically provide string representations
+  // Return nullptr - the unit wrapper can provide defaults
+  (void)id;
+  (void)value;
+  return nullptr;
+}
+
+void osc_adapter_tempo_tick(uint32_t counter) {
+  if (!s_adapter.initialized) return;
+  
+  // OSC modules don't have a direct tempo tick API
+  // This is provided for compatibility but does nothing
+  (void)counter;
+}
+
 // ---- Debug Utilities ----
 
 #ifdef OSC_ADAPTER_DEBUG

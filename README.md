@@ -1,7 +1,15 @@
-Eurorack Oscillators for Korg prologue, minilogue xd and Nu:tekt NTS-1
+Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlogue
 =================================
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
+
+**Platforms supported:**
+- Korg prologue
+- Korg minilogue xd
+- Korg Nu:tekt NTS-1
+- **Korg drumlogue** (NEW - synth module support)
+
+> **Drumlogue Port Status:** ✅ Complete and verified - All 14 oscillators ported with full configuration testing. Ready for ARM compilation. See [DRUMLOGUE_VERIFICATION.md](DRUMLOGUE_VERIFICATION.md) and [TODO_DRUMLOGUE_PORT.md](TODO_DRUMLOGUE_PORT.md) for details.
 
 See [releases](https://github.com/peterall/eurorack-prologue/releases) for latest binaries.
 
@@ -130,12 +138,43 @@ Issues
 Building
 ====
 
-* Checkout the repo (including subrepos)
+**Prerequisites:**
+* Checkout the repo (including subrepos): `git clone --recursive https://github.com/fedemone/eurorack-prologue.git`
 * Follow the toolchain installation instructions in the `logue-sdk`
-* Make sure you have the `jq` tool installed (`brew install jq`)
-* Build with `make`
+* Make sure you have the `jq` tool installed (`brew install jq` on macOS)
 
-(only tested on MacOSX)
+**Building for all platforms:**
+```bash
+make
+```
+
+This will build all oscillators for prologue, minilogue-xd, nutekt-digital, and drumlogue platforms.
+
+**Building for specific platform:**
+```bash
+# Build all oscillators for drumlogue only
+PLATFORM=drumlogue make
+
+# Build specific oscillator for drumlogue
+PLATFORM=drumlogue make -f osc_va.mk
+
+# Build specific oscillator for prologue
+PLATFORM=prologue make -f osc_fm.mk
+```
+
+**Build outputs:**
+- `.prlgunit` files for prologue
+- `.mnlgxdunit` files for minilogue-xd  
+- `.ntkdigunit` files for nutekt-digital
+- `.drmlgunit` files for drumlogue (NEW!)
+
+**Drumlogue Installation:**
+1. Power on drumlogue in USB mass storage mode
+2. Place `.drmlgunit` files in the `Units/Synths/` directory
+3. Restart drumlogue to load the new synth units
+4. Units will be loaded in alphabetical order
+
+**Note:** Only tested on macOS, but should work on Linux with appropriate toolchains installed.
 
 Acknowledgements
 ====
