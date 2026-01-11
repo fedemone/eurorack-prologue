@@ -4,7 +4,7 @@ OSCILLATORS := $(wildcard *mk)
 
 VERSION=1.6-1
 
-$(TOPTARGETS): $(OSCILLATORS) package_prologue package_minilogue-xd package_nutekt-digital
+$(TOPTARGETS): $(OSCILLATORS) package_prologue package_minilogue-xd package_nutekt-digital package_drumlogue
 $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=prologue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
@@ -12,12 +12,20 @@ $(OSCILLATORS):
 	@PLATFORM=minilogue-xd VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
 	@PLATFORM=nutekt-digital VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+	@rm -fR .dep ./build
+	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS)
+drumlogue: $(OSCILLATORS) package_drumlogue
+$(OSCILLATORS):
+	@rm -fR .dep ./build
+	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
+
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
 NUTEKT_DIGITAL_PACKAGE=eurorack_nutekt-digital
+DRUMLOGUE_PACKAGE=eurorack_drumlogue
 
 package_prologue:
 	@echo Packaging to ./${PROLOGUE_PACKAGE}.zip
@@ -44,4 +52,13 @@ package_nutekt-digital:
 	@mkdir ${NUTEKT_DIGITAL_PACKAGE}
 	@cp -a *.ntkdigunit ${NUTEKT_DIGITAL_PACKAGE}/
 	@cp -a credits.txt ${NUTEKT_DIGITAL_PACKAGE}/
+
+package_drumlogue:
+	@echo Packaging to ./${DRUMLOGUE_PACKAGE}.zip
+	@rm -f ${DRUMLOGUE_PACKAGE}.zip
+	@rm -rf ${DRUMLOGUE_PACKAGE}
+	@mkdir ${DRUMLOGUE_PACKAGE}
+	@cp -a *.drmlgunit ${DRUMLOGUE_PACKAGE}/
+	@cp -a credits.txt ${DRUMLOGUE_PACKAGE}/
+	@zip -rq9m ${DRUMLOGUE_PACKAGE}.zip ${DRUMLOGUE_PACKAGE}/
 	@zip -rq9m ${NUTEKT_DIGITAL_PACKAGE}.zip ${NUTEKT_DIGITAL_PACKAGE}/

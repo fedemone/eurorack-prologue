@@ -1,9 +1,35 @@
-Eurorack Oscillators for Korg prologue, minilogue xd and Nu:tekt NTS-1
+Eurorack Oscillators for Korg Prologue, Minilogue XD, Nu:tekt NTS-1, and **Drumlogue**
 =================================
 
-Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
+Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine and Drumlogue platforms.
 
 See [releases](https://github.com/peterall/eurorack-prologue/releases) for latest binaries.
+
+---
+
+## 🚀 Drumlogue Porting: Start Here
+
+**New Project Name**: **Eurorack-Drumlogue**
+
+- 📖 [Quick Start Guide](EURORACK_DRUMLOGUE_BUILD.md) - 5-minute overview
+- 📋 [Project Status](README_DRUMLOGUE_STATUS.md) - What's been done, next steps
+- 🛠️ [Windows WSL2 Setup](WINDOWS_WSL2_SETUP.md) - Detailed environment setup
+
+---
+
+## Platform Support
+
+### Prologue / Minilogue XD / Nu:tekt NTS-1
+Uses the legacy multi-engine architecture with the Prologue build system.
+
+**Build with**: `make`
+
+### **Drumlogue (NEW)**
+Uses the official **Korg Drumlogue SDK** with Docker-based build environment.
+
+**Setup**: See [DRUMLOGUE_SETUP.md](DRUMLOGUE_SETUP.md)
+
+**Build with**: `logue-sdk/docker/run_cmd.sh build drumlogue/<project>`
 
 
 Macro Oscillator 2 (based on Plaits)
@@ -42,17 +68,12 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 
 `LFO2 Target` sets the target for LFO2 according to the list below.
 
-LFO2
 ---
 
 The oscillator has a built-in additional cosine key-synced LFO which can module an internal parameter (set with the `LFO2 Target` parameter in the oscillator menu):
 
 | LFO Target | Parameter     | Notes |
-|------------|---------------|-------|
-| 1          | `Shape`       |       |
-| 2          | `Shift-shape` |       |
 | 3          | `Parameter 1` | Not implemented for Wavetable oscillator |
-| 4          | `Parameter 2` |       |
 | 5          | `Pitch` |       |
 | 6          | _reserved_ (Amplitude?) |       |
 | 7          | `LFO2 Rate` |       |
@@ -73,7 +94,6 @@ Modal Resonator (based on Elements)
 |--|--|
 | `mod s` | Strike exciter with modal resonator |
 
-Parameters
 ----
 
 | Parameter               | Parameter             | LFO Target | Notes |
@@ -85,12 +105,7 @@ Parameters
 | `Timbre` menu                | Strike timbre         | 5 | Brightness/speed of the excitation. |
 | `Damping` menu              | Resonator damping     | 6 | The rate of energy dissipation in the resonator. High values cause long release effect. |
 | `Brightness` menu           | Resonator brightness  | 7 | Muting of high frequencies |
-| `LFO Target` menu           | multi-engine `Shape` LFO target |  | Sets which parameter is modulated by the `Shape` LFO (see LFO Target column)      |
 
-
-For more information please read the excellent [Mutable Instruments Elements documentation](https://mutable-instruments.net/modules/elements/manual/).
-
-Limitations
 -----
 Due to compute and memory (32K!) limitations in the prologue multi-engine quite a few short-cuts had to be taken:
 
