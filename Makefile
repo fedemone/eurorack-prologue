@@ -1,3 +1,18 @@
+INCLUDES = -Ilogue-sdk/platform/drumlogue/common \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/drivers \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp/engine \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/fx \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/ui \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/pot_controller \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/pot_controller \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/drivers \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp/engine \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/fx \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/ui
 TOPTARGETS := all clean
 
 OSCILLATORS := $(wildcard *mk)

@@ -39,3 +39,4 @@ case "$COMMAND" in
         ./run_cmd.sh build "$PROJECT"
         ;;
 esac
+

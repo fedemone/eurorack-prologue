@@ -1,0 +1,16 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "Set-Content": true,
+        "/^bash logue-sdk/docker/run_interactive\\.sh$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^bash D:/Fede/drumlogue/logue-sdk-eurorack-drumlogue-port/eurorack-prologue/logue-sdk/docker/run_interactive\\.sh$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "make": true,
+        "cp": true,
+        "dos2unix": true
+    }
+}
