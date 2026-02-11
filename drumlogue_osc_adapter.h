@@ -28,6 +28,9 @@ extern "C" {
 /** Initialize adapter and call OSC_INIT */
 void osc_adapter_init(uint32_t platform, uint32_t api_version);
 
+/** Tear down adapter: mark as uninitialized, flush buffers */
+void osc_adapter_teardown(void);
+
 /** Reset adapter state and trigger note off */
 void osc_adapter_reset(void);
 

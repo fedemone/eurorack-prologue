@@ -137,6 +137,7 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
 
 __unit_callback
 void unit_teardown() {
+  osc_adapter_teardown();
   s_state.initialized = false;
   s_state.flags = 0;
 }

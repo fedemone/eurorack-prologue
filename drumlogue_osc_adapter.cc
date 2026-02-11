@@ -27,11 +27,24 @@ static struct {
   bool             initialized;
 } s_adapter;
 
+/* ---- Buffered Rendering State ---- */
+
+#ifndef OSC_NATIVE_BLOCK_SIZE
+#define OSC_NATIVE_BLOCK_SIZE 24
+#endif
+
+static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
+static uint32_t s_render_rd = 0;   /* read position */
+static uint32_t s_render_avail = 0; /* samples available */
+
 /* ---- Q31 / Float Helpers ---- */
 
 static inline int32_t float_to_q31(float f) {
+  /* Q31 range is [-1.0, 1.0 - 2^-31]. Clamp after scaling to avoid overflow. */
   f = (f < -1.0f) ? -1.0f : (f > 1.0f) ? 1.0f : f;
-  return (int32_t)(f * (float)(1U << 31));
+  float scaled = f * 2147483648.0f;
+  if (scaled >= 2147483647.0f) return 0x7FFFFFFF;
+  return (int32_t)scaled;
 }
 
 static inline float q31_to_float(int32_t q31) {
@@ -64,9 +77,19 @@ void osc_adapter_init(uint32_t platform, uint32_t api_version) {
   s_adapter.shape_lfo        = 0.0f;
   s_adapter.tempo            = 0;
 
+  /* Flush render buffer */
+  s_render_rd    = 0;
+  s_render_avail = 0;
+
   OSC_INIT(platform, api_version);
 
   s_adapter.initialized = true;
+}
+
+void osc_adapter_teardown(void) {
+  s_adapter.initialized = false;
+  s_render_rd    = 0;
+  s_render_avail = 0;
 }
 
 void osc_adapter_reset(void) {
@@ -157,15 +180,9 @@ void osc_adapter_set_tempo(uint32_t tempo) {
  *     -> set OSC_NATIVE_BLOCK_SIZE=32 in the .mk file
  *
  * If not defined, defaults to 24 (plaits).
+ * Note: OSC_NATIVE_BLOCK_SIZE, s_render_buf, s_render_rd, s_render_avail
+ * are defined at the top of this file so osc_adapter_reset() can access them.
  */
-#ifndef OSC_NATIVE_BLOCK_SIZE
-#define OSC_NATIVE_BLOCK_SIZE 24
-#endif
-
-/* Static render buffer: holds converted float samples between calls */
-static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
-static uint32_t s_render_rd = 0;   /* read position */
-static uint32_t s_render_avail = 0; /* samples available */
 
 /**
  * Render one native-sized block from OSC_CYCLE into the static buffer.
