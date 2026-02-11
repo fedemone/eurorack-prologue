@@ -65,23 +65,24 @@ callback path. Tests should run without ARM hardware.
 Choose a lightweight C/C++ test framework (e.g., Unity, Catch2, or Google Test).
 Tests should be buildable with host compiler (gcc/g++) without ARM toolchain.
 
-## Stage 3: NEON Optimizations
+## Stage 3: NEON Optimizations (DONE)
 
-### Targets
+### Completed
 
-Profile and optimize hot paths for ARM Cortex-A7 NEON SIMD:
+- [x] Q31 -> float conversion loop: `q31_buf_to_float()` in adapter
+  - NEON: `vld1q_s32` -> `vcvtq_f32_s32` -> `vmulq_f32` -> `vst1q_f32` (4 samples/iter)
+  - Both block sizes (24, 32) are multiples of 4 — no tail needed
+- [x] Mono -> stereo interleaving: `mono_to_stereo()` in wrapper
+  - NEON: `vld1q_f32` -> `vst2q_f32` interleaved store (4 samples -> 8 floats/iter)
+  - Tail loop handles non-multiple-of-4 frame counts
+- [x] All NEON code gated by `#ifdef __ARM_NEON` with scalar fallback
+- [x] Existing 55 tests pass (scalar fallback on x86 host)
 
-- [ ] Q31 <-> float conversion loops (4-wide `float32x4_t` / `int32x4_t`)
-- [ ] Mono -> stereo interleaving (`vzip`)
-- [ ] Buffer copy/fill operations
-- [ ] Evaluate whether DSP engine inner loops can benefit from NEON
-- [ ] Add NEON-specific code paths gated by `#ifdef __ARM_NEON`
+### Not optimized (analysis)
 
-### Considerations
-
-- Cortex-A7 has limited NEON throughput (single-issue NEON pipeline)
-- Auto-vectorization (`-ftree-vectorize`) may already handle simple cases
-- Profile before optimizing — avoid premature NEON rewrites
+- Buffer copy (`memcpy` in `osc_adapter_render`): already optimal via libc
+- DSP engine inner loops: inside unmodified oscillator source code, out of scope
+- `float_to_q31`: called once per shape_lfo update, not a hot path
 
 ## Stage 4: Verification of Optimized Output
 

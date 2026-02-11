@@ -24,6 +24,10 @@
 #include <cstdint>
 #include <cstring>
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
 #include "drumlogue_osc_adapter.h"
 
 /* SDK headers for drumlogue types */
@@ -180,6 +184,32 @@ static inline void clear_output(float *out, uint32_t frames) {
   memset(out, 0, frames * 2 * sizeof(float));
 }
 
+/**
+ * Copy mono buffer to interleaved stereo (L=R).
+ * NEON path uses vst2q_f32 to interleave 4 samples at a time.
+ */
+static void mono_to_stereo(const float *mono, float *stereo, uint32_t count) {
+#ifdef __ARM_NEON
+  uint32_t i = 0;
+  for (; i + 4 <= count; i += 4) {
+    float32x4_t m = vld1q_f32(mono + i);
+    float32x4x2_t s;
+    s.val[0] = m;  /* L channels */
+    s.val[1] = m;  /* R channels */
+    vst2q_f32(stereo + i * 2, s);
+  }
+  for (; i < count; ++i) {
+    stereo[i * 2]     = mono[i];
+    stereo[i * 2 + 1] = mono[i];
+  }
+#else
+  for (uint32_t i = 0; i < count; ++i) {
+    stereo[i * 2]     = mono[i];
+    stereo[i * 2 + 1] = mono[i];
+  }
+#endif
+}
+
 __unit_callback
 void unit_render(const float *in, float *out, uint32_t frames) {
   (void)in;  /* synth units ignore input */
@@ -203,13 +233,7 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
 
     osc_adapter_render(mono, n);
-
-    /* Mono to interleaved stereo */
-    float *dst = out + (offset * 2);
-    for (uint32_t i = 0; i < n; ++i) {
-      dst[i * 2]     = mono[i];
-      dst[i * 2 + 1] = mono[i];
-    }
+    mono_to_stereo(mono, out + (offset * 2), n);
 
     offset    += n;
     remaining -= n;

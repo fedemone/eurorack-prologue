@@ -17,6 +17,10 @@
 #include <cstring>
 #include <cmath>
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
 /* ---- Static State ---- */
 
 static struct {
@@ -185,6 +189,31 @@ void osc_adapter_set_tempo(uint32_t tempo) {
  */
 
 /**
+ * Convert Q31 int32_t buffer to float buffer.
+ * NEON path processes 4 samples at a time using SIMD.
+ * Both block sizes (24, 32) are multiples of 4.
+ */
+static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
+#ifdef __ARM_NEON
+  const float32x4_t scale = vdupq_n_f32(1.0f / 2147483648.0f);
+  uint32_t i = 0;
+  for (; i + 4 <= count; i += 4) {
+    int32x4_t q = vld1q_s32(src + i);
+    float32x4_t f = vcvtq_f32_s32(q);
+    f = vmulq_f32(f, scale);
+    vst1q_f32(dst + i, f);
+  }
+  for (; i < count; ++i) {
+    dst[i] = (float)src[i] * (1.0f / 2147483648.0f);
+  }
+#else
+  for (uint32_t i = 0; i < count; ++i) {
+    dst[i] = q31_to_float(src[i]);
+  }
+#endif
+}
+
+/**
  * Render one native-sized block from OSC_CYCLE into the static buffer.
  */
 static void render_one_block(void) {
@@ -192,9 +221,7 @@ static void render_one_block(void) {
 
   OSC_CYCLE(&s_adapter.params, q31_buf, OSC_NATIVE_BLOCK_SIZE);
 
-  for (uint32_t i = 0; i < OSC_NATIVE_BLOCK_SIZE; ++i) {
-    s_render_buf[i] = q31_to_float(q31_buf[i]);
-  }
+  q31_buf_to_float(q31_buf, s_render_buf, OSC_NATIVE_BLOCK_SIZE);
   s_render_rd    = 0;
   s_render_avail = OSC_NATIVE_BLOCK_SIZE;
 }
