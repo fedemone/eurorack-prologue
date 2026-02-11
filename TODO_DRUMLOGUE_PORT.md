@@ -1,155 +1,144 @@
 # Drumlogue Port - TODO List
 
-## Completed ✅
-1. Created `drumlogue-port` branch
-2. Added DRUMLOGUE_PORT.md documentation
-3. Updated Makefile with drumlogue platform support
-4. Created drumlogue wrapper infrastructure
-   - `drumlogue_osc_adapter.h` - OSC API adapter header
-   - `drumlogue_osc_adapter.cc` - OSC API adapter implementation
-   - `drumlogue_unit_wrapper.cc` - Unit wrapper implementation
-5. Created `userosc.h` - User oscillator API header with type definitions
-6. Updated all oscillator `.mk` files for drumlogue support:
-   - Macro oscillators: va, wsh, fm, grn, add, string
-   - Wavetable oscillators: wta, wtb, wtc, wtd, wte, wtf
-   - Modal strike oscillators: modal_strike, modal_strike_16_nolimit, modal_strike_24_nolimit
-7. Implemented complete build system in `makefile.inc`:
-   - Platform detection and configuration
-   - ARM Cortex-A7 compiler flags with NEON vectorization
-   - Shared library build for drumlogue
-   - Integration with logue-SDK for other platforms
-   - Packaging targets for all platforms
+## Stage 1: Same Source Code, Different HW APIs
 
-## Remaining Work 🔄
+### Completed
 
-### 1. Build and Test
-- [ ] Install ARM cross-compiler toolchain (arm-linux-gnueabihf-gcc)
-- [ ] Test actual compilation of all oscillators for drumlogue
-- [ ] Verify `.drmlgunit` file generation
-- [ ] Test with logue-sdk Docker environment (if available)
-- [ ] Verify unit manifest generation
+1. **SDK compatibility headers** (`drumlogue/` directory)
+   - [x] `drumlogue/runtime.h` — `unit_runtime_desc_t`, `unit_header_t`, `unit_param_t`, constants
+   - [x] `drumlogue/unit.h` — `unit_*` function declarations
+   - [x] `drumlogue/attributes.h` — `__unit_callback`, `__unit_header` macros
+   - [x] `drumlogue/userosc.h` — OSC API types for drumlogue with correct `user_osc_param_t` layout
 
-### 2. Code Verification & Testing
-- [ ] Verify ARM Cortex-A7 compatibility (no Cortex-M4 specific code)
-- [ ] Test NEON vectorization optimizations
-- [ ] Verify buffer size (48 samples) compatibility with all oscillators
-- [ ] Test sample rate (48kHz) with existing code
-- [ ] Ensure no hard-coded platform assumptions
+2. **Unit wrapper** (`drumlogue_unit_wrapper.cc`)
+   - [x] Correct `unit_init` signature: `int8_t unit_init(const unit_runtime_desc_t *desc)`
+   - [x] Correct `unit_header_t` with packed format in `.unit_header` ELF section
+   - [x] All Synth Module API callbacks implemented
+   - [x] Parameter mapping: drumlogue int32 (0-100) -> OSC 10-bit/enum
+   - [x] Mono float -> stereo interleaved float in `unit_render`
 
-### 3. API Adapter Implementation Review
-- [ ] Review OSC API to Synth Module API mappings
-- [ ] Verify parameter scaling is correct
-- [ ] Test note on/off triggers work properly
-- [ ] Validate LFO and shape/shift-shape parameter handling
+3. **OSC adapter** (`drumlogue_osc_adapter.cc` / `.h`)
+   - [x] Clean interface with no duplicate definitions
+   - [x] Buffered rendering with `OSC_NATIVE_BLOCK_SIZE` support
+   - [x] Q31 <-> float conversion
+   - [x] Pitch management (note on/off, pitch bend)
+   - [x] `user_osc_param_t` state management
 
-### 4. Hardware Testing
-- [ ] Test on actual drumlogue hardware (if available)
-- [ ] Performance benchmarking
-- [ ] Audio quality verification
-- [ ] Memory usage verification
+4. **Build system**
+   - [x] `makefile.inc` — drumlogue toolchain, flags, include paths, shared library
+   - [x] `Makefile` — drumlogue in build loop, fixed nts-1 platform name
+   - [x] All 15 `.mk` files — wrapper auto-inclusion + `OSC_NATIVE_BLOCK_SIZE` defines
 
-### 5. Documentation Updates
-- [ ] Update main README.md with drumlogue instructions
-- [ ] Add build instructions for drumlogue
-- [ ] Document any drumlogue-specific limitations
-- [ ] Add installation guide for `.drmlgunit` files
-- [ ] Create troubleshooting section
+5. **Fixes applied to pre-existing code**
+   - [x] Deleted root `userosc.h` that was shadowing SDK headers for prologue builds
+   - [x] Fixed `unit_init` signature (was `void(uint32_t, uint32_t)`)
+   - [x] Fixed `unit_header_t` format (was custom struct, now SDK-matching packed struct)
+   - [x] Removed duplicate function definitions in adapter
+   - [x] Added buffered rendering to handle block size mismatch
+   - [x] Fixed `nutekt-digital` -> `nts-1` platform name in Makefile
 
-### 6. Release Preparation
-- [ ] Update version numbers
-- [ ] Create release notes
-- [ ] Build all oscillators for drumlogue
-- [ ] Package `.drmlgunit` files
-- [ ] Update credits and acknowledgments
+### Remaining
 
-## Technical Implementation Notes
+- [ ] Test ARM cross-compilation (`PLATFORM=drumlogue make`)
+- [ ] Verify `.drmlgunit` ELF output (file type, `.unit_header` section)
+- [ ] Decide whether to remove or keep the 14 redundant `manifest_drumlogue_*.json` files
+- [ ] Test on drumlogue hardware (if available)
 
-### Build System Architecture
-The build system now supports four platforms:
-- **prologue**: ARM Cortex-M4, .prlgunit files
-- **minilogue-xd**: ARM Cortex-M4, .mnlgxdunit files  
-- **nutekt-digital**: ARM Cortex-M4, .ntkdigunit files
-- **drumlogue**: ARM Cortex-A7, .drmlgunit files (shared libraries)
+## Stage 2: Unit Tests for Callbacks
 
-### Drumlogue-Specific Implementation
+### Test Plan
 
-#### Wrapper Architecture
-```
-User Code (OSC API)
-       ↓
-drumlogue_osc_adapter.cc (OSC API Implementation)
-       ↓
-drumlogue_unit_wrapper.cc (Synth Module API)
-       ↓
-Drumlogue Runtime
-```
+Write host-side (x86) unit tests that mock the drumlogue runtime and exercise each
+callback path. Tests should run without ARM hardware.
 
-#### Key Differences from Other Platforms
-1. **Architecture**: ARM Cortex-A7 with NEON SIMD instead of Cortex-M4
-2. **Build Type**: Shared library (.so → .drmlgunit) instead of static binary
-3. **API**: Synth Module API instead of direct OSC API
-4. **Toolchain**: arm-linux-gnueabihf-gcc instead of arm-none-eabi-gcc
-5. **Optimization**: NEON vectorization flags for better performance
+- [ ] `unit_init` — verify correct initialization, error returns for bad params
+- [ ] `unit_render` — verify Q31->float conversion, mono->stereo, block boundary handling
+- [ ] `unit_note_on` / `unit_note_off` — verify pitch encoding, OSC_NOTEON/NOTEOFF called
+- [ ] `unit_set_param_value` — verify scaling for each param type (shape, shift-shape, enum)
+- [ ] `unit_teardown` — verify clean shutdown
+- [ ] Buffered rendering — verify correct output across all frame sizes (1, 23, 24, 25, 48, 96)
+- [ ] Pitch bend — verify bend range and pitch update
+- [ ] Parameter edge cases — min/max values, rapid changes
 
-#### Compilation Flags for Drumlogue
-- `-mcpu=cortex-a7`: Target ARM Cortex-A7 processor
-- `-mfpu=neon-vfpv4`: Enable NEON SIMD instructions
-- `-mfloat-abi=hard`: Use hardware floating-point
-- `-march=armv7ve+simd`: Target ARMv7VE with SIMD extensions
-- `-ftree-vectorize`: Enable auto-vectorization
-- `-ffast-math`: Optimize floating-point operations
-- `-fPIC`: Position-independent code for shared library
-- `-shared`: Create shared library
+### Test Framework
 
-### Build Process
+Choose a lightweight C/C++ test framework (e.g., Unity, Catch2, or Google Test).
+Tests should be buildable with host compiler (gcc/g++) without ARM toolchain.
 
-#### For Prologue/Minilogue XD/NTS-1:
-```bash
-make PLATFORM=prologue VERSION=1.6-1 -f osc_va.mk
-```
-Produces: `mo2_va.prlgunit` (ZIP containing binary + manifest)
+## Stage 3: NEON Optimizations
 
-#### For Drumlogue:
-```bash
-make PLATFORM=drumlogue VERSION=1.6-1 -f osc_va.mk  
-```
-Produces: `mo2_va.drmlgunit` (shared library renamed)
+### Targets
 
-### Parameter Mapping
+Profile and optimize hot paths for ARM Cortex-A7 NEON SIMD:
 
-OSC API parameters are mapped to Synth Module API:
-- Shape → `k_user_osc_param_shape`
-- Shift-Shape → `k_user_osc_param_shiftshape`
-- Param 1-6 → `k_user_osc_param_id1` through `id6`
-- LFO → `shape_lfo`
+- [ ] Q31 <-> float conversion loops (4-wide `float32x4_t` / `int32x4_t`)
+- [ ] Mono -> stereo interleaving (`vzip`)
+- [ ] Buffer copy/fill operations
+- [ ] Evaluate whether DSP engine inner loops can benefit from NEON
+- [ ] Add NEON-specific code paths gated by `#ifdef __ARM_NEON`
 
-## Questions to Resolve ❓
-1. Does drumlogue have different parameter mapping requirements?
-2. Are there drumlogue-specific features to leverage?
-3. What are the exact memory/CPU limitations?
-4. How does the unit installation process work on drumlogue?
-5. Are there any licensing considerations for drumlogue platform?
+### Considerations
 
-## Known Limitations
-- ARM cross-compiler toolchain required for building drumlogue units
-- No drumlogue platform support in official logue-SDK yet (using custom wrapper)
-- Hardware testing required to verify functionality
-- Modal oscillator (OSC_MODAL) is disabled in original project
+- Cortex-A7 has limited NEON throughput (single-issue NEON pipeline)
+- Auto-vectorization (`-ftree-vectorize`) may already handle simple cases
+- Profile before optimizing — avoid premature NEON rewrites
 
-## Nice to Have 🌟
-- [ ] Port effects if applicable
-- [ ] Add drumlogue-specific presets
-- [ ] Create video demonstrations
-- [ ] Add CI/CD for automated builds
-- [ ] Create issue templates for drumlogue-specific bugs
+## Stage 4: Verification of Optimized Output
 
-## Notes
-- Original project (peterall/eurorack-prologue) supports prologue, minilogue-xd, and NTS-1
-- Drumlogue uses different architecture but same sample rate (48kHz)
-- Key differences: ARM Cortex-A7, 48-sample buffers, Synth Module API
-- Reference: https://github.com/korginc/logue-sdk (when drumlogue support is added)
+- [ ] Bit-exact comparison: NEON vs scalar output for Q31/float conversion
+- [ ] Near-exact comparison: full render output (within floating-point tolerance)
+- [ ] Performance benchmarks on actual Cortex-A7 (cycles per frame)
+- [ ] Audio quality listening tests on drumlogue hardware
+
+## Future: Template Abstraction
+
+Once the drumlogue port is stable and tested:
+
+- [ ] Extract the wrapper pattern into a reusable template/framework
+- [ ] Document how to add a new platform (what to implement, what to configure)
+- [ ] Enable porting additional Mutable Instruments modules (Clouds, Rings, etc.)
+- [ ] Enable porting from other open-source DSP projects
+
+## File Inventory
+
+### Core Files (Stage 1 — Complete)
+
+| File | Status | Purpose |
+|---|---|---|
+| `drumlogue/runtime.h` | New | SDK type definitions |
+| `drumlogue/unit.h` | New | SDK function declarations |
+| `drumlogue/attributes.h` | New | Compiler attribute macros |
+| `drumlogue/userosc.h` | New | OSC API compatibility layer |
+| `drumlogue_unit_wrapper.cc` | Rewritten | Synth Module API implementation |
+| `drumlogue_osc_adapter.cc` | Rewritten | OSC API bridge + buffered rendering |
+| `drumlogue_osc_adapter.h` | Rewritten | Adapter interface |
+| `makefile.inc` | Modified | Build system (include paths, toolchain) |
+| `Makefile` | Modified | Top-level build (platform names) |
+| `osc_*.mk` (15 files) | Modified | Per-oscillator build config |
+
+### Oscillator Source (Unchanged)
+
+| File | Block Size | Description |
+|---|---|---|
+| `macro-oscillator2.cc` | 24 | Plaits engine (12 oscillators) |
+| `modal-strike.cc` | 32 | Elements resonator (3 variants) |
+
+### Documentation
+
+| File | Status |
+|---|---|
+| `DRUMLOGUE_PORT.md` | Updated |
+| `DRUMLOGUE_VERIFICATION.md` | Updated |
+| `TODO_DRUMLOGUE_PORT.md` | Updated (this file) |
+
+### Legacy (Possibly Redundant)
+
+| File | Notes |
+|---|---|
+| `manifest_drumlogue_*.json` (14) | Created for older approach; drumlogue uses embedded `unit_header_t` in ELF |
+| `userosc.h` (root) | Deleted — was shadowing SDK |
 
 ---
-**Last Updated:** 2026-01-09
-**Branch:** copilot/port-eurorack-oscillators
-**Status:** Core integration complete, ready for toolchain testing
+**Last Updated**: 2026-02-11
+**Branch**: claude/prologue-to-drumlogue-port-OZPcA
+**Status**: Stage 1 complete (code review + fixes), awaiting ARM compilation test

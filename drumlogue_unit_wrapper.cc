@@ -1,449 +1,389 @@
 /*
  * File: drumlogue_unit_wrapper.cc
- * 
- * Drumlogue Unit Wrapper Implementation
- * 
- * This file provides the complete synth module API wrapper for Drumlogue,
- * bridging the unit API calls to the OSC API adapter. It handles all
- * required unit lifecycle, rendering, note events, and parameter management.
- * 
- * Copyright (c) 2026
+ *
+ * Drumlogue Synth Module Unit Wrapper
+ *
+ * Bridges the logue-sdk v2.0 Synth Module API (unit_*) to the v1.x
+ * User Oscillator API (OSC_*). This allows the same oscillator source
+ * code (macro-oscillator2.cc, modal-strike.cc) to run on both
+ * prologue-class platforms and drumlogue without modification.
+ *
+ * Architecture:
+ *   Drumlogue Runtime
+ *        |  (Synth Module API: unit_init, unit_render, ...)
+ *        v
+ *   drumlogue_unit_wrapper.cc   <-- this file
+ *        |  (calls adapter functions)
+ *        v
+ *   drumlogue_osc_adapter.cc
+ *        |  (User OSC API: OSC_INIT, OSC_CYCLE, ...)
+ *        v
+ *   macro-oscillator2.cc / modal-strike.cc  (unchanged source)
  */
 
-#include <atomic>
-#include <cstddef>
 #include <cstdint>
-#include <algorithm>
+#include <cstring>
 
-#include "userosc.h"
 #include "drumlogue_osc_adapter.h"
 
-// ---- Module State ----
-static struct {
-  bool initialized;
-  std::atomic<uint32_t> flags;
-  user_osc_param_t params[24];  // Storage for parameter values
-  uint8_t note;
-  uint8_t velocity;
-  uint32_t sample_count;
-} s_unit_state = {
-  .initialized = false,
-  .flags = 0,
-  .params = {},
-  .note = 60,
-  .velocity = 100,
-  .sample_count = 0
+/* SDK headers for drumlogue types */
+#include "runtime.h"
+#include "unit.h"
+#include "attributes.h"
+
+/* ===========================================================================
+ * Unit Header
+ *
+ * Exported in the .unit_header ELF section. The drumlogue runtime reads
+ * this to identify the unit, its API version, and parameter descriptors.
+ * ======================================================================== */
+
+#define UNIT_PARAM_PERCENT(pname, pmin, pmax, pcenter, pinit) \
+  { (pmin), (pmax), (pcenter), (pinit), k_unit_param_type_percent, 0, 0, 0, {pname} }
+
+#define UNIT_PARAM_ENUM(pname, pmin, pmax, pinit) \
+  { (pmin), (pmax), 0, (pinit), k_unit_param_type_enum, 0, 0, 0, {pname} }
+
+#define UNIT_PARAM_NONE() \
+  { 0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""} }
+
+const __unit_header unit_header_t unit_header = {
+  .header_size  = sizeof(unit_header_t),
+  .target       = UNIT_TARGET_PLATFORM | k_unit_module_synth,
+  .api          = UNIT_API_VERSION,
+  .dev_id       = 0x0U,
+  .unit_id      = 0x0U,
+  .version      = 0x00010600U,   /* v1.6.0 matching project version */
+  .name         = "EurorkOSC",   /* max 13 chars */
+  .num_presets  = 0,
+  .num_params   = 6,
+  .params       = {
+    /* id 0 */ UNIT_PARAM_PERCENT("Shape",      0, 100, 0,  0),
+    /* id 1 */ UNIT_PARAM_PERCENT("ShiftShape",  0, 100, 0,  0),
+    /* id 2 */ UNIT_PARAM_PERCENT("Param 1",    0, 100, 50, 50),
+    /* id 3 */ UNIT_PARAM_PERCENT("Param 2",    0, 100, 50, 50),
+    /* id 4 */ UNIT_PARAM_ENUM("LFO Target",    0, 7, 0),
+    /* id 5 */ UNIT_PARAM_PERCENT("LFO2 Rate",  0, 100, 0,  0),
+    /* remaining slots unused */
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
+  }
 };
 
-// ---- Forward Declarations ----
+/* ===========================================================================
+ * Module State
+ * ======================================================================== */
+
+enum {
+  k_flag_suspended = (1U << 0),
+};
+
+static struct {
+  bool     initialized;
+  uint32_t flags;
+  uint32_t samplerate;
+  uint16_t frames_per_buffer;
+
+  /* Current note state */
+  uint8_t  note;
+  uint8_t  velocity;
+
+  /* Stored parameter values (drumlogue int32 range) */
+  int32_t  param_values[UNIT_MAX_PARAM_COUNT];
+} s_state;
+
+/* ===========================================================================
+ * Lifecycle Callbacks
+ * ======================================================================== */
+
 extern "C" {
 
-// Required Unit API Functions
-__attribute__((used))
-void unit_init(uint32_t platform, uint32_t api_version);
+__unit_callback
+int8_t unit_init(const unit_runtime_desc_t *desc) {
+  if (!desc)
+    return k_unit_err_undef;
 
-__attribute__((used))
-void unit_teardown();
+  /* Validate target platform */
+  if ((desc->target & 0xFF00) != k_unit_target_drumlogue)
+    return k_unit_err_target;
 
-__attribute__((used))
-void unit_reset();
+  /* Validate API version (require 2.0.0+) */
+  if (desc->api < k_unit_api_2_0_0)
+    return k_unit_err_api_version;
 
-__attribute__((used))
-void unit_resume();
+  /* Validate sample rate */
+  if (desc->samplerate != 48000)
+    return k_unit_err_samplerate;
 
-__attribute__((used))
-void unit_suspend();
+  /* Store runtime info */
+  s_state.samplerate        = desc->samplerate;
+  s_state.frames_per_buffer = desc->frames_per_buffer;
+  s_state.flags             = 0;
+  s_state.note              = 60;  /* middle C */
+  s_state.velocity          = 0;
 
-__attribute__((used))
-void unit_render(const float *in, float *out, uint32_t frames);
+  memset(s_state.param_values, 0, sizeof(s_state.param_values));
 
-__attribute__((used))
-void unit_note_on(uint8_t note, uint8_t velocity);
+  /* Initialize the OSC adapter, which calls OSC_INIT */
+  osc_adapter_init(desc->target, desc->api);
 
-__attribute__((used))
-void unit_note_off(uint8_t note);
-
-__attribute__((used))
-void unit_all_note_off();
-
-__attribute__((used))
-void unit_pitch_bend(uint16_t bend);
-
-__attribute__((used))
-void unit_channel_pressure(uint8_t pressure);
-
-__attribute__((used))
-void unit_aftertouch(uint8_t note, uint8_t aftertouch);
-
-__attribute__((used))
-void unit_set_param_value(uint8_t id, int32_t value);
-
-__attribute__((used))
-int32_t unit_get_param_value(uint8_t id);
-
-__attribute__((used))
-const char * unit_get_param_str_value(uint8_t id, int32_t value);
-
-__attribute__((used))
-void unit_set_tempo(uint32_t tempo);
-
-__attribute__((used))
-void unit_tempo_4ppqn_tick(uint32_t counter);
-
-__attribute__((used))
-void unit_gate_on(uint8_t velocity);
-
-__attribute__((used))
-void unit_gate_off();
-
-} // extern "C"
-
-// ---- Helper Functions ----
-
-static inline void clear_buffers(float *out, uint32_t frames) {
-  for (uint32_t i = 0; i < frames * 2; ++i) {
-    out[i] = 0.f;
-  }
+  s_state.initialized = true;
+  return k_unit_err_none;
 }
 
-static inline void convert_mono_to_stereo(const float *mono, float *stereo, uint32_t frames) {
-  for (uint32_t i = 0; i < frames; ++i) {
-    stereo[i * 2] = mono[i];
-    stereo[i * 2 + 1] = mono[i];
-  }
-}
-
-// ---- Unit API Implementation ----
-
-void unit_init(uint32_t platform, uint32_t api_version) {
-  // Initialize the OSC adapter
-  osc_adapter_init(platform, api_version);
-  
-  // Reset state
-  s_unit_state.initialized = true;
-  s_unit_state.flags = 0;
-  s_unit_state.note = 60;
-  s_unit_state.velocity = 100;
-  s_unit_state.sample_count = 0;
-  
-  // Clear parameter storage
-  for (int i = 0; i < 24; ++i) {
-    s_unit_state.params[i].value = 0;
-  }
-}
-
+__unit_callback
 void unit_teardown() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  s_unit_state.initialized = false;
-  s_unit_state.flags = 0;
+  osc_adapter_teardown();
+  s_state.initialized = false;
+  s_state.flags = 0;
 }
 
+__unit_callback
 void unit_reset() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Reset sample counter and state
-  s_unit_state.sample_count = 0;
-  s_unit_state.note = 60;
-  s_unit_state.velocity = 100;
-  
-  // Forward to OSC adapter
-  // OSC modules typically handle reset through note off events
-  unit_all_note_off();
+  if (!s_state.initialized) return;
+
+  s_state.note     = 60;
+  s_state.velocity = 0;
+  osc_adapter_reset();
 }
 
+__unit_callback
 void unit_resume() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Resume operation - clear any suspend flags
-  s_unit_state.flags &= ~(1U << 0);
+  if (!s_state.initialized) return;
+  s_state.flags &= ~k_flag_suspended;
 }
 
+__unit_callback
 void unit_suspend() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Suspend operation - set suspend flag
-  s_unit_state.flags |= (1U << 0);
-  
-  // Turn off all notes when suspending
-  unit_all_note_off();
+  if (!s_state.initialized) return;
+  s_state.flags |= k_flag_suspended;
+  osc_adapter_note_off(s_state.note);
 }
 
+/* ===========================================================================
+ * Audio Rendering
+ *
+ * Drumlogue provides interleaved stereo float buffers.
+ * The OSC API produces Q31 output via OSC_CYCLE:
+ *   - macro-oscillator2: mono Q31, fixed plaits::kMaxBlockSize (24) frames
+ *   - modal-strike: interleaved stereo Q31, 2 * elements::kMaxBlockSize frames
+ *
+ * We call osc_adapter_render() which handles Q31->float conversion,
+ * then copy/interleave into the drumlogue stereo output.
+ * ======================================================================== */
+
+static inline void clear_output(float *out, uint32_t frames) {
+  memset(out, 0, frames * 2 * sizeof(float));
+}
+
+__unit_callback
 void unit_render(const float *in, float *out, uint32_t frames) {
-  if (!s_unit_state.initialized || (s_unit_state.flags & (1U << 0))) {
-    // Not initialized or suspended - output silence
-    clear_buffers(out, frames);
+  (void)in;  /* synth units ignore input */
+
+  if (!s_state.initialized || (s_state.flags & k_flag_suspended)) {
+    clear_output(out, frames);
     return;
   }
-  
-  // Drumlogue expects interleaved stereo output (L, R, L, R, ...)
-  // OSC API typically generates mono output
-  
-  // Allocate temporary mono buffer on stack for smaller frame counts
-  if (frames <= 64) {
-    float mono_buffer[64];
-    
-    // Call OSC adapter to render audio
-    osc_adapter_render(mono_buffer, frames);
-    
-    // Convert mono to stereo
-    convert_mono_to_stereo(mono_buffer, out, frames);
-  } else {
-    // For larger frames, process in chunks to avoid stack overflow
-    const uint32_t chunk_size = 64;
-    float mono_buffer[64];
-    uint32_t remaining = frames;
-    uint32_t offset = 0;
-    
-    while (remaining > 0) {
-      uint32_t to_process = (remaining < chunk_size) ? remaining : chunk_size;
-      
-      osc_adapter_render(mono_buffer, to_process);
-      convert_mono_to_stereo(mono_buffer, out + (offset * 2), to_process);
-      
-      offset += to_process;
-      remaining -= to_process;
+
+  /*
+   * osc_adapter_render fills a mono float buffer.
+   * We then duplicate to stereo interleaved.
+   * Process in chunks to stay within stack limits.
+   */
+  const uint32_t chunk_size = 64;
+  float mono[64];
+  uint32_t offset = 0;
+  uint32_t remaining = frames;
+
+  while (remaining > 0) {
+    uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
+
+    osc_adapter_render(mono, n);
+
+    /* Mono to interleaved stereo */
+    float *dst = out + (offset * 2);
+    for (uint32_t i = 0; i < n; ++i) {
+      dst[i * 2]     = mono[i];
+      dst[i * 2 + 1] = mono[i];
     }
+
+    offset    += n;
+    remaining -= n;
   }
-  
-  s_unit_state.sample_count += frames;
 }
 
+/* ===========================================================================
+ * Note / MIDI Callbacks
+ * ======================================================================== */
+
+__unit_callback
 void unit_note_on(uint8_t note, uint8_t velocity) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  s_unit_state.note = note;
-  s_unit_state.velocity = velocity;
-  
-  // Forward to OSC adapter
+  if (!s_state.initialized) return;
+  s_state.note     = note;
+  s_state.velocity = velocity;
   osc_adapter_note_on(note, velocity);
 }
 
+__unit_callback
 void unit_note_off(uint8_t note) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Forward to OSC adapter
+  if (!s_state.initialized) return;
   osc_adapter_note_off(note);
 }
 
-void unit_all_note_off() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Forward to OSC adapter
-  osc_adapter_note_off(s_unit_state.note);
-  
-  s_unit_state.velocity = 0;
+__unit_callback
+void unit_all_note_off(void) {
+  if (!s_state.initialized) return;
+  osc_adapter_note_off(s_state.note);
+  s_state.velocity = 0;
 }
 
+__unit_callback
+void unit_gate_on(uint8_t velocity) {
+  if (!s_state.initialized) return;
+  s_state.velocity = velocity;
+  osc_adapter_note_on(s_state.note, velocity);
+}
+
+__unit_callback
+void unit_gate_off(void) {
+  if (!s_state.initialized) return;
+  osc_adapter_note_off(s_state.note);
+}
+
+__unit_callback
 void unit_pitch_bend(uint16_t bend) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Convert 14-bit pitch bend (0-16383, center at 8192) to signed value
-  // OSC API expects pitch bend in semitones or normalized format
-  int16_t signed_bend = static_cast<int16_t>(bend) - 8192;
-  
-  // Forward to OSC adapter
+  if (!s_state.initialized) return;
+  /* 14-bit: 0x0000..0x3FFF, neutral at 0x2000 */
+  int16_t signed_bend = (int16_t)bend - 0x2000;
   osc_adapter_pitch_bend(signed_bend);
 }
 
+__unit_callback
 void unit_channel_pressure(uint8_t pressure) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Forward channel pressure as a parameter change
-  // Many OSC modules map this to filter or amplitude modulation
-  user_osc_param_t param;
-  param.value = pressure;
-  osc_adapter_param(k_user_osc_param_id1, &param);
+  if (!s_state.initialized) return;
+  /* Map channel pressure to shape LFO modulation depth */
+  osc_adapter_set_shape_lfo((float)pressure / 127.f);
 }
 
+__unit_callback
 void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Polyphonic aftertouch - forward as parameter if note matches current note
-  if (note == s_unit_state.note) {
-    user_osc_param_t param;
-    param.value = aftertouch;
-    osc_adapter_param(k_user_osc_param_id2, &param);
-  }
+  if (!s_state.initialized) return;
+  (void)note;
+  (void)aftertouch;
+  /* Polyphonic aftertouch: no direct mapping in OSC API */
 }
 
+/* ===========================================================================
+ * Parameter Callbacks
+ *
+ * Drumlogue params (int32_t, range defined in header) are mapped to
+ * the OSC API's parameter system:
+ *   id 0 -> k_user_osc_param_shape      (10-bit: 0-1023)
+ *   id 1 -> k_user_osc_param_shiftshape (10-bit: 0-1023)
+ *   id 2 -> k_user_osc_param_id1        (0-200 i.e -100% - +100%)
+ *   id 3 -> k_user_osc_param_id2        (0-100 percentage)
+ *   id 4 -> k_user_osc_param_id3        (LFO target select)
+ *   id 5 -> k_user_osc_param_id4        (LFO2 rate)
+ *
+ * The remaining OSC params (id5=LFO2 Int, id6=LFO2 Target) could be
+ * exposed if needed by adding entries to the unit_header.params table.
+ * ======================================================================== */
+
+__unit_callback
 void unit_set_param_value(uint8_t id, int32_t value) {
-  if (!s_unit_state.initialized || id >= 24) {
-    return;
+  if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return;
+
+  s_state.param_values[id] = value;
+
+  /* Map drumlogue param id to OSC param id and scale */
+  uint16_t osc_value;
+  user_osc_param_id_t osc_id;
+
+  switch (id) {
+    case 0: /* Shape: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 1: /* Shift-Shape: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shiftshape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 2: /* Param 1: 0-100 -> 0-200 (bipolar centered at 100) */
+      osc_id    = k_user_osc_param_id1;
+      osc_value = (uint16_t)(value * 2);
+      break;
+    case 3: /* Param 2: 0-100 -> 0-100 (percent) */
+      osc_id    = k_user_osc_param_id2;
+      osc_value = (uint16_t)value;
+      break;
+    case 4: /* LFO Target: direct enum value */
+      osc_id    = k_user_osc_param_id3;
+      osc_value = (uint16_t)value;
+      break;
+    case 5: /* LFO2 Rate: 0-100 percent */
+      osc_id    = k_user_osc_param_id4;
+      osc_value = (uint16_t)value;
+      break;
+    default:
+      return;
   }
-  
-  // Store parameter value
-  s_unit_state.params[id].value = value;
-  
-  // Forward to OSC adapter with appropriate parameter ID mapping
-  osc_adapter_param(static_cast<user_osc_param_id_t>(id), &s_unit_state.params[id]);
+
+  osc_adapter_set_param(osc_id, osc_value);
 }
 
+__unit_callback
 int32_t unit_get_param_value(uint8_t id) {
-  if (!s_unit_state.initialized || id >= 24) {
-    return 0;
-  }
-  
-  return s_unit_state.params[id].value;
+  if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return 0;
+  return s_state.param_values[id];
 }
 
+__unit_callback
 const char * unit_get_param_str_value(uint8_t id, int32_t value) {
-  if (!s_unit_state.initialized || id >= 24) {
-    return nullptr;
-  }
-  
-  // Forward to OSC adapter
-  return osc_adapter_get_param_str(static_cast<user_osc_param_id_t>(id), value);
+  (void)id;
+  (void)value;
+  /* Let the runtime use the default numeric display */
+  return nullptr;
 }
 
+__unit_callback
+const uint8_t * unit_get_param_bmp_value(uint8_t id, int32_t value) {
+  (void)id;
+  (void)value;
+  return nullptr;
+}
+
+/* ===========================================================================
+ * Preset Callbacks (stubs - no presets)
+ * ======================================================================== */
+
+__unit_callback
+uint8_t unit_get_preset_index(void) {
+  return 0;
+}
+
+__unit_callback
+const char * unit_get_preset_name(uint8_t idx) {
+  (void)idx;
+  return nullptr;
+}
+
+__unit_callback
+void unit_load_preset(uint8_t idx) {
+  (void)idx;
+}
+
+/* ===========================================================================
+ * Tempo Callback
+ * ======================================================================== */
+
+__unit_callback
 void unit_set_tempo(uint32_t tempo) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Tempo is typically in BPM * 10 (e.g., 1200 = 120.0 BPM)
-  // Forward to OSC adapter for tempo-synced effects
+  if (!s_state.initialized) return;
   osc_adapter_set_tempo(tempo);
 }
 
-void unit_tempo_4ppqn_tick(uint32_t counter) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Forward tempo clock ticks to OSC adapter
-  // 4ppqn = 4 pulses per quarter note
-  osc_adapter_tempo_tick(counter);
-}
-
-void unit_gate_on(uint8_t velocity) {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Gate on with velocity - trigger envelope
-  s_unit_state.velocity = velocity;
-  unit_note_on(s_unit_state.note, velocity);
-}
-
-void unit_gate_off() {
-  if (!s_unit_state.initialized) {
-    return;
-  }
-  
-  // Gate off - release envelope
-  unit_note_off(s_unit_state.note);
-}
-
-// ---- Unit Header Structure ----
-
-// The unit header contains metadata about the synth module
-// This structure must be exported with specific alignment and naming
-
-struct unit_header {
-  uint32_t magic;           // Magic number for validation
-  uint32_t api_version;     // API version
-  uint32_t platform;        // Platform identifier
-  uint32_t reserved0;       // Reserved for future use
-  
-  const char *name;         // Module name
-  const char *category;     // Module category
-  const char *author;       // Author name
-  const char *description;  // Module description
-  
-  uint32_t num_params;      // Number of parameters
-  uint32_t reserved1[3];    // Reserved for future use
-};
-
-// Export unit header with proper section placement
-__attribute__((section(".unit_header")))
-__attribute__((used))
-const unit_header unit_header_data = {
-  .magic = 0x54494E55,  // 'UNIT' in hex
-  .api_version = 0x0100,
-  .platform = 0x44524D4C,  // 'DRML' for Drumlogue
-  .reserved0 = 0,
-  
-  .name = "Eurorack OSC",
-  .category = "Oscillator",
-  .author = "Eurorack Port",
-  .description = "Ported Eurorack oscillator module for Drumlogue",
-  
-  .num_params = 6,
-  .reserved1 = {0, 0, 0}
-};
-
-// ---- Parameter Descriptors ----
-
-// Optional: Export parameter descriptors for UI integration
-struct param_descriptor {
-  uint8_t id;
-  uint8_t type;
-  uint16_t flags;
-  const char *name;
-  int32_t min;
-  int32_t max;
-  int32_t def;
-};
-
-__attribute__((section(".unit_params")))
-__attribute__((used))
-const param_descriptor unit_params[] = {
-  {0,  0, 0, "Shape",      0, 100, 0},
-  {1,  0, 0, "Alt Shape",  0, 100, 0},
-  {2,  0, 0, "Parameter 1", 0, 100, 50},
-  {3,  0, 0, "Parameter 2", 0, 100, 50},
-  {4,  0, 0, "Parameter 3", 0, 100, 50},
-  {5,  0, 0, "Parameter 4", 0, 100, 50},
-};
-
-// ---- Module Info Functions ----
-
-extern "C" {
-
-__attribute__((used))
-const char * unit_get_module_name() {
-  return unit_header_data.name;
-}
-
-__attribute__((used))
-const char * unit_get_module_category() {
-  return unit_header_data.category;
-}
-
-__attribute__((used))
-const char * unit_get_module_author() {
-  return unit_header_data.author;
-}
-
-__attribute__((used))
-const char * unit_get_module_description() {
-  return unit_header_data.description;
-}
-
-__attribute__((used))
-uint32_t unit_get_num_params() {
-  return unit_header_data.num_params;
-}
-
-} // extern "C"
+} /* extern "C" */

@@ -11,11 +11,20 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=minilogue-xd VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
-	@PLATFORM=nutekt-digital VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+	@PLATFORM=nts-1 VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS)
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test
+
+# Host-side unit tests (no ARM toolchain required)
+# Usage: make test [BLOCK_SIZE=24]
+BLOCK_SIZE ?= 24
+test:
+	g++ -std=c++11 -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Idrumlogue -I. -Wall -Wextra \
+	    test_drumlogue_callbacks.cc drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
