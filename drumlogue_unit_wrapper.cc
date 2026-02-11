@@ -284,8 +284,8 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  * the OSC API's parameter system:
  *   id 0 -> k_user_osc_param_shape      (10-bit: 0-1023)
  *   id 1 -> k_user_osc_param_shiftshape (10-bit: 0-1023)
- *   id 2 -> k_user_osc_param_id1        (0-200 bipolar)
- *   id 3 -> k_user_osc_param_id2        (0-200 bipolar)
+ *   id 2 -> k_user_osc_param_id1        (0-200 i.e -100% - +100%)
+ *   id 3 -> k_user_osc_param_id2        (0-100 percentage)
  *   id 4 -> k_user_osc_param_id3        (LFO target select)
  *   id 5 -> k_user_osc_param_id4        (LFO2 rate)
  *
@@ -306,11 +306,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   switch (id) {
     case 0: /* Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)(value * 1023 / 100);
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
     case 1: /* Shift-Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)(value * 1023 / 100);
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
     case 2: /* Param 1: 0-100 -> 0-200 (bipolar centered at 100) */
       osc_id    = k_user_osc_param_id1;
