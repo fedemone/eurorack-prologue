@@ -82,7 +82,9 @@ static inline float q31_to_f32(int32_t q31) {
 /** Convert float to Q31 fixed-point, clamped to [-1.0, 1.0] */
 static inline int32_t f32_to_q31(float f) {
   f = (f < -1.f) ? -1.f : ((f > 1.f) ? 1.f : f);
-  return (int32_t)(f * (float)(1U << 31));
+  float scaled = f * 2147483648.0f;
+  if (scaled >= 2147483647.0f) return 0x7FFFFFFF;
+  return (int32_t)scaled;
 }
 
 /** Clip float to [0.0, 1.0] */
