@@ -448,8 +448,8 @@ TEST(wrapper_param_shape_scaling) {
   ASSERT_EQ(0, g_mock.last_param_value);
 
   unit_set_param_value(0, 50);   /* mid */
-  /* 50 * 1023 / 100 = 511 */
-  ASSERT_EQ(511, g_mock.last_param_value);
+  /* (50 * 1023 + 50) / 100 = 512 (rounded) */
+  ASSERT_EQ(512, g_mock.last_param_value);
 
   teardown_unit();
 }
