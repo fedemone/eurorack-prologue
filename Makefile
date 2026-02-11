@@ -18,8 +18,10 @@ $(OSCILLATORS):
 .PHONY: $(TOPTARGETS) $(OSCILLATORS) test
 
 # Host-side unit tests (no ARM toolchain required)
+# Usage: make test [BLOCK_SIZE=24]
+BLOCK_SIZE ?= 24
 test:
-	g++ -std=c++11 -DOSC_NATIVE_BLOCK_SIZE=24 -Idrumlogue -I. -Wall -Wextra \
+	g++ -std=c++11 -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Idrumlogue -I. -Wall -Wextra \
 	    test_drumlogue_callbacks.cc drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc \
 	    -o test_drumlogue_callbacks -lm
 	./test_drumlogue_callbacks
