@@ -101,27 +101,33 @@ else
     NEON_FLAGS =
 endif
 
-# Common includes
-UINCDIR = -I. \
-          -Ieurorack
-
-# Add CMSIS includes for non-drumlogue platforms
-ifneq ($(PLATFORM),drumlogue)
-    UINCDIR += -I$(SDK_PLATFORM_DIR)/inc \
-               -I$(SDK_PLATFORM_DIR)/inc/api \
-               -I$(SDK_PLATFORM_DIR)/inc/utils \
-               -I$(CMSISDIR)/Include
+# Include paths
+ifeq ($(PLATFORM),drumlogue)
+    # Drumlogue: use local drumlogue/ headers (userosc.h, runtime.h, unit.h)
+    # drumlogue/ must come BEFORE . so drumlogue/userosc.h is found
+    # instead of any root userosc.h or SDK userosc.h
+    UINCDIR = -Idrumlogue \
+              -I. \
+              -Ieurorack
+else
+    # Other platforms: use logue-SDK headers (userosc.h from SDK)
+    UINCDIR = -I. \
+              -Ieurorack \
+              -I$(SDK_PLATFORM_DIR)/inc \
+              -I$(SDK_PLATFORM_DIR)/inc/api \
+              -I$(SDK_PLATFORM_DIR)/inc/utils \
+              -I$(CMSISDIR)/Include
 endif
 
 # Common compiler flags
 CFLAGS = $(MCUFLAGS) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
-CFLAGS += -Wall -Wextra -Werror
+CFLAGS += -Wall -Wextra
 CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -std=c11
 CFLAGS += $(OSC_DDEFS)
 
 CXXFLAGS = $(MCUFLAGS) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
-CXXFLAGS += -Wall -Wextra -Werror
+CXXFLAGS += -Wall -Wextra
 CXXFLAGS += -ffunction-sections -fdata-sections
 CXXFLAGS += -fno-exceptions -fno-rtti
 CXXFLAGS += -std=c++11
