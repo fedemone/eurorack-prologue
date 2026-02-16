@@ -17,6 +17,10 @@
 #include <cstring>
 #include <cmath>
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
 /* ---- Static State ---- */
 
 static struct {
@@ -38,6 +42,7 @@ static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
 /* ---- Q31 / Float Helpers ---- */
+static const float kQ31Reciprocal = 1.0f / (float)(1U << 31); // 2147483648.0f = 2^31
 
 static inline int32_t float_to_q31(float f) {
   /* Q31 range is [-1.0, 1.0 - 2^-31]. Clamp after scaling to avoid overflow. */
@@ -48,7 +53,7 @@ static inline int32_t float_to_q31(float f) {
 }
 
 static inline float q31_to_float(int32_t q31) {
-  return (float)q31 * (1.0f / (float)(1U << 31));
+  return (float)q31 * kQ31Reciprocal;
 }
 
 /* ---- Pitch Helpers ---- */
@@ -185,6 +190,32 @@ void osc_adapter_set_tempo(uint32_t tempo) {
  */
 
 /**
+ * Convert Q31 int32_t buffer to float buffer.
+ * NEON path processes 4 samples at a time using SIMD.
+ * Both block sizes (24, 32) are multiples of 4.
+ */
+static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
+#ifdef __ARM_NEON
+  // This constant could be defined at file scope for wider use.
+  const float32x4_t scale = vdupq_n_f32(kQ31Reciprocal);
+  uint32_t i = 0;
+  for (; i + 4 <= count; i += 4) {
+    int32x4_t q = vld1q_s32(src + i);
+    float32x4_t f = vcvtq_f32_s32(q);
+    f = vmulq_f32(f, scale);
+    vst1q_f32(dst + i, f);
+  }
+  for (; i < count; ++i) {
+    dst[i] = (float)src[i] * kQ31Reciprocal;
+  }
+#else
+  for (uint32_t i = 0; i < count; ++i) {
+    dst[i] = q31_to_float(src[i]);
+  }
+#endif
+}
+
+/**
  * Render one native-sized block from OSC_CYCLE into the static buffer.
  */
 static void render_one_block(void) {
@@ -192,9 +223,7 @@ static void render_one_block(void) {
 
   OSC_CYCLE(&s_adapter.params, q31_buf, OSC_NATIVE_BLOCK_SIZE);
 
-  for (uint32_t i = 0; i < OSC_NATIVE_BLOCK_SIZE; ++i) {
-    s_render_buf[i] = q31_to_float(q31_buf[i]);
-  }
+  q31_buf_to_float(q31_buf, s_render_buf, OSC_NATIVE_BLOCK_SIZE);
   s_render_rd    = 0;
   s_render_avail = OSC_NATIVE_BLOCK_SIZE;
 }
