@@ -36,49 +36,6 @@
 #include "attributes.h"
 
 /* ===========================================================================
- * Unit Header
- *
- * Exported in the .unit_header ELF section. The drumlogue runtime reads
- * this to identify the unit, its API version, and parameter descriptors.
- * ======================================================================== */
-
-#define UNIT_PARAM_PERCENT(pname, pmin, pmax, pcenter, pinit) \
-  { (pmin), (pmax), (pcenter), (pinit), k_unit_param_type_percent, 0, 0, 0, {pname} }
-
-#define UNIT_PARAM_ENUM(pname, pmin, pmax, pinit) \
-  { (pmin), (pmax), 0, (pinit), k_unit_param_type_enum, 0, 0, 0, {pname} }
-
-#define UNIT_PARAM_NONE() \
-  { 0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""} }
-
-const __unit_header unit_header_t unit_header = {
-  .header_size  = sizeof(unit_header_t),
-  .target       = UNIT_TARGET_PLATFORM | k_unit_module_synth,
-  .api          = UNIT_API_VERSION,
-  .dev_id       = 0x0U,
-  .unit_id      = 0x0U,
-  .version      = 0x00010600U,   /* v1.6.0 matching project version */
-  .name         = "EurorkOSC",   /* max 13 chars */
-  .num_presets  = 0,
-  .num_params   = 6,
-  .params       = {
-    /* id 0 */ UNIT_PARAM_PERCENT("Shape",      0, 100, 0,  0),
-    /* id 1 */ UNIT_PARAM_PERCENT("ShiftShape",  0, 100, 0,  0),
-    /* id 2 */ UNIT_PARAM_PERCENT("Param 1",    0, 100, 50, 50),
-    /* id 3 */ UNIT_PARAM_PERCENT("Param 2",    0, 100, 50, 50),
-    /* id 4 */ UNIT_PARAM_ENUM("LFO Target",    0, 7, 0),
-    /* id 5 */ UNIT_PARAM_PERCENT("LFO2 Rate",  0, 100, 0,  0),
-    /* remaining slots unused */
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-    UNIT_PARAM_NONE(), UNIT_PARAM_NONE(), UNIT_PARAM_NONE(),
-  }
-};
-
-/* ===========================================================================
  * Module State
  * ======================================================================== */
 
@@ -111,8 +68,8 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   if (!desc)
     return k_unit_err_undef;
 
-  /* Validate target platform */
-  if ((desc->target & 0xFF00) != k_unit_target_drumlogue)
+  /* Validate target platform (must match our header exactly) */
+  if (desc->target != unit_header.target)
     return k_unit_err_target;
 
   /* Validate API version (require 2.0.0+) */

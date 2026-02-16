@@ -44,26 +44,34 @@
 - [ ] Decide whether to remove or keep the 14 redundant `manifest_drumlogue_*.json` files
 - [ ] Test on drumlogue hardware (if available)
 
-## Stage 2: Unit Tests for Callbacks
+## Stage 2: Unit Tests for Callbacks (DONE)
 
-### Test Plan
+### Completed
 
-Write host-side (x86) unit tests that mock the drumlogue runtime and exercise each
-callback path. Tests should run without ARM hardware.
+- [x] 55 callback tests in `test_drumlogue_callbacks.cc` with mock OSC_* functions
+- [x] `unit_init` — null desc, bad target, bad API, bad samplerate, success
+- [x] `unit_render` — stereo interleave, silence when suspended, resume after suspend
+- [x] `unit_note_on` / `unit_note_off` — pitch encoding, delegation, all-note-off
+- [x] `unit_set_param_value` — scaling for all 6 params, out-of-range guard, get/set roundtrip
+- [x] `unit_teardown` — prevents further calls, adapter teardown
+- [x] Buffered rendering — exact block, partial, multi-block, accumulation, 96-frame requests
+- [x] Pitch bend — neutral, up, down
+- [x] Shape LFO — Q31 conversion, channel pressure mapping
+- [x] Q31/Float — zero, positive, negative conversion accuracy
+- [x] Edge cases — null output, uninitialized render
 
-- [ ] `unit_init` — verify correct initialization, error returns for bad params
-- [ ] `unit_render` — verify Q31->float conversion, mono->stereo, block boundary handling
-- [ ] `unit_note_on` / `unit_note_off` — verify pitch encoding, OSC_NOTEON/NOTEOFF called
-- [ ] `unit_set_param_value` — verify scaling for each param type (shape, shift-shape, enum)
-- [ ] `unit_teardown` — verify clean shutdown
-- [ ] Buffered rendering — verify correct output across all frame sizes (1, 23, 24, 25, 48, 96)
-- [ ] Pitch bend — verify bend range and pitch update
-- [ ] Parameter edge cases — min/max values, rapid changes
+### Bugs Found & Fixed
 
-### Test Framework
+- Forward reference: `s_render_rd`/`s_render_avail` used before declaration
+- Buffer not flushed on init: leftover samples across init/teardown cycles
+- Missing `osc_adapter_teardown()`: adapter stayed initialized after teardown
+- `float_to_q31(1.0)` overflow: `1.0 * 2^31` exceeds `INT32_MAX`, now clamped
 
-Choose a lightweight C/C++ test framework (e.g., Unity, Catch2, or Google Test).
-Tests should be buildable with host compiler (gcc/g++) without ARM toolchain.
+### Build
+
+```bash
+make test  # Runs 55 callback tests (host compiler, no ARM required)
+```
 
 ## Stage 3: NEON Optimizations (DONE)
 
@@ -84,7 +92,29 @@ Tests should be buildable with host compiler (gcc/g++) without ARM toolchain.
 - DSP engine inner loops: inside unmodified oscillator source code, out of scope
 - `float_to_q31`: called once per shape_lfo update, not a hot path
 
-## Stage 4: Verification of Optimized Output
+## Stage 4: SDK Structure Alignment & Sound Production Test (DONE)
+
+### Completed
+
+- [x] `header.c` — unit_header extracted to separate C file per SDK convention
+- [x] `config.mk` — SDK-compatible project configuration file
+- [x] `unit_init` target validation now uses `unit_header.target` (matches Braids port pattern)
+- [x] All 15 `.mk` files updated to include `header.c` for drumlogue builds
+- [x] Plaits source code (eurorack/plaits/) confirmed present with all 16 engine files
+- [x] stmlib submodule initialized (was empty)
+- [x] Sound production test (`test_sound_production.cc`) — 9 tests with real VirtualAnalogEngine
+  - Engine init, render before note-on, note-on produces audio, stereo output
+  - Different notes produce different pitch, param changes affect output
+  - Amplitude within valid range, continuous rendering, note-off stability
+
+### Build
+
+```bash
+make test-sound  # Runs 9 sound production tests (links real Plaits engine)
+make test-all    # Runs all 64 tests (55 callback + 9 sound production)
+```
+
+## Stage 5: Verification of Optimized Output
 
 - [ ] Bit-exact comparison: NEON vs scalar output for Q31/float conversion
 - [ ] Near-exact comparison: full render output (within floating-point tolerance)
@@ -102,7 +132,7 @@ Once the drumlogue port is stable and tested:
 
 ## File Inventory
 
-### Core Files (Stage 1 — Complete)
+### Core Files
 
 | File | Status | Purpose |
 |---|---|---|
@@ -110,12 +140,21 @@ Once the drumlogue port is stable and tested:
 | `drumlogue/unit.h` | New | SDK function declarations |
 | `drumlogue/attributes.h` | New | Compiler attribute macros |
 | `drumlogue/userosc.h` | New | OSC API compatibility layer |
-| `drumlogue_unit_wrapper.cc` | Rewritten | Synth Module API implementation |
-| `drumlogue_osc_adapter.cc` | Rewritten | OSC API bridge + buffered rendering |
+| `header.c` | New (Stage 4) | SDK-style unit_header in `.unit_header` ELF section |
+| `config.mk` | New (Stage 4) | SDK-compatible project configuration |
+| `drumlogue_unit_wrapper.cc` | Rewritten | Synth Module API implementation (NEON mono->stereo) |
+| `drumlogue_osc_adapter.cc` | Rewritten | OSC API bridge + buffered rendering (NEON Q31->float) |
 | `drumlogue_osc_adapter.h` | Rewritten | Adapter interface |
 | `makefile.inc` | Modified | Build system (include paths, toolchain) |
-| `Makefile` | Modified | Top-level build (platform names) |
-| `osc_*.mk` (15 files) | Modified | Per-oscillator build config |
+| `Makefile` | Modified | Top-level build, test targets |
+| `osc_*.mk` (15 files) | Modified | Per-oscillator build config + header.c |
+
+### Test Files
+
+| File | Tests | Description |
+|---|---|---|
+| `test_drumlogue_callbacks.cc` | 55 | Mock-based callback chain tests |
+| `test_sound_production.cc` | 9 | Real Plaits engine sound production |
 
 ### Oscillator Source (Unchanged)
 
@@ -140,6 +179,6 @@ Once the drumlogue port is stable and tested:
 | `userosc.h` (root) | Deleted — was shadowing SDK |
 
 ---
-**Last Updated**: 2026-02-11
+**Last Updated**: 2026-02-16
 **Branch**: claude/prologue-to-drumlogue-port-OZPcA
-**Status**: Stage 1 complete (code review + fixes), awaiting ARM compilation test
+**Status**: Stages 1-4 complete. 64 tests passing. Awaiting ARM cross-compilation and hardware testing.

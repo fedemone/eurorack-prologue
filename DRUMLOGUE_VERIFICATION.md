@@ -163,6 +163,40 @@ All `.mk` files updated with:
 - [ ] Parameter response matches prologue behavior
 - [ ] Stereo output balanced (mono duplicated to both channels)
 
+## SDK Structure Alignment (Stage 4)
+
+Adapted project structure to match the drumlogue SDK convention (dummy-synth template
+and boochow/eurorack_drumlogue Braids port):
+
+- **`header.c`**: Unit header extracted to separate C file, placed in `.unit_header` ELF section
+- **`config.mk`**: SDK-compatible project configuration
+- **`unit_init` target check**: Now uses `desc->target != unit_header.target` (matches Braids port)
+- **All 15 `.mk` files**: Updated to include `header.c` for drumlogue builds
+
+## Host-Side Testing (Stages 2 + 4)
+
+### Callback Tests (55 tests — `make test`)
+
+Mock-based tests verify the full callback chain without ARM hardware:
+- unit_header structure, unit_init validation, note events, pitch bend
+- Parameter mapping/scaling, shape LFO, Q31/float conversion
+- Buffered rendering across all frame sizes, stereo interleaving, lifecycle
+
+### Sound Production Tests (9 tests — `make test-sound`)
+
+Links the **real Plaits VirtualAnalogEngine** and verifies end-to-end audio:
+- Engine init succeeds through full wrapper chain
+- Note-on produces non-zero stereo audio (L=R mono duplication)
+- Different MIDI notes produce different waveforms
+- Shape parameter changes affect output
+- Output amplitude within valid range, no NaN/Inf
+- Continuous rendering across multiple calls
+- Note-off remains stable (no crashes, valid floats)
+
+```bash
+make test-all  # Runs all 64 tests (55 callback + 9 sound production)
+```
+
 ## Next Steps
 
 1. **Install ARM Toolchain** and test compilation:
@@ -177,11 +211,9 @@ All `.mk` files updated with:
    readelf -S *.drmlgunit | grep unit_header  # Verify section exists
    ```
 
-3. **Stage 2**: Write unit tests for all callback paths (see TODO_DRUMLOGUE_PORT.md)
-
-4. **Test on Hardware**:
+3. **Test on Hardware**:
    - Copy `.drmlgunit` files to `Units/Synths/` on drumlogue USB storage
    - Restart and test audio output + parameters
 
 ---
-**Last Updated**: 2026-02-11
+**Last Updated**: 2026-02-16

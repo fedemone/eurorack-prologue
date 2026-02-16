@@ -15,7 +15,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all
 
 # Host-side unit tests (no ARM toolchain required)
 # Usage: make test [BLOCK_SIZE=24]
@@ -23,8 +23,24 @@ BLOCK_SIZE ?= 24
 test:
 	g++ -std=c++11 -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Idrumlogue -I. -Wall -Wextra \
 	    test_drumlogue_callbacks.cc drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc \
-	    -o test_drumlogue_callbacks -lm
+	    header.c -o test_drumlogue_callbacks -lm
 	./test_drumlogue_callbacks
+
+# Sound production test: links REAL Plaits VirtualAnalogEngine
+# Verifies end-to-end audio production through the full wrapper chain
+# Usage: make test-sound
+test-sound:
+	g++ -std=c++11 -O2 -DTEST -DBLOCKSIZE=$(BLOCK_SIZE) -DOSC_VA \
+	    -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Idrumlogue -I. -Ieurorack -Wall -Wextra \
+	    test_sound_production.cc drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc \
+	    header.c macro-oscillator2.cc \
+	    eurorack/plaits/dsp/engine/virtual_analog_engine.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    -o test_sound_production -lm
+	./test_sound_production
+
+# Run all tests
+test-all: test test-sound
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
