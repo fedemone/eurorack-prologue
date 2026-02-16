@@ -42,6 +42,7 @@ static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
 /* ---- Q31 / Float Helpers ---- */
+static const float kQ31Reciprocal = 1.0f / (float)(1U << 31); // 2147483648.0f = 2^31
 
 static inline int32_t float_to_q31(float f) {
   /* Q31 range is [-1.0, 1.0 - 2^-31]. Clamp after scaling to avoid overflow. */
@@ -52,7 +53,7 @@ static inline int32_t float_to_q31(float f) {
 }
 
 static inline float q31_to_float(int32_t q31) {
-  return (float)q31 * (1.0f / (float)(1U << 31));
+  return (float)q31 * kQ31Reciprocal;
 }
 
 /* ---- Pitch Helpers ---- */
@@ -195,7 +196,8 @@ void osc_adapter_set_tempo(uint32_t tempo) {
  */
 static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
 #ifdef __ARM_NEON
-  const float32x4_t scale = vdupq_n_f32(1.0f / 2147483648.0f);
+  // This constant could be defined at file scope for wider use.
+  const float32x4_t scale = vdupq_n_f32(kQ31Reciprocal);
   uint32_t i = 0;
   for (; i + 4 <= count; i += 4) {
     int32x4_t q = vld1q_s32(src + i);
@@ -204,7 +206,7 @@ static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
     vst1q_f32(dst + i, f);
   }
   for (; i < count; ++i) {
-    dst[i] = (float)src[i] * (1.0f / 2147483648.0f);
+    dst[i] = (float)src[i] * kQ31Reciprocal;
   }
 #else
   for (uint32_t i = 0; i < count; ++i) {
