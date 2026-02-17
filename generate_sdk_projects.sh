@@ -32,7 +32,7 @@ PROJROOT='$$(PROJROOT)'
 ##############################################################################
 # Helper: create one project directory
 #
-# Usage: create_project <dir_name> <project_name> <project_type>
+# Usage: create_project <dir_name> <project_name>
 #                       <osc_source> <engine_sources> <udefs> <block_size>
 #
 # engine_sources: space-separated list (without PROJROOT prefix)
