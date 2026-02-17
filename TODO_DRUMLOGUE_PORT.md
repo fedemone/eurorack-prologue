@@ -114,7 +114,48 @@ make test-sound  # Runs 9 sound production tests (links real Plaits engine)
 make test-all    # Runs all 64 tests (55 callback + 9 sound production)
 ```
 
-## Stage 5: Verification of Optimized Output
+## Stage 5: SDK Docker Build Integration (DONE)
+
+### Completed
+
+- [x] Updated `logue-sdk` submodule from v1.x (Sept 2019) to main branch (commit 10a38b3)
+  - Now has `platform/drumlogue/` with `common/` headers and `dummy-synth/` template
+  - Now has `docker/` with `run_interactive.sh`, `run_cmd.sh`, `build_image.sh`
+- [x] SDK header compatibility verified: core structs match, SDK has additional helper macros
+- [x] Created 15 per-oscillator SDK project directories under `logue-sdk/platform/drumlogue/`
+  - Each contains: `Makefile` (SDK template copy) + `config.mk` (oscillator-specific)
+  - Source files referenced via `$(PROJROOT)` relative paths back to repo root
+  - Include paths: `$(PROJROOT)/drumlogue` (userosc.h), `$(PROJROOT)/eurorack`, `$(PROJROOT)`
+  - SDK `common/` headers added automatically by SDK Makefile (`DINCDIR`)
+  - SDK `_unit_base.c` (weak fallback symbols) added automatically
+- [x] `generate_sdk_projects.sh` — reproducible project directory generation script
+- [x] `build_drumlogue.sh` — convenience wrapper for Docker builds (all/individual/clean/collect)
+- [x] Make dry-run validation passed for all project types (mo2_va, modal_strike)
+  - Correct compiler flags: `-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4`
+  - Correct defines: oscillator-specific + `OSC_NATIVE_BLOCK_SIZE`
+  - Correct output: `<project>.drmlgunit` shared library
+- [x] All 64 existing tests still pass
+
+### Build (requires Docker)
+
+```bash
+# Build Docker image (first time only)
+cd logue-sdk && docker/build_image.sh
+
+# Build all oscillators
+./build_drumlogue.sh
+
+# Build one oscillator
+./build_drumlogue.sh mo2_va
+
+# Collect .drmlgunit files
+./build_drumlogue.sh --collect
+
+# Interactive Docker shell
+./build_drumlogue.sh --interactive
+```
+
+## Stage 6: Verification of Optimized Output
 
 - [ ] Bit-exact comparison: NEON vs scalar output for Q31/float conversion
 - [ ] Near-exact comparison: full render output (within floating-point tolerance)
@@ -142,6 +183,9 @@ Once the drumlogue port is stable and tested:
 | `drumlogue/userosc.h` | New | OSC API compatibility layer |
 | `header.c` | New (Stage 4) | SDK-style unit_header in `.unit_header` ELF section |
 | `config.mk` | New (Stage 4) | SDK-compatible project configuration |
+| `generate_sdk_projects.sh` | New (Stage 5) | Creates per-oscillator SDK project dirs |
+| `build_drumlogue.sh` | New (Stage 5) | Docker build convenience wrapper |
+| `logue-sdk/platform/drumlogue/<project>/` | New (Stage 5) | 15 SDK project dirs (Makefile + config.mk) |
 | `drumlogue_unit_wrapper.cc` | Rewritten | Synth Module API implementation (NEON mono->stereo) |
 | `drumlogue_osc_adapter.cc` | Rewritten | OSC API bridge + buffered rendering (NEON Q31->float) |
 | `drumlogue_osc_adapter.h` | Rewritten | Adapter interface |
@@ -179,6 +223,6 @@ Once the drumlogue port is stable and tested:
 | `userosc.h` (root) | Deleted — was shadowing SDK |
 
 ---
-**Last Updated**: 2026-02-16
+**Last Updated**: 2026-02-17
 **Branch**: claude/prologue-to-drumlogue-port-OZPcA
-**Status**: Stages 1-4 complete. 64 tests passing. Awaiting ARM cross-compilation and hardware testing.
+**Status**: Stages 1-5 complete. 64 tests passing. SDK Docker build system integrated. Ready for `docker/build_image.sh` + `./build_drumlogue.sh`.
