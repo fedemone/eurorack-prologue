@@ -14,3 +14,4 @@ eurorack_*
 .DS_Store
 test_drumlogue_callbacks
 test_sound_production
+build/drumlogue/

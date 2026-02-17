@@ -197,18 +197,88 @@ Links the **real Plaits VirtualAnalogEngine** and verifies end-to-end audio:
 make test-all  # Runs all 64 tests (55 callback + 9 sound production)
 ```
 
+## SDK Docker Build Integration (Stage 5)
+
+### logue-sdk Submodule Update
+
+The `logue-sdk` submodule was updated from v1.x (Sept 2019, commit `b7a424e`) to the
+main branch (commit `10a38b3`). This adds:
+- `platform/drumlogue/` — common headers and project templates
+- `docker/` — Docker-based build system (`run_interactive.sh`, `run_cmd.sh`, `build_image.sh`)
+
+### SDK Header Compatibility
+
+Comparison of our `drumlogue/` headers vs SDK `common/` headers:
+- Core structs (`unit_header_t`, `unit_param_t`, `unit_runtime_desc_t`) — **identical layout**
+- SDK version has additional helper macros (`UNIT_TARGET_PLATFORM_IS_COMPAT`, `UNIT_API_IS_COMPAT`, etc.)
+- SDK `runtime.h` includes `sample_wrapper.h` separately; ours inlines the definition
+- Our local `drumlogue/` headers used for host-side test compilation
+- SDK `common/` headers used automatically for ARM cross-compilation via Docker
+
+### Per-Oscillator Project Structure
+
+15 SDK-compatible project directories created under `logue-sdk/platform/drumlogue/`:
+
+| Project | Type | Defines | Block Size |
+|---|---|---|---|
+| `mo2_va` | Plaits | `-DOSC_VA` | 24 |
+| `mo2_wsh` | Plaits | `-DOSC_WSH` | 24 |
+| `mo2_fm` | Plaits | `-DOSC_FM` | 24 |
+| `mo2_grn` | Plaits | `-DOSC_GRN` | 24 |
+| `mo2_add` | Plaits | `-DOSC_ADD` | 24 |
+| `mo2_string` | Plaits | `-DOSC_STRING` | 24 |
+| `mo2_wta`..`mo2_wtf` | Plaits | `-DOSC_WTA`..`-DOSC_WTF` | 24 |
+| `modal_strike` | Elements | `-DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER` | 32 |
+| `modal_strike_16_nolimit` | Elements | `-DELEMENTS_RESONATOR_MODES=16` | 32 |
+| `modal_strike_24_nolimit` | Elements | `-DELEMENTS_RESONATOR_MODES=24` | 32 |
+
+Each project directory contains:
+- `Makefile` — copied from SDK `dummy-synth/Makefile` (436 lines, unmodified)
+- `config.mk` — project-specific sources, includes, defines
+
+### SDK Build Validation (Dry-Run)
+
+`make -n` from each project directory shows correct:
+- **Compiler**: `$(CROSS_COMPILE)gcc` / `g++` (set by Docker environment)
+- **Architecture**: `-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4 -mfloat-abi=hard`
+- **Optimization**: `-Os -flto -mvectorize-with-neon-quad -ftree-vectorize`
+- **Includes**: `-I. -I<common/> -I<drumlogue/> -I<eurorack/> -I<repo_root/>`
+- **Defines**: `-D__arm__ -D__cortex_a7__ -D<OSC_*> -DOSC_NATIVE_BLOCK_SIZE=<N>`
+- **Sources**: All oscillator sources, wrapper, adapter, header.c, _unit_base.c
+- **Output**: `build/<project>.drmlgunit` (shared library, stripped)
+
+### Build Instructions
+
+```bash
+# 1. Build the Docker image (first time only)
+cd logue-sdk && docker/build_image.sh && cd ..
+
+# 2. Build all oscillators
+./build_drumlogue.sh
+
+# 3. Or build a specific one
+./build_drumlogue.sh mo2_va
+
+# 4. Collect all .drmlgunit files
+./build_drumlogue.sh --collect
+# -> build/drumlogue/*.drmlgunit
+
+# 5. Interactive Docker shell
+./build_drumlogue.sh --interactive
+```
+
 ## Next Steps
 
-1. **Install ARM Toolchain** and test compilation:
+1. **Build Docker image** and run first real compilation:
    ```bash
-   sudo apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-   PLATFORM=drumlogue make -f osc_va.mk
+   cd logue-sdk && docker/build_image.sh
+   ./build_drumlogue.sh mo2_va
    ```
 
 2. **Verify ELF output**:
    ```bash
-   file *.drmlgunit  # Should show: ELF 32-bit LSB shared object, ARM
-   readelf -S *.drmlgunit | grep unit_header  # Verify section exists
+   file build/drumlogue/*.drmlgunit  # ELF 32-bit LSB shared object, ARM
+   readelf -S build/drumlogue/*.drmlgunit | grep unit_header
    ```
 
 3. **Test on Hardware**:
@@ -216,4 +286,4 @@ make test-all  # Runs all 64 tests (55 callback + 9 sound production)
    - Restart and test audio output + parameters
 
 ---
-**Last Updated**: 2026-02-16
+**Last Updated**: 2026-02-17
