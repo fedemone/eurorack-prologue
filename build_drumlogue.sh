@@ -215,6 +215,11 @@ case "$1" in
         check_prerequisites
         failed=0
         for project in "$@"; do
+            if [[ "$project" == -* ]]; then
+                echo -e "${RED}Error: Unknown option or option in wrong position: $project${NC}" >&2
+                usage
+                exit 1
+            fi
             if ! build_project "$project"; then
                 failed=$((failed + 1))
             fi
