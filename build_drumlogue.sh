@@ -5,6 +5,8 @@
 # Convenience wrapper for building drumlogue oscillator units using
 # the official logue-sdk Docker build system.
 #
+# Works on Linux, macOS, and Windows (Git Bash / MSYS2).
+#
 # Prerequisites:
 #   - Docker installed and running
 #   - logue-sdk submodule initialized (git submodule update --init)
@@ -17,6 +19,7 @@
 #   ./build_drumlogue.sh --clean          # Clean all build artifacts
 #   ./build_drumlogue.sh --list           # List available projects
 #   ./build_drumlogue.sh --interactive    # Enter Docker shell
+#   ./build_drumlogue.sh --collect        # Collect .drmlgunit files
 #
 
 set -euo pipefail
@@ -24,8 +27,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="${SCRIPT_DIR}/logue-sdk"
 SDK_DRUMLOGUE="${SDK_DIR}/platform/drumlogue"
-DOCKER_DIR="${SDK_DIR}/docker"
 OUTPUT_DIR="${SCRIPT_DIR}/build/drumlogue"
+
+# Docker image names (matches SDK's run_cmd.sh logic)
+IMAGE_NAME_DEFAULT="xiashj/logue-sdk"
+IMAGE_NAME_FALLBACK="logue-sdk-dev-env"
+IMAGE_VERSION="latest"
 
 # All available oscillator projects
 ALL_PROJECTS=(
@@ -34,11 +41,113 @@ ALL_PROJECTS=(
     modal_strike modal_strike_16_nolimit modal_strike_24_nolimit
 )
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors (disabled if not a terminal)
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    NC='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' NC=''
+fi
+
+##############################################################################
+# Windows (Git Bash / MSYS2) detection and path helpers
+#
+# Problem: Git Bash auto-converts POSIX paths in command arguments.
+#   /app/cmd_entry  ->  C:/Program Files/Git/app/cmd_entry  (wrong!)
+#
+# Fix: call `docker run` directly (not via run_cmd.sh) with:
+#   - MSYS_NO_PATHCONV=1   disables all POSIX->Windows conversion
+#   - volume path in //d/path form  (double slash = not converted by Git Bash)
+##############################################################################
+
+IS_WINDOWS=false
+if [[ "${OSTYPE:-}" == msys* ]] || [[ "${OSTYPE:-}" == cygwin* ]] || \
+   [[ "${OS:-}" == "Windows_NT" ]]; then
+    IS_WINDOWS=true
+fi
+
+# Convert an absolute POSIX path to the form Docker Desktop on Windows expects.
+# /d/foo/bar  ->  //d/foo/bar
+# Git Bash skips paths starting with // so they reach Docker unmangled.
+# Docker Desktop on Windows then maps //d/ -> D:\.
+# On Linux/macOS this is a no-op (double slash at root is identical to single).
+platform_path_for_docker() {
+    local path="$1"
+    if $IS_WINDOWS; then
+        # /d/foo -> //d/foo
+        echo "$path" | sed 's|^/\([a-zA-Z]\)/|//\1/|'
+    else
+        echo "$path"
+    fi
+}
+
+##############################################################################
+# Docker image detection (mirrors SDK run_cmd.sh logic)
+##############################################################################
+
+detect_image() {
+    if docker image inspect "${IMAGE_NAME_DEFAULT}:${IMAGE_VERSION}" \
+           >/dev/null 2>&1; then
+        echo "${IMAGE_NAME_DEFAULT}:${IMAGE_VERSION}"
+    elif docker image inspect "${IMAGE_NAME_FALLBACK}:${IMAGE_VERSION}" \
+             >/dev/null 2>&1; then
+        echo "${IMAGE_NAME_FALLBACK}:${IMAGE_VERSION}"
+    else
+        return 1
+    fi
+}
+
+##############################################################################
+# Core docker run helper
+#
+# Runs a single command inside the SDK container.
+# Bypasses the SDK's run_cmd.sh / run_interactive.sh to handle Windows paths.
+#
+# Usage: sdk_docker_run [--tty] <cmd> [args...]
+#   --tty   allocate a pseudo-TTY (use for interactive shells, not builds)
+##############################################################################
+
+sdk_docker_run() {
+    local tty_flag=""
+    if [[ "${1:-}" == "--tty" ]]; then
+        tty_flag="-t"
+        shift
+    fi
+
+    local image
+    if ! image=$(detect_image); then
+        echo -e "${RED}ERROR: Docker image not found.${NC}"
+        echo "Build it first: cd logue-sdk && docker/build_image.sh"
+        return 1
+    fi
+
+    # Platform directory mounted as /workspace inside the container.
+    local platform_path
+    platform_path=$(platform_path_for_docker "${SDK_DIR}/platform")
+
+    if $IS_WINDOWS; then
+        # MSYS_NO_PATHCONV=1  - stop Git Bash converting /app/cmd_entry etc.
+        # MSYS2_ARG_CONV_EXCL="*" - belt-and-suspenders for MSYS2
+        MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+        docker run --rm -i ${tty_flag} \
+            -v "${platform_path}:/workspace" \
+            -h logue-sdk \
+            "${image}" \
+            "$@"
+    else
+        docker run --rm -i ${tty_flag} \
+            -v "${platform_path}:/workspace" \
+            -h logue-sdk \
+            "${image}" \
+            "$@"
+    fi
+}
+
+##############################################################################
+# User-facing functions
+##############################################################################
 
 usage() {
     echo "Usage: $0 [options] [project_name ...]"
@@ -57,6 +166,10 @@ usage() {
     echo "  $0 mo2_va            # Build Virtual Analog only"
     echo "  $0 mo2_va mo2_fm     # Build VA and FM"
     echo "  $0 --collect         # Gather all .drmlgunit files"
+    echo ""
+    if $IS_WINDOWS; then
+        echo "  (Windows / Git Bash mode active)"
+    fi
 }
 
 list_projects() {
@@ -95,11 +208,6 @@ check_prerequisites() {
         exit 1
     fi
 
-    if [ ! -f "${DOCKER_DIR}/run_cmd.sh" ]; then
-        echo -e "${RED}ERROR: Docker scripts not found in logue-sdk/docker/.${NC}"
-        exit 1
-    fi
-
     if ! command -v docker &> /dev/null; then
         echo -e "${RED}ERROR: Docker is not installed or not in PATH.${NC}"
         exit 1
@@ -118,23 +226,20 @@ build_project() {
 
     echo -e "${YELLOW}Building ${project}...${NC}"
 
-    # Use the SDK Docker build command
-    cd "$SDK_DIR"
-    docker/run_cmd.sh build "drumlogue/${project}"
-    local rc=$?
-
-    if [ $rc -eq 0 ]; then
+    # The SDK container's /app/cmd_entry expects: build drumlogue/<project>
+    # We call it directly via sdk_docker_run (no TTY needed for builds).
+    if sdk_docker_run /app/cmd_entry build "drumlogue/${project}"; then
         echo -e "${GREEN}Successfully built ${project}${NC}"
-        # Check for output file
-        if [ -f "${project_dir}/build/${project}.drmlgunit" ]; then
-            echo "  Output: ${project_dir}/build/${project}.drmlgunit"
+        local unit="${project_dir}/build/${project}.drmlgunit"
+        if [ -f "$unit" ]; then
+            echo "  Output: ${unit}"
         fi
+        return 0
     else
+        local rc=$?
         echo -e "${RED}FAILED to build ${project} (exit code: ${rc})${NC}"
+        return $rc
     fi
-
-    cd "$SCRIPT_DIR"
-    return $rc
 }
 
 clean_projects() {
@@ -168,11 +273,15 @@ collect_units() {
     echo -e "${GREEN}Collected ${count} unit files.${NC}"
 }
 
-# Parse arguments
+##############################################################################
+# Main
+##############################################################################
+
 if [ $# -eq 0 ]; then
-    # Build all
+    # Build all oscillators
     check_prerequisites
     echo "Building all ${#ALL_PROJECTS[@]} oscillator projects..."
+    if $IS_WINDOWS; then echo "(Windows / Git Bash mode)"; fi
     echo ""
     failed=0
     for project in "${ALL_PROJECTS[@]}"; do
@@ -200,9 +309,43 @@ case "$1" in
     --interactive)
         check_prerequisites
         echo "Entering Docker interactive shell..."
-        echo "Inside the container, build with: make -C platform/drumlogue/<project>"
-        cd "$SDK_DIR"
-        docker/run_interactive.sh
+        echo "Inside the container, build with:"
+        echo "  make -C platform/drumlogue/<project>"
+        echo ""
+        # Interactive shell needs a real TTY.
+        # On Windows Git Bash: winpty wraps docker to provide a proper TTY.
+        _image=""
+        if ! _image=$(detect_image); then
+            echo -e "${RED}ERROR: Docker image not found.${NC}"
+            echo "Build it first: cd logue-sdk && docker/build_image.sh"
+            exit 1
+        fi
+        _platform_path=$(platform_path_for_docker "${SDK_DIR}/platform")
+        if $IS_WINDOWS; then
+            if command -v winpty &>/dev/null; then
+                MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+                winpty docker run --rm -it \
+                    -v "${_platform_path}:/workspace" \
+                    -h logue-sdk \
+                    "${_image}" \
+                    /app/interactive_entry
+            else
+                echo "Note: winpty not found. If the shell appears broken, install winpty"
+                echo "or use Docker Desktop's terminal directly."
+                MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+                docker run --rm -it \
+                    -v "${_platform_path}:/workspace" \
+                    -h logue-sdk \
+                    "${_image}" \
+                    /app/interactive_entry
+            fi
+        else
+            docker run --rm -it \
+                -v "${_platform_path}:/workspace" \
+                -h logue-sdk \
+                "${_image}" \
+                /app/interactive_entry
+        fi
         ;;
     --collect)
         collect_units
@@ -211,8 +354,9 @@ case "$1" in
         usage
         ;;
     *)
-        # Build specified projects
+        # Build specified project(s)
         check_prerequisites
+        if $IS_WINDOWS; then echo "(Windows / Git Bash mode)"; fi
         failed=0
         for project in "$@"; do
             if [[ "$project" == -* ]]; then
