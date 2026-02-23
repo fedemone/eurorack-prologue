@@ -2,8 +2,8 @@
 #
 # generate_sdk_projects.sh
 #
-# Generates per-oscillator SDK project directories under
-# logue-sdk/platform/drumlogue/ for the official Docker build system.
+# Generates per-oscillator SDK project directories under drumlogue/
+# at the repo root for use with the official Docker build system.
 #
 # Each project directory contains:
 #   - Makefile   (copy of SDK dummy-synth/Makefile)
@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DRUMLOGUE="${SCRIPT_DIR}/logue-sdk/platform/drumlogue"
 SDK_MAKEFILE="${SDK_DRUMLOGUE}/dummy-synth/Makefile"
+PROJECT_BASE="${SCRIPT_DIR}/drumlogue"
 
 # Verify SDK Makefile exists
 if [ ! -f "$SDK_MAKEFILE" ]; then
@@ -25,8 +26,8 @@ if [ ! -f "$SDK_MAKEFILE" ]; then
     exit 1
 fi
 
-# Path from project dir back to repo root: ../../../../
-PROJROOT='$$(PROJROOT)'
+# When mounted in the Docker container, repo root is /workspace/ and
+# project dirs are at /workspace/drumlogue/<project>/, so PROJROOT = ../..
 # (We use $$ in heredocs to produce a literal $ for Make variables)
 
 ##############################################################################
@@ -46,7 +47,7 @@ create_project() {
     local udefs="$5"
     local block_size="$6"
 
-    local project_dir="${SDK_DRUMLOGUE}/${dir_name}"
+    local project_dir="${PROJECT_BASE}/${dir_name}"
 
     echo "Creating project: ${dir_name} (${project_name})"
 
@@ -69,7 +70,17 @@ PROJECT := ${project_name}
 PROJECT_TYPE := synth
 
 # Path back to eurorack-prologue repo root
-PROJROOT := ../../../..
+# (from drumlogue/<project>/ up two levels to repo root)
+PROJROOT = ../..
+
+# Override SDK Makefile defaults.
+# The SDK Makefile sets COMMON_INC_PATH/COMMON_SRC_PATH with ?= to
+# \$(realpath \$(PROJECT_ROOT)/../common/), expecting common/ as a sibling
+# of the project's parent dir.  In our layout the SDK common/ is inside
+# the logue-sdk submodule, so that realpath returns empty.  Our unconditional
+# = here takes precedence over the ?= in the Makefile.
+COMMON_INC_PATH = \$(PROJROOT)/logue-sdk/platform/drumlogue/common
+COMMON_SRC_PATH = \$(PROJROOT)/logue-sdk/platform/drumlogue/common
 
 ##############################################################################
 # Sources
@@ -202,11 +213,12 @@ create_project "modal_strike_24_nolimit" "modal_strike_24_nolimit" \
 
 echo ""
 echo "Done! Created 15 SDK project directories under:"
-echo "  ${SDK_DRUMLOGUE}/"
+echo "  ${PROJECT_BASE}/"
 echo ""
 echo "To build with Docker:"
-echo "  cd logue-sdk"
-echo "  docker/run_cmd.sh build drumlogue/<project_name>"
+echo "  ./build_drumlogue.sh                  # all oscillators"
+echo "  ./build_drumlogue.sh mo2_va           # one oscillator"
 echo ""
-echo "For example:"
-echo "  docker/run_cmd.sh build drumlogue/mo2_va"
+echo "Or interactively:"
+echo "  ./build_drumlogue.sh --interactive"
+echo "  build drumlogue/mo2_va"

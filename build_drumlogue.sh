@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="${SCRIPT_DIR}/logue-sdk"
-SDK_DRUMLOGUE="${SDK_DIR}/platform/drumlogue"
+SDK_DRUMLOGUE="${SCRIPT_DIR}/drumlogue"
 OUTPUT_DIR="${SCRIPT_DIR}/build/drumlogue"
 
 # Docker image names (matches SDK's run_cmd.sh logic)
@@ -123,9 +123,11 @@ sdk_docker_run() {
         return 1
     fi
 
-    # Platform directory mounted as /workspace inside the container.
+    # Repo root mounted as /workspace inside the container.
+    # Project dirs are at /workspace/drumlogue/<project>/ and source files
+    # at /workspace/ (header.c, macro-oscillator2.cc, eurorack/, etc.).
     local platform_path
-    platform_path=$(platform_path_for_docker "${SDK_DIR}/platform")
+    platform_path=$(platform_path_for_docker "${SCRIPT_DIR}")
 
     if $IS_WINDOWS; then
         # MSYS_NO_PATHCONV=1  - stop Git Bash converting /app/cmd_entry etc.
@@ -202,7 +204,7 @@ check_prerequisites() {
         exit 1
     fi
 
-    if [ ! -d "${SDK_DRUMLOGUE}/common" ]; then
+    if [ ! -d "${SDK_DIR}/platform/drumlogue/common" ]; then
         echo -e "${RED}ERROR: logue-sdk missing drumlogue platform.${NC}"
         echo "Make sure the logue-sdk submodule is on the main branch."
         exit 1
@@ -228,17 +230,20 @@ build_project() {
 
     # The SDK container's /app/cmd_entry expects: build drumlogue/<project>
     # We call it directly via sdk_docker_run (no TTY needed for builds).
-    if sdk_docker_run /app/cmd_entry build "drumlogue/${project}"; then
+    #
+    # NOTE: The container's build_project() always returns 0 even when make
+    # fails, so we cannot rely on exit codes.  Instead, check for the output
+    # .drmlgunit file to determine success.
+    sdk_docker_run /app/cmd_entry build "drumlogue/${project}" || true
+
+    local unit="${project_dir}/build/${project}.drmlgunit"
+    if [ -f "$unit" ]; then
         echo -e "${GREEN}Successfully built ${project}${NC}"
-        local unit="${project_dir}/build/${project}.drmlgunit"
-        if [ -f "$unit" ]; then
-            echo "  Output: ${unit}"
-        fi
+        echo "  Output: ${unit}"
         return 0
     else
-        local rc=$?
-        echo -e "${RED}FAILED to build ${project} (exit code: ${rc})${NC}"
-        return $rc
+        echo -e "${RED}FAILED to build ${project} (no .drmlgunit output)${NC}"
+        return 1
     fi
 }
 
@@ -310,7 +315,8 @@ case "$1" in
         check_prerequisites
         echo "Entering Docker interactive shell..."
         echo "Inside the container, build with:"
-        echo "  make -C platform/drumlogue/<project>"
+        echo "  build drumlogue/<project>"
+        echo "  # or: make -C drumlogue/<project>"
         echo ""
         # Interactive shell needs a real TTY.
         # On Windows Git Bash: winpty wraps docker to provide a proper TTY.
@@ -320,7 +326,7 @@ case "$1" in
             echo "Build it first: cd logue-sdk && docker/build_image.sh"
             exit 1
         fi
-        _platform_path=$(platform_path_for_docker "${SDK_DIR}/platform")
+        _platform_path=$(platform_path_for_docker "${SCRIPT_DIR}")
         if $IS_WINDOWS; then
             if command -v winpty &>/dev/null; then
                 MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \

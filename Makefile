@@ -35,7 +35,11 @@ test:
 test-sound:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DBLOCKSIZE=$(BLOCK_SIZE) -DOSC_VA \
 	    -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Ieurorack \
-	    test_sound_production.cc $(COMMON_TEST_SRC) ...
+	    test_sound_production.cc $(COMMON_TEST_SRC) \
+	    macro-oscillator2.cc \
+	    eurorack/plaits/dsp/engine/virtual_analog_engine.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    -o test_sound_production -lm
 	./test_sound_production
 
 
