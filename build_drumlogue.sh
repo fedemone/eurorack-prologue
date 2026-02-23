@@ -129,6 +129,7 @@ sdk_docker_run() {
     local platform_path
     platform_path=$(platform_path_for_docker "${SCRIPT_DIR}")
 
+    # Merge stderr into stdout so compilation errors are visible in build logs.
     if $IS_WINDOWS; then
         # MSYS_NO_PATHCONV=1  - stop Git Bash converting /app/cmd_entry etc.
         # MSYS2_ARG_CONV_EXCL="*" - belt-and-suspenders for MSYS2
@@ -137,13 +138,13 @@ sdk_docker_run() {
             -v "${platform_path}:/workspace" \
             -h logue-sdk \
             "${image}" \
-            "$@"
+            "$@" 2>&1
     else
         docker run --rm -i ${tty_flag} \
             -v "${platform_path}:/workspace" \
             -h logue-sdk \
             "${image}" \
-            "$@"
+            "$@" 2>&1
     fi
 }
 
@@ -234,10 +235,19 @@ build_project() {
     # NOTE: The container's build_project() always returns 0 even when make
     # fails, so we cannot rely on exit codes.  Instead, check for the output
     # .drmlgunit file to determine success.
+    #
+    # The container runs `make -j` then `make install`.  The install target
+    # MOVES the .drmlgunit from build/ to the project root, so check both.
     sdk_docker_run /app/cmd_entry build "drumlogue/${project}" || true
 
-    local unit="${project_dir}/build/${project}.drmlgunit"
-    if [ -f "$unit" ]; then
+    local unit=""
+    if [ -f "${project_dir}/${project}.drmlgunit" ]; then
+        unit="${project_dir}/${project}.drmlgunit"
+    elif [ -f "${project_dir}/build/${project}.drmlgunit" ]; then
+        unit="${project_dir}/build/${project}.drmlgunit"
+    fi
+
+    if [ -n "$unit" ]; then
         echo -e "${GREEN}Successfully built ${project}${NC}"
         echo "  Output: ${unit}"
         return 0
@@ -251,10 +261,11 @@ clean_projects() {
     echo "Cleaning build artifacts..."
     for project in "${ALL_PROJECTS[@]}"; do
         local project_dir="${SDK_DRUMLOGUE}/${project}"
-        if [ -d "${project_dir}/build" ]; then
+        if [ -d "${project_dir}/build" ] || [ -f "${project_dir}/${project}.drmlgunit" ]; then
             echo "  Cleaning ${project}"
             rm -rf "${project_dir}/build"
             rm -rf "${project_dir}/.dep"
+            rm -f "${project_dir}/${project}.drmlgunit"
         fi
     done
     if [ -d "$OUTPUT_DIR" ]; then
@@ -268,8 +279,14 @@ collect_units() {
     local count=0
     echo "Collecting .drmlgunit files to ${OUTPUT_DIR}/"
     for project in "${ALL_PROJECTS[@]}"; do
-        local unit="${SDK_DRUMLOGUE}/${project}/build/${project}.drmlgunit"
-        if [ -f "$unit" ]; then
+        # make install moves .drmlgunit to project root; fall back to build/
+        local unit=""
+        if [ -f "${SDK_DRUMLOGUE}/${project}/${project}.drmlgunit" ]; then
+            unit="${SDK_DRUMLOGUE}/${project}/${project}.drmlgunit"
+        elif [ -f "${SDK_DRUMLOGUE}/${project}/build/${project}.drmlgunit" ]; then
+            unit="${SDK_DRUMLOGUE}/${project}/build/${project}.drmlgunit"
+        fi
+        if [ -n "$unit" ]; then
             cp "$unit" "${OUTPUT_DIR}/"
             echo "  ${project}.drmlgunit"
             count=$((count + 1))
