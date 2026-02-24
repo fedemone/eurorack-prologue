@@ -10,7 +10,7 @@ float shape = 0, shiftshape = 0, shape_lfo = 0, lfo2 = 0, mix = 0;
 bool gate = false, previous_gate = false;
 
 plaits::EngineParameters parameters = {
-    .trigger = plaits::TRIGGER_UNPATCHED, 
+    .trigger = plaits::TRIGGER_UNPATCHED,
     .note = 0,
     .timbre = 0,
     .morph = 0,
@@ -159,10 +159,12 @@ stmlib::Limiter limiter_;
 
 void OSC_INIT(uint32_t platform, uint32_t api)
 {
+  (void)platform;
+  (void)api;
 #if defined(OSC_STRING)
   stmlib::Random::Seed(0x82eef2a3);
   static uint8_t engine_buffer[4096*sizeof(float)] = {0};
-#else 
+#else
  #if defined(OSC_MODAL)
   stmlib::Random::Seed(0x82eef2a3);
   static uint8_t engine_buffer[plaits::kMaxBlockSize*sizeof(float)] = {0};
@@ -186,23 +188,26 @@ void OSC_INIT(uint32_t platform, uint32_t api)
 
 void OSC_NOTEON(const user_osc_param_t * const params)
 {
+  (void)params;
   gate = true;
   lfo.Start();
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
 {
+  (void)params;
   gate = false;
 }
 
 void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t frames)
 {
+  (void)frames;
   static float out[plaits::kMaxBlockSize], aux[plaits::kMaxBlockSize];
   static bool enveloped;
 
   shape_lfo = q31_to_f32(params->shape_lfo);
   lfo.InitApproximate(get_param_lfo2_frequency() / 600.f);
   lfo2 = (lfo.Next() - 0.5f) * 2.0f * get_param_lfo2_depth();
- 
+
   parameters.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
   parameters.note += (get_lfo_value(LfoTargetPitch) * 0.5);
 

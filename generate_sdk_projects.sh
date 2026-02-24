@@ -54,8 +54,11 @@ create_project() {
     # Create directory
     mkdir -p "$project_dir"
 
-    # Copy SDK Makefile
-    cp "$SDK_MAKEFILE" "${project_dir}/Makefile"
+    # Copy SDK Makefile and fix relative include path for rules.mk
+    # The SDK Makefile uses ../../common which is incorrect for our layout
+    # Also disable chown to avoid errors on Windows mounts
+    sed -e 's|\.\./\.\./common|$(PROJROOT)/logue-sdk/platform/drumlogue/common|g' \
+        -e 's|chown -R|echo chown -R|g' "$SDK_MAKEFILE" > "${project_dir}/Makefile"
 
     # Generate config.mk
     cat > "${project_dir}/config.mk" << CONFIGEOF
@@ -133,6 +136,7 @@ ULIBS += -lc
 
 UDEFS  = ${udefs}
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=${block_size}
+UDEFS += -DBLOCKSIZE=${block_size}
 CONFIGEOF
 
     echo "  -> Created ${project_dir}/config.mk"
@@ -184,12 +188,29 @@ for variant in a b c d e f; do
     create_project "mo2_wt${variant}" "mo2_wt${variant}" \
         "macro-oscillator2.cc" \
         "eurorack/plaits/dsp/engine/wavetable_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-        "-DOSC_WT${upper}" 24
+        "-DOSC_WT${upper} -DOSCILLATOR_TYPE=wt_${variant}" 24
 done
 
 ##############################################################################
 # Elements-based oscillators (modal-strike.cc, block size 32)
 ##############################################################################
+
+# Create dummy debug_pin.h to satisfy resonator.cc include
+# This avoids pulling in STM32 hardware headers
+mkdir -p "${PROJECT_BASE}/elements/drivers"
+cat > "${PROJECT_BASE}/elements/drivers/debug_pin.h" << EOF
+#ifndef ELEMENTS_DRIVERS_DEBUG_PIN_H_
+#define ELEMENTS_DRIVERS_DEBUG_PIN_H_
+namespace elements {
+class DebugPin {
+ public:
+  static void Init() { }
+  static void High() { }
+  static void Low() { }
+};
+}
+#endif
+EOF
 
 ELEMENTS_SOURCES="eurorack/elements/dsp/exciter.cc eurorack/elements/dsp/resonator.cc eurorack/elements/dsp/tube.cc eurorack/elements/dsp/string.cc eurorack/elements/dsp/multistage_envelope.cc eurorack/elements/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc"
 
