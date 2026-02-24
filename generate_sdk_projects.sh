@@ -232,6 +232,12 @@ create_project "modal_strike_24_nolimit" "modal_strike_24_nolimit" \
     "$ELEMENTS_SOURCES" \
     "-DELEMENTS_RESONATOR_MODES=24" 32
 
+# Elements Full (64 modes, full DSP, limiter enabled)
+create_project "elements_full" "elements_full" \
+    "modal-strike.cc" \
+    "$ELEMENTS_SOURCES" \
+    "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL" 32
+
 echo ""
 echo "Done! Created 15 SDK project directories under:"
 echo "  ${PROJECT_BASE}/"

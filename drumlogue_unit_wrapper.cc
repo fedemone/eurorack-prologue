@@ -269,9 +269,8 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 3 -> k_user_osc_param_id2        (0-100 percentage)
  *   id 4 -> k_user_osc_param_id3        (LFO target select)
  *   id 5 -> k_user_osc_param_id4        (LFO2 rate)
- *
- * The remaining OSC params (id5=LFO2 Int, id6=LFO2 Target) could be
- * exposed if needed by adding entries to the unit_header.params table.
+ *   id 6 -> k_user_osc_param_id5        (LFO2 Int/Depth)
+ *   id 7 -> k_user_osc_param_id6        (LFO2 Target)
  * ======================================================================== */
 
 __unit_callback
@@ -307,6 +306,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       break;
     case 5: /* LFO2 Rate: 0-100 percent */
       osc_id    = k_user_osc_param_id4;
+      osc_value = (uint16_t)value;
+      break;
+    case 6: /* LFO2 Int: 0-100 percent */
+      osc_id    = k_user_osc_param_id5;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* LFO2 Target: direct enum value */
+      osc_id    = k_user_osc_param_id6;
       osc_value = (uint16_t)value;
       break;
     default:

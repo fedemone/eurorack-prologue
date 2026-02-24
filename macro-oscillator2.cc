@@ -8,6 +8,7 @@
 uint16_t p_values[6] = {0};
 float shape = 0, shiftshape = 0, shape_lfo = 0, lfo2 = 0, mix = 0;
 bool gate = false, previous_gate = false;
+static float amp = 0.0f;
 
 plaits::EngineParameters parameters = {
     .trigger = plaits::TRIGGER_UNPATCHED,
@@ -161,6 +162,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
 {
   (void)platform;
   (void)api;
+  amp = 0.0f;
 #if defined(OSC_STRING)
   stmlib::Random::Seed(0x82eef2a3);
   static uint8_t engine_buffer[4096*sizeof(float)] = {0};
@@ -220,7 +222,20 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
   update_parameters();
 
+  enveloped = false;
   engine.Render(parameters, out, aux, plaits::kMaxBlockSize, &enveloped);
+
+#if !defined(OSC_STRING) && !defined(OSC_MODAL)
+  if (!enveloped) {
+    float target = gate ? 1.0f : 0.0f;
+    float alpha = gate ? 0.05f : 0.002f;
+    for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+      amp += (target - amp) * alpha;
+      out[i] *= amp;
+      aux[i] *= amp;
+    }
+  }
+#endif
 
 #if defined(USE_LIMITER)
   limiter_.Process(1.0 - mix, out, plaits::kMaxBlockSize);

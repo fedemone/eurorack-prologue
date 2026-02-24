@@ -91,7 +91,7 @@ void Seed(uint32_t* seed, size_t size) {
   x = static_cast<float>(signature & 7) / 8.0f;
   signature >>= 3;
   patch_.resonator_modulation_frequency = (0.4f + 0.8f * x) / elements::kSampleRate;
-  
+
   x = static_cast<float>(signature & 7) / 8.0f;
   signature >>= 3;
   patch_.resonator_modulation_offset = 0.05f + 0.1f * x;
@@ -116,7 +116,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   Seed(&random, 1);
   strike_.Init();
   resonator_.Init();
-  
+
 #if defined(USE_LIMITER)
   limiter_.Init();
 #endif
@@ -164,14 +164,21 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   patch_.resonator_brightness = get_brightness();
   patch_.resonator_geometry = get_shift_shape();
   patch_.resonator_position = get_shape();
-  
+
   uint8_t flags = GetGateFlags(performance_state_.gate);
 
   float strike_meta = patch_.exciter_strike_meta;
+#ifdef ELEMENTS_FULL
+  strike_.set_meta(
+      strike_meta,
+      EXCITER_MODEL_GRANULAR_SAMPLE_PLAYER,
+      EXCITER_MODEL_PARTICLES);
+#else
   strike_.set_meta(
       strike_meta <= 0.4f ? strike_meta * 0.625f : strike_meta * 1.25f - 0.25f,
       EXCITER_MODEL_MALLET,
       EXCITER_MODEL_PARTICLES);
+#endif
   strike_.set_timbre(patch_.exciter_strike_timbre);
   strike_.set_signature(patch_.exciter_signature);
   strike_.Process(flags, strike_buffer_, kMaxBlockSize);
@@ -198,7 +205,7 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   damping -= strike_.damping() * strike_level * 0.125f;
   damping -= (1.0f - bow_strength_buffer_[0]) * \
       patch_.exciter_bow_level * 0.0625f;
-  
+
   if (damping <= 0.0f) {
     damping = 0.0f;
   }

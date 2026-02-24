@@ -39,6 +39,7 @@ ALL_PROJECTS=(
     mo2_va mo2_wsh mo2_fm mo2_grn mo2_add mo2_string
     mo2_wta mo2_wtb mo2_wtc mo2_wtd mo2_wte mo2_wtf
     modal_strike modal_strike_16_nolimit modal_strike_24_nolimit
+    elements_full
 )
 
 # Colors (disabled if not a terminal)
@@ -196,6 +197,7 @@ list_projects() {
     echo "    modal_strike             - Modal Strike (24 modes, limiter)"
     echo "    modal_strike_16_nolimit  - Modal Strike (16 modes, no limiter)"
     echo "    modal_strike_24_nolimit  - Modal Strike (24 modes, no limiter)"
+    echo "    elements_full            - Elements Full (64 modes, full DSP)"
 }
 
 check_prerequisites() {
