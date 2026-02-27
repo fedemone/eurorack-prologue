@@ -217,29 +217,36 @@ TEST(unit_header_api) {
 }
 
 TEST(unit_header_num_params) {
-  ASSERT_EQ(6U, unit_header.num_params);
+  ASSERT_EQ(9U, unit_header.num_params);
 }
 
 TEST(unit_header_param_names) {
+  /* Plaits layout (no ELEMENTS_RESONATOR_MODES defined in test build) */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Shape"));
   ASSERT_EQ(0, strcmp(unit_header.params[1].name, "ShiftShape"));
   ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Param 1"));
   ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Param 2"));
-  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "LFO Target"));
-  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Target"));
 }
 
 TEST(unit_header_param_types) {
-  ASSERT_EQ(k_unit_param_type_percent, unit_header.params[0].type);
-  ASSERT_EQ(k_unit_param_type_percent, unit_header.params[1].type);
-  ASSERT_EQ(k_unit_param_type_percent, unit_header.params[2].type);
-  ASSERT_EQ(k_unit_param_type_percent, unit_header.params[3].type);
-  ASSERT_EQ(k_unit_param_type_enum,    unit_header.params[4].type);
-  ASSERT_EQ(k_unit_param_type_percent, unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_enum,      unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_enum,      unit_header.params[8].type);
 }
 
 TEST(unit_header_unused_params_are_none) {
-  for (int i = 6; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 9; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 }
@@ -493,11 +500,26 @@ TEST(wrapper_param_id2_percent) {
   teardown_unit();
 }
 
+TEST(wrapper_param_base_note) {
+  init_unit();
+
+  /* Base Note: stored locally, not forwarded to OSC_PARAM */
+  int before = g_mock.param_count;
+  unit_set_param_value(4, 69);   /* A4 */
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+
+  /* Verify gate_on uses the base note */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(69 << 8), g_mock.last_noteon_pitch);
+
+  teardown_unit();
+}
+
 TEST(wrapper_param_id3_enum) {
   init_unit();
 
-  /* LFO Target: direct enum passthrough */
-  unit_set_param_value(4, 3);
+  /* LFO Target: id 5 in Plaits layout -> osc id3 enum */
+  unit_set_param_value(5, 3);
   ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
   ASSERT_EQ(3, g_mock.last_param_value);
 
@@ -507,10 +529,32 @@ TEST(wrapper_param_id3_enum) {
 TEST(wrapper_param_id4_rate) {
   init_unit();
 
-  /* LFO2 Rate: 0-100 percent */
-  unit_set_param_value(5, 42);
+  /* LFO2 Rate: id 6 in Plaits layout -> osc id4 */
+  unit_set_param_value(6, 42);
   ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
   ASSERT_EQ(42, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id5_depth) {
+  init_unit();
+
+  /* LFO2 Depth: id 7 in Plaits layout -> osc id5 */
+  unit_set_param_value(7, 80);
+  ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id6_target) {
+  init_unit();
+
+  /* LFO2 Target: id 8 in Plaits layout -> osc id6 enum */
+  unit_set_param_value(8, 5);
+  ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
+  ASSERT_EQ(5, g_mock.last_param_value);
 
   teardown_unit();
 }
@@ -518,7 +562,7 @@ TEST(wrapper_param_id4_rate) {
 TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
-  unit_set_param_value(6, 50);   /* id 6 -> default case, should return */
+  unit_set_param_value(9, 50);   /* id 9 -> default case, should return */
   ASSERT_EQ(before, g_mock.param_count);
   unit_set_param_value(24, 50);  /* id >= MAX -> guard */
   ASSERT_EQ(before, g_mock.param_count);
@@ -929,8 +973,11 @@ int main(void) {
   run_test_wrapper_param_shiftshape_scaling();
   run_test_wrapper_param_id1_bipolar();
   run_test_wrapper_param_id2_percent();
+  run_test_wrapper_param_base_note();
   run_test_wrapper_param_id3_enum();
   run_test_wrapper_param_id4_rate();
+  run_test_wrapper_param_id5_depth();
+  run_test_wrapper_param_id6_target();
   run_test_wrapper_param_out_of_range_ignored();
   run_test_wrapper_get_param_value();
 

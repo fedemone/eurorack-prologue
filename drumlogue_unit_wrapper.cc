@@ -50,8 +50,9 @@ static struct {
   uint16_t frames_per_buffer;
 
   /* Current note state */
-  uint8_t  note;
+  uint8_t  note;       /* last MIDI note from unit_note_on */
   uint8_t  velocity;
+  uint8_t  base_note;  /* user param: note for gate trigger (default 60) */
 
   /* Stored parameter values (drumlogue int32 range) */
   int32_t  param_values[UNIT_MAX_PARAM_COUNT];
@@ -86,6 +87,7 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   s_state.flags             = 0;
   s_state.note              = 60;  /* middle C */
   s_state.velocity          = 0;
+  s_state.base_note         = 60;  /* default base note for gate trigger */
 
   memset(s_state.param_values, 0, sizeof(s_state.param_values));
 
@@ -107,8 +109,9 @@ __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
 
-  s_state.note     = 60;
-  s_state.velocity = 0;
+  s_state.note      = 60;
+  s_state.velocity  = 0;
+  s_state.base_note = 60;
   osc_adapter_reset();
 }
 
@@ -226,7 +229,7 @@ __unit_callback
 void unit_gate_on(uint8_t velocity) {
   if (!s_state.initialized) return;
   s_state.velocity = velocity;
-  osc_adapter_note_on(s_state.note, velocity);
+  osc_adapter_note_on(s_state.base_note, velocity);
 }
 
 __unit_callback
@@ -261,16 +264,30 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
 /* ===========================================================================
  * Parameter Callbacks
  *
- * Drumlogue params (int32_t, range defined in header) are mapped to
- * the OSC API's parameter system:
- *   id 0 -> k_user_osc_param_shape      (10-bit: 0-1023)
- *   id 1 -> k_user_osc_param_shiftshape (10-bit: 0-1023)
- *   id 2 -> k_user_osc_param_id1        (0-200 i.e -100% - +100%)
- *   id 3 -> k_user_osc_param_id2        (0-100 percentage)
- *   id 4 -> k_user_osc_param_id3        (LFO target select)
- *   id 5 -> k_user_osc_param_id4        (LFO2 rate)
- *   id 6 -> k_user_osc_param_id5        (LFO2 Int/Depth)
- *   id 7 -> k_user_osc_param_id6        (LFO2 Target)
+ * Per-oscillator param mapping via compile-time #ifdef.
+ * See header.c for the full param layout per oscillator type.
+ *
+ * Plaits (macro-oscillator2.cc):
+ *   id 0 -> shape      (10-bit: 0-1023)
+ *   id 1 -> shiftshape (10-bit: 0-1023)
+ *   id 2 -> id1        (0-200 bipolar, centered at 100)
+ *   id 3 -> id2        (0-100 percent)
+ *   id 4 -> base_note  (MIDI 0-127, stored locally)
+ *   id 5 -> id3        (LFO target enum)
+ *   id 6 -> id4        (LFO2 rate 0-100)
+ *   id 7 -> id5        (LFO2 depth 0-100)
+ *   id 8 -> id6        (LFO2 target enum)
+ *
+ * Elements (modal-strike.cc):
+ *   id 0 -> shape      (10-bit: 0-1023)  [Position]
+ *   id 1 -> shiftshape (10-bit: 0-1023)  [Geometry]
+ *   id 2 -> id1        (0-100 percent)   [Strength]
+ *   id 3 -> id2        (0-100 percent)   [Mallet]
+ *   id 4 -> id3        (0-100 percent)   [Timbre]
+ *   id 5 -> id4        (0-100 percent)   [Damping]
+ *   id 6 -> id5        (0-100 percent)   [Brightness]
+ *   id 7 -> base_note  (MIDI 0-127, stored locally)
+ *   id 8 -> id6        (LFO target enum 0-6)
  * ======================================================================== */
 
 __unit_callback
@@ -283,6 +300,49 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   uint16_t osc_value;
   user_osc_param_id_t osc_id;
 
+#if defined(ELEMENTS_RESONATOR_MODES)
+  /* ---- Elements param mapping ---- */
+  switch (id) {
+    case 0: /* Position: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 1: /* Geometry: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shiftshape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 2: /* Strength: 0-100 percent */
+      osc_id    = k_user_osc_param_id1;
+      osc_value = (uint16_t)value;
+      break;
+    case 3: /* Mallet: 0-100 percent */
+      osc_id    = k_user_osc_param_id2;
+      osc_value = (uint16_t)value;
+      break;
+    case 4: /* Timbre: 0-100 percent */
+      osc_id    = k_user_osc_param_id3;
+      osc_value = (uint16_t)value;
+      break;
+    case 5: /* Damping: 0-100 percent */
+      osc_id    = k_user_osc_param_id4;
+      osc_value = (uint16_t)value;
+      break;
+    case 6: /* Brightness: 0-100 percent */
+      osc_id    = k_user_osc_param_id5;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 8: /* LFO Target: enum 0-6 */
+      osc_id    = k_user_osc_param_id6;
+      osc_value = (uint16_t)value;
+      break;
+    default:
+      return;
+  }
+#else
+  /* ---- Plaits param mapping ---- */
   switch (id) {
     case 0: /* Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -300,25 +360,29 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 4: /* LFO Target: direct enum value */
+    case 4: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 5: /* LFO Target: direct enum value */
       osc_id    = k_user_osc_param_id3;
       osc_value = (uint16_t)value;
       break;
-    case 5: /* LFO2 Rate: 0-100 percent */
+    case 6: /* LFO2 Rate: 0-100 percent */
       osc_id    = k_user_osc_param_id4;
       osc_value = (uint16_t)value;
       break;
-    case 6: /* LFO2 Int: 0-100 percent */
+    case 7: /* LFO2 Depth: 0-100 percent */
       osc_id    = k_user_osc_param_id5;
       osc_value = (uint16_t)value;
       break;
-    case 7: /* LFO2 Target: direct enum value */
+    case 8: /* LFO2 Target: direct enum value */
       osc_id    = k_user_osc_param_id6;
       osc_value = (uint16_t)value;
       break;
     default:
       return;
   }
+#endif
 
   osc_adapter_set_param(osc_id, osc_value);
 }
