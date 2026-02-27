@@ -36,8 +36,8 @@ Drumlogue Runtime (Linux, ARM Cortex-A7)
      v
 drumlogue_unit_wrapper.cc
   - Implements all unit_* callbacks
-  - Exports unit_header_t in .unit_header section
-  - Maps drumlogue params (int32) to OSC params (10-bit / enum)
+  - Per-oscillator param mapping via compile-time #ifdef
+  - Base Note parameter for gate trigger tuning
   - Converts mono float -> stereo interleaved float
      |
      |  Adapter API (osc_adapter_init, osc_adapter_render, ...)
@@ -52,6 +52,78 @@ drumlogue_osc_adapter.cc
      v
 macro-oscillator2.cc / modal-strike.cc  (UNCHANGED)
 ```
+
+## Oscillators
+
+### Plaits-based (macro-oscillator2.cc)
+
+| Unit | Engine | Description |
+|---|---|---|
+| mo2_va | VirtualAnalogEngine | Classic analog waveforms |
+| mo2_wsh | WaveshapingEngine | Waveshaping synthesis |
+| mo2_fm | FMEngine | FM synthesis |
+| mo2_grn | GrainEngine | Granular synthesis |
+| mo2_add | AdditiveEngine | Additive synthesis |
+| mo2_string | StringEngine | Physical modelling strings |
+| mo2_wta..wtf | WavetableEngine | Wavetable A through F |
+
+### Elements-based (modal-strike.cc)
+
+| Unit | Modes | Limiter | Description |
+|---|---|---|---|
+| modal_strike | 24 | Yes | Strike exciter + modal resonator |
+| modal_strike_16_nolimit | 16 | No | Lighter variant (fewer modes) |
+| modal_strike_24_nolimit | 24 | No | Full modes, no limiter |
+| elements_full | 64 | Yes | Full Elements DSP (64 modes, extended exciter range) |
+
+## Per-Oscillator Parameters
+
+The drumlogue unit header exposes different parameters depending on the oscillator
+type, using compile-time `#ifdef` in `header.c`. This ensures each oscillator's
+parameters are correctly labeled and mapped.
+
+### Plaits Parameters (9 params)
+
+| ID | Name | Type | Range | Default | OSC Mapping |
+|---|---|---|---|---|---|
+| 0 | Shape | percent | 0-100 | 0 | `k_user_osc_param_shape` (0-1023) |
+| 1 | ShiftShape | percent | 0-100 | 0 | `k_user_osc_param_shiftshape` (0-1023) |
+| 2 | Param 1 | percent | 0-100 | 50 | `k_user_osc_param_id1` (0-200, bipolar) |
+| 3 | Param 2 | percent | 0-100 | 50 | `k_user_osc_param_id2` (0-100) |
+| 4 | Base Note | midi_note | 0-127 | 60 | Stored in wrapper (used by gate trigger) |
+| 5 | LFO Target | enum | 0-7 | 0 | `k_user_osc_param_id3` |
+| 6 | LFO2 Rate | percent | 0-100 | 0 | `k_user_osc_param_id4` |
+| 7 | LFO2 Depth | percent | 0-100 | 0 | `k_user_osc_param_id5` |
+| 8 | LFO2 Target | enum | 0-7 | 0 | `k_user_osc_param_id6` |
+
+**LFO Target values:** 0=Shape, 1=ShiftShape, 2=Param1, 3=Param2, 4=Pitch, 5=Amplitude, 6=LFO2Freq, 7=LFO2Depth
+
+**LFO2** is a second modulation source (cosine oscillator) that can modulate any of the
+same targets as the shape LFO. Its rate and depth are user-controllable, and its target
+is selectable via the LFO2 Target parameter.
+
+### Elements Parameters (9 params)
+
+| ID | Name | Type | Range | Default | OSC Mapping |
+|---|---|---|---|---|---|
+| 0 | Position | percent | 0-100 | 30 | `k_user_osc_param_shape` (0-1023) |
+| 1 | Geometry | percent | 0-100 | 20 | `k_user_osc_param_shiftshape` (0-1023) |
+| 2 | Strength | percent | 0-100 | 80 | `k_user_osc_param_id1` (0-100) |
+| 3 | Mallet | percent | 0-100 | 50 | `k_user_osc_param_id2` (0-100) |
+| 4 | Timbre | percent | 0-100 | 50 | `k_user_osc_param_id3` (0-100) |
+| 5 | Damping | percent | 0-100 | 25 | `k_user_osc_param_id4` (0-100) |
+| 6 | Brightness | percent | 0-100 | 50 | `k_user_osc_param_id5` (0-100) |
+| 7 | Base Note | midi_note | 0-127 | 60 | Stored in wrapper (used by gate trigger) |
+| 8 | LFO Target | enum | 0-6 | 0 | `k_user_osc_param_id6` |
+
+**LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness
+
+### Base Note
+
+The **Base Note** parameter sets the MIDI note played when the drumlogue's trigger pad
+fires (`unit_gate_on`). This allows tuning the oscillator to a specific pitch without
+external MIDI. Default is 60 (middle C). MIDI note-on events (`unit_note_on`) still
+play the received note directly, ignoring Base Note.
 
 ## Files Added/Modified
 
@@ -68,17 +140,18 @@ macro-oscillator2.cc / modal-strike.cc  (UNCHANGED)
 
 | File | Purpose |
 |---|---|
-| `drumlogue_unit_wrapper.cc` | Synth Module API implementation |
+| `drumlogue_unit_wrapper.cc` | Synth Module API implementation, per-oscillator param mapping |
 | `drumlogue_osc_adapter.cc` | OSC API bridge with buffered rendering |
 | `drumlogue_osc_adapter.h` | Adapter interface header |
+| `header.c` | Per-oscillator unit header with `#ifdef` param layouts |
 
-### Modified: Build system
+### Build system
 
-| File | Change |
+| File | Purpose |
 |---|---|
-| `makefile.inc` | Drumlogue toolchain, flags, include paths, shared library build |
-| `Makefile` | Drumlogue in build loop + packaging target |
-| `osc_*.mk` (all 15) | Auto-include wrapper files + `OSC_NATIVE_BLOCK_SIZE` define |
+| `generate_sdk_projects.sh` | Generates per-oscillator SDK project dirs under `drumlogue/` |
+| `build_drumlogue.sh` | Docker-based build script (mounts repo root as `/workspace/`) |
+| `Makefile` | Host-side build loop + test targets |
 
 ## Building for Drumlogue
 
@@ -86,63 +159,107 @@ macro-oscillator2.cc / modal-strike.cc  (UNCHANGED)
 1. Clone with submodules:
    ```bash
    git clone --recursive https://github.com/fedemone/eurorack-prologue.git
+   cd eurorack-prologue
+   git checkout drumlogue-port
    ```
 
-2. Install the ARM Linux cross-compiler:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-   ```
+2. Docker installed (for SDK cross-compilation)
 
 ### Build Commands
+
 ```bash
-# Build all oscillators for drumlogue only
-PLATFORM=drumlogue make
+# Generate SDK project directories (first time or after changes)
+./generate_sdk_projects.sh
+
+# Build all oscillators via Docker
+./build_drumlogue.sh
 
 # Build a specific oscillator
-PLATFORM=drumlogue make -f osc_va.mk
+./build_drumlogue.sh mo2_va
 
-# Build for all platforms
-make
+# Interactive Docker shell
+./build_drumlogue.sh --interactive
+
+# Run host-side tests (no Docker/ARM needed)
+make test-all
 ```
 
 ### Output
-`.drmlgunit` files (ELF shared libraries with embedded `unit_header_t`).
+`.drmlgunit` files collected in the `output/` directory.
 
 ### Installation on Drumlogue
 1. Power on drumlogue in USB mass storage mode
 2. Place `.drmlgunit` files in the `Units/Synths/` directory
 3. Restart drumlogue to load the new synth units
 
-## Staging Plan
+## Development Progress
 
-### Stage 1: Same Source, Different APIs (current)
-- Wrapper layer bridges Synth Module API to OSC API
-- Oscillator source code compiles unchanged
-- Build system supports all 4 platforms
+### Completed
 
-### Stage 2: Unit Tests for Callbacks
-- Verify `unit_init` -> `OSC_INIT` flow
-- Verify `unit_note_on`/`unit_note_off` -> `OSC_NOTEON`/`OSC_NOTEOFF`
-- Verify `unit_set_param_value` -> `OSC_PARAM` with correct scaling
-- Verify `unit_render` -> `OSC_CYCLE` with Q31/float conversion
-- Verify buffered rendering across block size boundaries
-- Verify pitch bend translation
+- **Stage 1: Wrapper Layer** - `drumlogue_unit_wrapper.cc` + `drumlogue_osc_adapter.cc`
+  bridge the Synth Module API to the OSC API. Oscillator sources compile unchanged.
 
-### Stage 3: NEON Optimizations
-- Profile hot paths in DSP code
-- Replace scalar loops with NEON intrinsics (`float32x4_t`)
-- Key targets: Q31/float conversion, buffer copy, engine render loops
+- **Stage 2: Unit Tests** - 58 callback tests + 9 sound production tests verify the
+  full chain: `unit_*` -> `osc_adapter_*` -> `OSC_*`. Covers init validation, note
+  events, pitch bend, parameter mapping, Q31/float conversion, buffered rendering,
+  stereo interleaving, lifecycle, and edge cases.
 
-### Stage 4: Verification of Optimized Output
-- Bit-exact comparison of NEON vs scalar output (where applicable)
-- Performance benchmarks on Cortex-A7
-- Audio quality verification
+- **Stage 3: Docker Build Integration** - `generate_sdk_projects.sh` creates per-oscillator
+  project directories. `build_drumlogue.sh` runs the official logue-sdk Docker container.
+  Repo root is mounted as `/workspace/` so all source files are accessible. Build output
+  detection checks for `.drmlgunit` files (not exit codes, since the container always
+  returns 0).
 
-### Future: Template Abstraction
-- Extract wrapper pattern into a reusable template
-- Enable porting additional Mutable Instruments modules
-- Enable porting from other open-source DSP sources
+- **Stage 4: Windows/WSL Compatibility** - Build scripts work on Windows Git Bash and
+  WSL. Makefile `chown` calls are disabled on Windows mounts. SDK Makefile paths are
+  rewritten via `sed` to use `$(PROJROOT)/logue-sdk/platform/drumlogue/common`.
+
+- **Stage 5: Per-Oscillator Parameters** - `header.c` uses `#ifdef ELEMENTS_RESONATOR_MODES`
+  to provide different parameter layouts for Plaits vs Elements oscillators. Fixes the
+  previous shared header where param labels were wrong for Elements and some params
+  (Brightness, LFO Target) were inaccessible.
+
+- **Stage 6: Base Note Parameter** - User-editable MIDI note (0-127) stored in the
+  wrapper. Used by `unit_gate_on` (trigger pad) to set the pitch. MIDI note-on events
+  bypass this and use the received note directly.
+
+- **Stage 7: LFO2 Exposure for Plaits** - LFO2 Depth and LFO2 Target params are now
+  exposed in the drumlogue header and mapped through the wrapper. Previously these params
+  were unreachable (default 0), making the LFO2 system in macro-oscillator2.cc non-functional.
+
+- **Elements Full Variant** - `elements_full` project with 64 resonator modes, limiter,
+  and extended exciter range (granular sample player to particles).
+
+### Next Steps
+
+#### Add LFO2 to Modal-Strike (Elements)
+
+The Elements oscillators currently only have the shape LFO (from the drumlogue's
+modulation system). Adding a second LFO similar to macro-oscillator2.cc would allow
+modulating Timbre, Damping, Brightness, etc. independently.
+
+**Approach:**
+- Add a `CosineOscillator lfo` to `modal-strike.cc` under `#ifdef ELEMENTS_LFO2`
+- Extend the Elements param layout with LFO2 Rate, LFO2 Depth, LFO2 Target params
+- Wire LFO2 into the existing `get_*()` accessor functions
+- Guard behind `#ifdef` so the base modal-strike variants aren't affected
+
+#### Study: Chord Mode (Elements String Resonator)
+
+The original Elements firmware includes a 5-string chord resonator model with 11
+voicings (Open, Dense, Octave, Detuned, Fifth, etc.). This is not present in the
+current `modal-strike.cc` port, which only uses the modal resonator.
+
+**What's needed to add chord mode:**
+- Port `elements/dsp/voice.cc` chord logic (`chords[11][5]` table, 5x `String` objects)
+- Add `ResonatorModel` selector param (Modal / String / Strings)
+- Add chord voicing selector param (0-10)
+- Memory: 5 `String` objects require ~5x the memory of a single modal resonator
+- CPU: 5 parallel string computations may exceed real-time budget on some settings
+- Consider a dedicated `elements_chord` project variant to avoid bloating other units
+
+**Key code reference:** Original `voice.cc` at
+[peterall/eurorack@58b9125](https://github.com/peterall/eurorack/blob/58b9125a8c10ff8d496dfe8a12fb8c35a374d96e/elements/dsp/voice.cc)
 
 ## Notes
 
@@ -150,9 +267,12 @@ make
 - The 32K size constraint does not apply on drumlogue
 - Sample rate is 48 kHz (same as all logue platforms)
 - The logue-sdk submodule is pinned to v1.x (Sept 2019); drumlogue headers are provided locally
+- All 15 oscillator variants (12 Plaits + 3 Elements + 1 Elements Full) are generated
+  by `generate_sdk_projects.sh`
 
 ## References
 
 - [Korg logue SDK](https://github.com/korginc/logue-sdk)
 - [Drumlogue Platform (SDK v2.0)](https://github.com/korginc/logue-sdk/tree/master/platform/drumlogue)
 - [Original Eurorack-Prologue](https://github.com/peterall/eurorack-prologue)
+- [Original Elements Sources](https://github.com/peterall/eurorack/tree/58b9125a8c10ff8d496dfe8a12fb8c35a374d96e/elements)
