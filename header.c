@@ -19,15 +19,18 @@
  *    id 8: LFO2 Target(enum 0-7)   -> k_user_osc_param_id6
  *
  *  Elements oscillators (modal-strike.cc):
- *    id 0: Position   (0-100%)     -> k_user_osc_param_shape
- *    id 1: Geometry   (0-100%)     -> k_user_osc_param_shiftshape
- *    id 2: Strength   (0-100%)     -> k_user_osc_param_id1
- *    id 3: Mallet     (0-100%)     -> k_user_osc_param_id2
- *    id 4: Timbre     (0-100%)     -> k_user_osc_param_id3
- *    id 5: Damping    (0-100%)     -> k_user_osc_param_id4
- *    id 6: Brightness (0-100%)     -> k_user_osc_param_id5
- *    id 7: Base Note  (0-127 MIDI) -> stored in wrapper (for gate trigger)
- *    id 8: LFO Target (enum 0-6)   -> k_user_osc_param_id6
+ *    id 0: Position    (0-100%)     -> k_user_osc_param_shape
+ *    id 1: Geometry    (0-100%)     -> k_user_osc_param_shiftshape
+ *    id 2: Strength    (0-100%)     -> k_user_osc_param_id1
+ *    id 3: Mallet      (0-100%)     -> k_user_osc_param_id2
+ *    id 4: Timbre      (0-100%)     -> k_user_osc_param_id3
+ *    id 5: Damping     (0-100%)     -> k_user_osc_param_id4
+ *    id 6: Brightness  (0-100%)     -> k_user_osc_param_id5
+ *    id 7: Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
+ *    id 8: LFO Target  (enum 0-8)   -> k_user_osc_param_id6
+ *    id 9: LFO2 Rate   (0-100%)     -> custom OSC_PARAM index 8
+ *    id 10: LFO2 Depth  (0-100%)    -> custom OSC_PARAM index 9
+ *    id 11: LFO2 Target (enum 0-6)  -> custom OSC_PARAM index 10
  *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
@@ -122,10 +125,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Elements oscillators (modal-strike.cc)
      *
-     * 9 params: Position, Geometry, Strength, Mallet, Timbre,
-     *           Damping, Brightness, Base Note, LFO Target
+     * 12 params: Position, Geometry, Strength, Mallet, Timbre,
+     *            Damping, Brightness, Base Note, LFO Target,
+     *            LFO2 Rate, LFO2 Depth, LFO2 Target
      * ================================================================ */
-    .num_params = 9,
+    .num_params = 12,
     .params = {
         // Page 1
         /* id 0: Position (resonator excitation position) */
@@ -149,10 +153,13 @@ const __unit_header unit_header_t unit_header = {
 
         // Page 3
         /* id 8: LFO Target (which param the shape LFO modulates) */
-        {0, 6, 0, 0, k_unit_param_type_enum, 0, 0, 0, {"LFO Target"}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 8, 0, 0, k_unit_param_type_enum, 0, 0, 0, {"LFO Target"}},
+        /* id 9: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 10: LFO2 Depth */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
+        /* id 11: LFO2 Target (which param LFO2 modulates) */
+        {0, 6, 0, 0, k_unit_param_type_enum, 0, 0, 0, {"LFO2 Target"}},
 
         // Pages 4-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

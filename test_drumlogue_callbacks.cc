@@ -217,11 +217,30 @@ TEST(unit_header_api) {
 }
 
 TEST(unit_header_num_params) {
+#if defined(ELEMENTS_RESONATOR_MODES)
+  ASSERT_EQ(12U, unit_header.num_params);
+#else
   ASSERT_EQ(9U, unit_header.num_params);
+#endif
 }
 
 TEST(unit_header_param_names) {
-  /* Plaits layout (no ELEMENTS_RESONATOR_MODES defined in test build) */
+#if defined(ELEMENTS_RESONATOR_MODES)
+  /* Elements layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Position"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Geometry"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Strength"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Mallet"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Timbre"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Damping"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Brightness"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Target"));
+#else
+  /* Plaits layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Shape"));
   ASSERT_EQ(0, strcmp(unit_header.params[1].name, "ShiftShape"));
   ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Param 1"));
@@ -231,9 +250,26 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO2 Rate"));
   ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO2 Depth"));
   ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Target"));
+#endif
 }
 
 TEST(unit_header_param_types) {
+#if defined(ELEMENTS_RESONATOR_MODES)
+  /* Elements layout */
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_enum,      unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_enum,      unit_header.params[11].type);
+#else
+  /* Plaits layout */
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[0].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
@@ -243,12 +279,19 @@ TEST(unit_header_param_types) {
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
   ASSERT_EQ(k_unit_param_type_enum,      unit_header.params[8].type);
+#endif
 }
 
 TEST(unit_header_unused_params_are_none) {
+#if defined(ELEMENTS_RESONATOR_MODES)
+  for (int i = 12; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#else
   for (int i = 9; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
+#endif
 }
 
 /* ===========================================================================
@@ -562,7 +605,11 @@ TEST(wrapper_param_id6_target) {
 TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
+#if defined(ELEMENTS_RESONATOR_MODES)
+  unit_set_param_value(12, 50);  /* id 12 -> default case, should return */
+#else
   unit_set_param_value(9, 50);   /* id 9 -> default case, should return */
+#endif
   ASSERT_EQ(before, g_mock.param_count);
   unit_set_param_value(24, 50);  /* id >= MAX -> guard */
   ASSERT_EQ(before, g_mock.param_count);
@@ -577,6 +624,121 @@ TEST(wrapper_get_param_value) {
   ASSERT_EQ(99, unit_get_param_value(3));
   teardown_unit();
 }
+
+/* ===========================================================================
+ * Tests: Elements parameter mapping (conditional)
+ * ======================================================================== */
+
+#if defined(ELEMENTS_RESONATOR_MODES)
+
+TEST(elements_param_position_scaling) {
+  init_unit();
+  /* Position: drumlogue 0-100 -> OSC 0-1023 (shape) */
+  unit_set_param_value(0, 100);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  unit_set_param_value(0, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_geometry_scaling) {
+  init_unit();
+  /* Geometry: drumlogue 0-100 -> OSC 0-1023 (shiftshape) */
+  unit_set_param_value(1, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_strength) {
+  init_unit();
+  /* Strength: drumlogue 0-100 -> id1 0-100 */
+  unit_set_param_value(2, 80);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_mallet) {
+  init_unit();
+  unit_set_param_value(3, 50);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_timbre) {
+  init_unit();
+  unit_set_param_value(4, 75);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_damping) {
+  init_unit();
+  unit_set_param_value(5, 25);
+  ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
+  ASSERT_EQ(25, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_brightness) {
+  init_unit();
+  unit_set_param_value(6, 60);
+  ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
+  ASSERT_EQ(60, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_base_note) {
+  init_unit();
+  int before = g_mock.param_count;
+  unit_set_param_value(7, 48);  /* C3 */
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+  /* Verify gate_on uses the base note */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(48 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo_target) {
+  init_unit();
+  unit_set_param_value(8, 4);  /* Timbre */
+  ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_rate) {
+  init_unit();
+  /* LFO2 Rate: id 9 -> custom OSC index 8 */
+  unit_set_param_value(9, 42);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(42, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_depth) {
+  init_unit();
+  /* LFO2 Depth: id 10 -> custom OSC index 9 */
+  unit_set_param_value(10, 80);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_target) {
+  init_unit();
+  /* LFO2 Target: id 11 -> custom OSC index 10 */
+  unit_set_param_value(11, 3);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* ELEMENTS_RESONATOR_MODES */
 
 /* ===========================================================================
  * Tests: Shape LFO
@@ -669,17 +831,22 @@ TEST(render_q31_to_float_negative) {
 
 /* ===========================================================================
  * Tests: Buffered rendering across block boundaries
+ *
+ * Use BLOCK (= OSC_NATIVE_BLOCK_SIZE) to compute expected block counts.
+ * Plaits: BLOCK=24, Elements: BLOCK=32.
  * ======================================================================== */
+
+#define BLOCK OSC_NATIVE_BLOCK_SIZE
 
 TEST(render_exact_block_size) {
   init_unit();
   g_mock.cycle_fill_value = 0x20000000; /* 0.25 */
 
-  float output[24];
-  osc_adapter_render(output, 24);
+  float output[BLOCK];
+  osc_adapter_render(output, BLOCK);
 
   ASSERT_EQ(1, g_mock.cycle_count); /* exactly one OSC_CYCLE call */
-  for (int i = 0; i < 24; ++i) {
+  for (int i = 0; i < BLOCK; ++i) {
     ASSERT_NEAR(0.25f, output[i], 1e-4f);
   }
   teardown_unit();
@@ -703,11 +870,11 @@ TEST(render_more_than_block_size) {
   init_unit();
   g_mock.cycle_fill_value = 0x20000000;
 
-  float output[48]; /* 48 = 2 full blocks */
-  osc_adapter_render(output, 48);
+  float output[BLOCK * 2];
+  osc_adapter_render(output, BLOCK * 2);
 
   ASSERT_EQ(2, g_mock.cycle_count); /* two OSC_CYCLE calls */
-  for (int i = 0; i < 48; ++i) {
+  for (int i = 0; i < BLOCK * 2; ++i) {
     ASSERT_NEAR(0.25f, output[i], 1e-4f);
   }
   teardown_unit();
@@ -717,11 +884,11 @@ TEST(render_non_multiple_of_block_size) {
   init_unit();
   g_mock.cycle_fill_value = 0x20000000;
 
-  float output[25]; /* 25 = 1 full block + 1 sample from next */
-  osc_adapter_render(output, 25);
+  float output[BLOCK + 1]; /* 1 full block + 1 sample from next */
+  osc_adapter_render(output, BLOCK + 1);
 
   ASSERT_EQ(2, g_mock.cycle_count);
-  for (int i = 0; i < 25; ++i) {
+  for (int i = 0; i < BLOCK + 1; ++i) {
     ASSERT_NEAR(0.25f, output[i], 1e-4f);
   }
   teardown_unit();
@@ -743,18 +910,27 @@ TEST(render_accumulates_across_calls) {
   init_unit();
   g_mock.cycle_fill_value = 0x20000000;
 
-  /* First call: 10 samples. Renders 1 block (24), consumes 10 -> 14 buffered */
+  /* First call: 10 samples. Renders 1 block, consumes 10 -> (BLOCK-10) buffered */
   float output[10];
   osc_adapter_render(output, 10);
   ASSERT_EQ(1, g_mock.cycle_count);
 
-  /* Second call: 10 samples. 14 still buffered -> consumes 10 -> 4 buffered */
+  /* Second call: 10 samples. Still buffered -> consumes 10 */
   osc_adapter_render(output, 10);
   ASSERT_EQ(1, g_mock.cycle_count); /* no new block needed */
 
-  /* Third call: 10 samples. 4 buffered + need 6 more -> new block rendered */
+  /* Keep consuming until we need a new block */
+  int expected_blocks = 1;
+  int consumed = 20;
+  while (consumed + 10 <= BLOCK) {
+    osc_adapter_render(output, 10);
+    consumed += 10;
+    ASSERT_EQ(expected_blocks, g_mock.cycle_count);
+  }
+  /* Next call crosses block boundary -> new block rendered */
   osc_adapter_render(output, 10);
-  ASSERT_EQ(2, g_mock.cycle_count);
+  expected_blocks = 2;
+  ASSERT_EQ(expected_blocks, g_mock.cycle_count);
 
   teardown_unit();
 }
@@ -763,15 +939,18 @@ TEST(render_large_request_96_frames) {
   init_unit();
   g_mock.cycle_fill_value = 0x20000000;
 
-  float output[96]; /* 96 = 4 full blocks */
+  float output[96];
   osc_adapter_render(output, 96);
 
-  ASSERT_EQ(4, g_mock.cycle_count);
+  int expected_blocks = (96 + BLOCK - 1) / BLOCK;
+  ASSERT_EQ(expected_blocks, g_mock.cycle_count);
   for (int i = 0; i < 96; ++i) {
     ASSERT_NEAR(0.25f, output[i], 1e-4f);
   }
   teardown_unit();
 }
+
+#undef BLOCK
 
 /* ===========================================================================
  * Tests: unit_render (stereo interleaving)
@@ -969,6 +1148,20 @@ int main(void) {
   run_test_wrapper_pitch_bend_down();
 
   printf("\nParameter Mapping:\n");
+#if defined(ELEMENTS_RESONATOR_MODES)
+  run_test_elements_param_position_scaling();
+  run_test_elements_param_geometry_scaling();
+  run_test_elements_param_strength();
+  run_test_elements_param_mallet();
+  run_test_elements_param_timbre();
+  run_test_elements_param_damping();
+  run_test_elements_param_brightness();
+  run_test_elements_param_base_note();
+  run_test_elements_param_lfo_target();
+  run_test_elements_param_lfo2_rate();
+  run_test_elements_param_lfo2_depth();
+  run_test_elements_param_lfo2_target();
+#else
   run_test_wrapper_param_shape_scaling();
   run_test_wrapper_param_shiftshape_scaling();
   run_test_wrapper_param_id1_bipolar();
@@ -978,6 +1171,7 @@ int main(void) {
   run_test_wrapper_param_id4_rate();
   run_test_wrapper_param_id5_depth();
   run_test_wrapper_param_id6_target();
+#endif
   run_test_wrapper_param_out_of_range_ignored();
   run_test_wrapper_get_param_value();
 

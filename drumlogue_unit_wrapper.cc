@@ -279,15 +279,18 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 8 -> id6        (LFO2 target enum)
  *
  * Elements (modal-strike.cc):
- *   id 0 -> shape      (10-bit: 0-1023)  [Position]
- *   id 1 -> shiftshape (10-bit: 0-1023)  [Geometry]
- *   id 2 -> id1        (0-100 percent)   [Strength]
- *   id 3 -> id2        (0-100 percent)   [Mallet]
- *   id 4 -> id3        (0-100 percent)   [Timbre]
- *   id 5 -> id4        (0-100 percent)   [Damping]
- *   id 6 -> id5        (0-100 percent)   [Brightness]
- *   id 7 -> base_note  (MIDI 0-127, stored locally)
- *   id 8 -> id6        (LFO target enum 0-6)
+ *   id 0  -> shape      (10-bit: 0-1023)  [Position]
+ *   id 1  -> shiftshape (10-bit: 0-1023)  [Geometry]
+ *   id 2  -> id1        (0-100 percent)   [Strength]
+ *   id 3  -> id2        (0-100 percent)   [Mallet]
+ *   id 4  -> id3        (0-100 percent)   [Timbre]
+ *   id 5  -> id4        (0-100 percent)   [Damping]
+ *   id 6  -> id5        (0-100 percent)   [Brightness]
+ *   id 7  -> base_note  (MIDI 0-127, stored locally)
+ *   id 8  -> id6        (LFO target enum 0-8)
+ *   id 9  -> custom 8   (LFO2 rate 0-100)
+ *   id 10 -> custom 9   (LFO2 depth 0-100)
+ *   id 11 -> custom 10  (LFO2 target enum 0-6)
  * ======================================================================== */
 
 __unit_callback
@@ -334,8 +337,20 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     case 7: /* Base Note: MIDI note 0-127 */
       s_state.base_note = (uint8_t)(value & 0x7F);
       return;
-    case 8: /* LFO Target: enum 0-6 */
+    case 8: /* LFO Target: enum 0-8 */
       osc_id    = k_user_osc_param_id6;
+      osc_value = (uint16_t)value;
+      break;
+    case 9: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
+      osc_id    = (user_osc_param_id_t)8;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
+      osc_id    = (user_osc_param_id_t)9;
+      osc_value = (uint16_t)value;
+      break;
+    case 11: /* LFO2 Target: enum 0-6 (custom OSC_PARAM index 10) */
+      osc_id    = (user_osc_param_id_t)10;
       osc_value = (uint16_t)value;
       break;
     default:

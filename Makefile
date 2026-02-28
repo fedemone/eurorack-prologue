@@ -43,8 +43,17 @@ test-sound:
 	./test_sound_production
 
 
+# Elements callback tests: same tests compiled with Elements defines
+# Usage: make test-elements
+test-elements:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=32 \
+	    -DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2 \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
 # Run all tests
-test-all: test test-sound
+test-all: test test-elements test-sound
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd

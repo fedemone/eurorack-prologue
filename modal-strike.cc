@@ -5,6 +5,10 @@
 #include "elements/dsp/part.h"
 #include "elements/resources.h"
 
+#ifdef ELEMENTS_LFO2
+#include "stmlib/dsp/cosine_oscillator.h"
+#endif
+
 using namespace elements;
 
 inline float get_shape();
@@ -65,6 +69,46 @@ PerformanceState performance_state_ = {
 
 float shape_lfo;
 
+#ifdef ELEMENTS_LFO2
+stmlib::CosineOscillator lfo;
+float lfo2 = 0;
+
+/* Custom param indices for LFO2 (beyond standard user_osc_param_id_t range).
+ * Passed via OSC_PARAM by the drumlogue wrapper. */
+uint16_t lfo2_rate_value = 0;
+uint16_t lfo2_depth_value = 0;
+uint16_t lfo2_target_value = 0;
+
+enum LfoTarget {
+  LfoTargetPosition,
+  LfoTargetGeometry,
+  LfoTargetStrength,
+  LfoTargetMallet,
+  LfoTargetTimbre,
+  LfoTargetDamping,
+  LfoTargetBrightness,
+  LfoTargetLfo2Frequency,
+  LfoTargetLfo2Depth
+};
+
+inline float get_lfo2_frequency() {
+  return clip01f((lfo2_rate_value * 0.01f) +
+    (p_values[k_user_osc_param_id6] == LfoTargetLfo2Frequency ? shape_lfo : 0.0f) +
+    (lfo2_target_value == LfoTargetLfo2Frequency ? lfo2 : 0.0f));
+}
+
+inline float get_lfo2_depth() {
+  return clip01f((lfo2_depth_value * 0.01f) +
+    (p_values[k_user_osc_param_id6] == LfoTargetLfo2Depth ? shape_lfo : 0.0f) +
+    (lfo2_target_value == LfoTargetLfo2Depth ? lfo2 : 0.0f));
+}
+
+inline float get_lfo_value(enum LfoTarget target) {
+  return (p_values[k_user_osc_param_id6] == target ? shape_lfo : 0.0f) +
+    (lfo2_target_value == target ? lfo2 : 0.0f);
+}
+#endif
+
 inline uint8_t GetGateFlags(bool gate_in) {
   uint8_t flags = 0;
   if (gate_in) {
@@ -120,6 +164,11 @@ void OSC_INIT(uint32_t platform, uint32_t api)
 #if defined(USE_LIMITER)
   limiter_.Init();
 #endif
+
+#ifdef ELEMENTS_LFO2
+  lfo.InitApproximate(0);
+  lfo.Start();
+#endif
 }
 
 /*
@@ -145,6 +194,11 @@ static const float ipf[] = { 0.10639816444506338f, 0.26598957651736876f, 0.39896
 void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t frames)
 {
   shape_lfo = q31_to_f32(params->shape_lfo);
+
+#ifdef ELEMENTS_LFO2
+  lfo.InitApproximate(get_lfo2_frequency() / 600.f);
+  lfo2 = (lfo.Next() - 0.5f) * 2.0f * get_lfo2_depth();
+#endif
 
   performance_state_.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
   int32_t pitch = static_cast<int32_t>((performance_state_.note + 41.0f) * 256.0f);
@@ -241,6 +295,9 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 void OSC_NOTEON(const user_osc_param_t * const params)
 {
   performance_state_.gate = true;
+#ifdef ELEMENTS_LFO2
+  lfo.Start();
+#endif
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
 {
@@ -271,11 +328,46 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     shiftshape = param_val_to_f32(value);
     break;
 
+#ifdef ELEMENTS_LFO2
+  case 8: /* LFO2 Rate (0-100) */
+    lfo2_rate_value = value;
+    break;
+  case 9: /* LFO2 Depth (0-100) */
+    lfo2_depth_value = value;
+    break;
+  case 10: /* LFO2 Target (enum) */
+    lfo2_target_value = value;
+    break;
+#endif
+
   default:
     break;
   }
 }
 
+#ifdef ELEMENTS_LFO2
+inline float get_shape() {
+  return clip01f(shape + get_lfo_value(LfoTargetPosition));
+}
+inline float get_shift_shape() {
+  return clip01f(shiftshape + get_lfo_value(LfoTargetGeometry));
+}
+inline float get_strength() {
+  return clip01f((p_values[k_user_osc_param_id1] * 0.01f) + get_lfo_value(LfoTargetStrength));
+}
+inline float get_mallet() {
+  return clip01f((p_values[k_user_osc_param_id2] * 0.01f) + get_lfo_value(LfoTargetMallet));
+}
+inline float get_timbre() {
+  return clip01f((p_values[k_user_osc_param_id3] * 0.01f) + get_lfo_value(LfoTargetTimbre));
+}
+inline float get_damping() {
+  return clip01f((p_values[k_user_osc_param_id4] * 0.01f) + get_lfo_value(LfoTargetDamping));
+}
+inline float get_brightness() {
+  return clip01f((p_values[k_user_osc_param_id5] * 0.01f) + get_lfo_value(LfoTargetBrightness));
+}
+#else
 inline float get_shape() {
   return clip01f(shape + (p_values[k_user_osc_param_id6] == 0 ? shape_lfo : 0.0f));
 }
@@ -297,3 +389,4 @@ inline float get_damping() {
 inline float get_brightness() {
   return clip01f((p_values[k_user_osc_param_id5] * 0.01f) + (p_values[k_user_osc_param_id6] == 6 ? shape_lfo : 0.0f));
 }
+#endif

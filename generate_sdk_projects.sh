@@ -218,25 +218,25 @@ ELEMENTS_SOURCES="eurorack/elements/dsp/exciter.cc eurorack/elements/dsp/resonat
 create_project "modal_strike" "modal_strike" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER" 32
+    "-DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER -DELEMENTS_LFO2" 32
 
 # Modal Strike 16 (no limiter)
 create_project "modal_strike_16_nolimit" "modal_strike_16_nolimit" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=16" 32
+    "-DELEMENTS_RESONATOR_MODES=16 -DELEMENTS_LFO2" 32
 
 # Modal Strike 24 (no limiter)
 create_project "modal_strike_24_nolimit" "modal_strike_24_nolimit" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=24" 32
+    "-DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2" 32
 
 # Elements Full (64 modes, full DSP, limiter enabled)
 create_project "elements_full" "elements_full" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL" 32
+    "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL -DELEMENTS_LFO2" 32
 
 echo ""
 echo "Done! Created 15 SDK project directories under:"
