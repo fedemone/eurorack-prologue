@@ -44,9 +44,78 @@ const __unit_header unit_header_t unit_header = {
     .target = UNIT_TARGET_PLATFORM | k_unit_module_synth,
     .api = UNIT_API_VERSION,
     .dev_id = 0x46654465U,    /* 'FeDe' - https://github.com/fedemone/logue-sdk */
-    .unit_id = 0x5265736fU,
-    .version = 0x00010700U,   /* v1.7.0 - per-oscillator params + Base Note */
-    .name = "EurorackOSC",      /* max 13 chars */
+
+    /* Per-oscillator unit ID and display name (max 13 chars).
+     * Struct field order: unit_id, version, name — must stay in order. */
+#if defined(ELEMENTS_FULL)
+    .unit_id = 0x456C4675U,   /* 'ElFu' */
+    .version = 0x00010800U,
+    .name = "ElementsFull",
+#elif defined(ELEMENTS_RESONATOR_MODES) && defined(USE_LIMITER)
+    .unit_id = 0x4D537224U,   /* 'MSr$' */
+    .version = 0x00010800U,
+    .name = "ModalStrike",
+#elif defined(ELEMENTS_RESONATOR_MODES) && (ELEMENTS_RESONATOR_MODES == 16)
+    .unit_id = 0x4D533136U,   /* 'MS16' */
+    .version = 0x00010800U,
+    .name = "Strike16",
+#elif defined(ELEMENTS_RESONATOR_MODES)
+    .unit_id = 0x4D533234U,   /* 'MS24' */
+    .version = 0x00010800U,
+    .name = "Strike24",
+#elif defined(OSC_VA)
+    .unit_id = 0x504C5641U,   /* 'PLVA' */
+    .version = 0x00010800U,
+    .name = "VirtAnalog",
+#elif defined(OSC_WSH)
+    .unit_id = 0x504C5753U,   /* 'PLWS' */
+    .version = 0x00010800U,
+    .name = "Waveshaper",
+#elif defined(OSC_FM)
+    .unit_id = 0x504C464DU,   /* 'PLFM' */
+    .version = 0x00010800U,
+    .name = "FM",
+#elif defined(OSC_GRN)
+    .unit_id = 0x504C4752U,   /* 'PLGR' */
+    .version = 0x00010800U,
+    .name = "Granular",
+#elif defined(OSC_ADD)
+    .unit_id = 0x504C4144U,   /* 'PLAD' */
+    .version = 0x00010800U,
+    .name = "Additive",
+#elif defined(OSC_STRING)
+    .unit_id = 0x504C5354U,   /* 'PLST' */
+    .version = 0x00010800U,
+    .name = "String",
+#elif defined(OSC_WTA)
+    .unit_id = 0x57544131U,   /* 'WTA1' */
+    .version = 0x00010800U,
+    .name = "Wavetable A",
+#elif defined(OSC_WTB)
+    .unit_id = 0x57544232U,   /* 'WTB2' */
+    .version = 0x00010800U,
+    .name = "Wavetable B",
+#elif defined(OSC_WTC)
+    .unit_id = 0x57544333U,   /* 'WTC3' */
+    .version = 0x00010800U,
+    .name = "Wavetable C",
+#elif defined(OSC_WTD)
+    .unit_id = 0x57544434U,   /* 'WTD4' */
+    .version = 0x00010800U,
+    .name = "Wavetable D",
+#elif defined(OSC_WTE)
+    .unit_id = 0x57544535U,   /* 'WTE5' */
+    .version = 0x00010800U,
+    .name = "Wavetable E",
+#elif defined(OSC_WTF)
+    .unit_id = 0x57544636U,   /* 'WTF6' */
+    .version = 0x00010800U,
+    .name = "Wavetable F",
+#else
+    .unit_id = 0x5265736fU,   /* fallback */
+    .version = 0x00010800U,
+    .name = "EurorackOSC",
+#endif
     .num_presets = 0,
 
 #if defined(ELEMENTS_RESONATOR_MODES)
