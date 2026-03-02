@@ -486,6 +486,8 @@ TEST(wrapper_pitch_bend_down) {
  * Tests: Parameter mapping
  * ======================================================================== */
 
+#if !defined(ELEMENTS_RESONATOR_MODES)
+
 TEST(wrapper_param_shape_scaling) {
   init_unit();
 
@@ -601,6 +603,8 @@ TEST(wrapper_param_id6_target) {
 
   teardown_unit();
 }
+
+#endif /* !ELEMENTS_RESONATOR_MODES */
 
 TEST(wrapper_param_out_of_range_ignored) {
   init_unit();

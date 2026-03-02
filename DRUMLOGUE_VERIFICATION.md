@@ -81,8 +81,7 @@ for `nts-1`, causing builds for NTS-1 to silently fail.
 
 The 14 `manifest_drumlogue_*.json` files were created for an older approach. The
 drumlogue platform uses embedded `unit_header_t` in ELF sections — no external
-manifest files are needed. These files remain in the repo but are unused by the
-current build system.
+manifest files are needed. **These files have been removed from the repository.**
 
 ## Build System Verification
 
