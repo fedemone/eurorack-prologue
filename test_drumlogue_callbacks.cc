@@ -217,7 +217,9 @@ TEST(unit_header_api) {
 }
 
 TEST(unit_header_num_params) {
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  ASSERT_EQ(8U, unit_header.num_params);
+#elif defined(ELEMENTS_RESONATOR_MODES)
   ASSERT_EQ(14U, unit_header.num_params);
 #else
   ASSERT_EQ(12U, unit_header.num_params);
@@ -225,7 +227,17 @@ TEST(unit_header_num_params) {
 }
 
 TEST(unit_header_param_names) {
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  /* Rings layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Structure"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Brightness"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Damping"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Chord"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Model"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Polyphony"));
+#elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
   ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
@@ -258,7 +270,17 @@ TEST(unit_header_param_names) {
 }
 
 TEST(unit_header_param_types) {
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  /* Rings layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[7].type);
+#elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements layout */
   ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
@@ -291,7 +313,11 @@ TEST(unit_header_param_types) {
 }
 
 TEST(unit_header_unused_params_are_none) {
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  for (int i = 8; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#elif defined(ELEMENTS_RESONATOR_MODES)
   for (int i = 14; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
@@ -494,7 +520,7 @@ TEST(wrapper_pitch_bend_down) {
  * Tests: Parameter mapping
  * ======================================================================== */
 
-#if !defined(ELEMENTS_RESONATOR_MODES)
+#if !defined(ELEMENTS_RESONATOR_MODES) && !defined(RINGS_RESONATOR)
 
 TEST(wrapper_param_base_note) {
   init_unit();
@@ -634,12 +660,14 @@ TEST(wrapper_param_lfo2_shape) {
   teardown_unit();
 }
 
-#endif /* !ELEMENTS_RESONATOR_MODES */
+#endif /* !ELEMENTS_RESONATOR_MODES && !RINGS_RESONATOR */
 
 TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
+#elif defined(ELEMENTS_RESONATOR_MODES)
   unit_set_param_value(14, 50);  /* id 14 -> default case, should return */
 #else
   unit_set_param_value(11, 50);  /* id 11 -> default case, should return */
@@ -792,6 +820,89 @@ TEST(elements_param_lfo2_shape) {
 }
 
 #endif /* ELEMENTS_RESONATOR_MODES */
+
+/* ===========================================================================
+ * Tests: Rings parameter mapping (conditional)
+ * ======================================================================== */
+
+#if defined(RINGS_RESONATOR)
+
+TEST(rings_param_base_note) {
+  init_unit();
+  int before = g_mock.param_count;
+  unit_set_param_value(0, 48);
+  ASSERT_EQ(before, g_mock.param_count); /* not forwarded */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(48 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(rings_param_position_scaling) {
+  init_unit();
+  /* Position: id 1, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(1, 100);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  unit_set_param_value(1, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_structure_scaling) {
+  init_unit();
+  /* Structure: id 2, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_brightness) {
+  init_unit();
+  /* Brightness: id 3, 0-100 -> id1 percent */
+  unit_set_param_value(3, 75);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_damping) {
+  init_unit();
+  /* Damping: id 4, 0-100 -> id2 percent */
+  unit_set_param_value(4, 50);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_chord) {
+  init_unit();
+  /* Chord: id 5, 0-10 -> id3 */
+  unit_set_param_value(5, 7);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(7, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_model) {
+  init_unit();
+  /* Model: id 6 -> custom OSC_PARAM index 8 */
+  unit_set_param_value(6, 3);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_polyphony) {
+  init_unit();
+  /* Polyphony: id 7 -> custom OSC_PARAM index 9 */
+  unit_set_param_value(7, 4);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* RINGS_RESONATOR */
 
 /* ===========================================================================
  * Tests: Shape LFO
@@ -1136,7 +1247,20 @@ TEST(param_str_value_base_note_null) {
 TEST(param_str_value_lfo_shape_strings) {
   init_unit();
   /* LFO shape strings should be returned for valid values */
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  /* Rings: Chord at id 5, Model at id 6, Polyphony at id 7 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Oct"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 10), "Maj"));
+  ASSERT_TRUE(unit_get_param_str_value(5, 11) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 0), "Modal"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "FM"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 5), "Str+Verb"));
+  ASSERT_TRUE(unit_get_param_str_value(6, 6) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(7, 1), "1"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(7, 4), "4"));
+  ASSERT_TRUE(unit_get_param_str_value(7, 0) == nullptr); /* out of range (min is 1) */
+  ASSERT_TRUE(unit_get_param_str_value(7, 5) == nullptr); /* out of range */
+#elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements: LFO1 Shape at id 9, LFO2 Shape at id 13 */
   ASSERT_TRUE(unit_get_param_str_value(9, 0) != nullptr);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Cosine"));
@@ -1237,7 +1361,16 @@ int main(void) {
   run_test_wrapper_pitch_bend_down();
 
   printf("\nParameter Mapping:\n");
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  run_test_rings_param_base_note();
+  run_test_rings_param_position_scaling();
+  run_test_rings_param_structure_scaling();
+  run_test_rings_param_brightness();
+  run_test_rings_param_damping();
+  run_test_rings_param_chord();
+  run_test_rings_param_model();
+  run_test_rings_param_polyphony();
+#elif defined(ELEMENTS_RESONATOR_MODES)
   run_test_elements_param_base_note();
   run_test_elements_param_position_scaling();
   run_test_elements_param_geometry_scaling();

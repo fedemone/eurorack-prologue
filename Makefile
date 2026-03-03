@@ -15,7 +15,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings bench
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -52,8 +52,17 @@ test-elements:
 	    -o test_drumlogue_callbacks -lm
 	./test_drumlogue_callbacks
 
+# Rings callback tests: same tests compiled with Rings defines
+# Usage: make test-rings
+test-rings:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) \
+	    -DRINGS_RESONATOR \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
 # Run all tests
-test-all: test test-elements test-sound
+test-all: test test-elements test-rings test-sound
 
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio

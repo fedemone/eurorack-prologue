@@ -37,6 +37,16 @@
  *    id 12: LFO2 Target (strings)    -> custom OSC_PARAM index 10
  *    id 13: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
  *
+ *  Rings oscillators (rings-resonator.cc):
+ *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
+ *    id 1:  Position    (0-100%)     -> k_user_osc_param_shape
+ *    id 2:  Structure   (0-100%)     -> k_user_osc_param_shiftshape
+ *    id 3:  Brightness  (0-100%)     -> k_user_osc_param_id1
+ *    id 4:  Damping     (0-100%)     -> k_user_osc_param_id2
+ *    id 5:  Chord       (0-10)       -> k_user_osc_param_id3
+ *    id 6:  Model       (strings)    -> custom OSC_PARAM index 8
+ *    id 7:  Polyphony   (strings)    -> custom OSC_PARAM index 9
+ *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
  *  Copyright (c) 2020-2022 KORG Inc. (SDK definitions)
@@ -55,7 +65,11 @@ const __unit_header unit_header_t unit_header = {
 
     /* Per-oscillator unit ID and display name (max 13 chars).
      * Struct field order: unit_id, version, name — must stay in order. */
-#if defined(ELEMENTS_FULL)
+#if defined(RINGS_RESONATOR)
+    .unit_id = 0x524E5253U,   /* 'RNRS' */
+    .version = 0x00010000U,
+    .name = "Rings",
+#elif defined(ELEMENTS_FULL)
     .unit_id = 0x456C4675U,   /* 'ElFu' */
     .version = 0x00010800U,
     .name = "ElementsFull",
@@ -126,7 +140,55 @@ const __unit_header unit_header_t unit_header = {
 #endif
     .num_presets = 0,
 
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+    /* ================================================================
+     * Rings oscillators (rings-resonator.cc)
+     *
+     * 8 params: Base Note, Position, Structure, Brightness, Damping,
+     *           Chord, Model, Polyphony
+     * ================================================================ */
+    .num_params = 8,
+    .params = {
+        // Page 1
+        /* id 0: Base Note (MIDI note for gate trigger) */
+        {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
+        /* id 1: Position (excitation position) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Position"}},
+        /* id 2: Structure (modal density / inharmonicity) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Structure"}},
+        /* id 3: Brightness (spectral tilt) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Brightness"}},
+
+        // Page 2
+        /* id 4: Damping (resonance / decay time) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Damping"}},
+        /* id 5: Chord (chord type for sympathetic strings) */
+        {0, 10, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
+        /* id 6: Model (resonator type: Modal/SympStr/String/FM/...) */
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
+        /* id 7: Polyphony (number of voices 1-4) */
+        {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Polyphony"}},
+
+        // Pages 3-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(ELEMENTS_RESONATOR_MODES)
     /* ================================================================
      * Elements oscillators (modal-strike.cc)
      *
