@@ -15,7 +15,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements bench
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -43,8 +43,30 @@ test-sound:
 	./test_sound_production
 
 
+# Elements callback tests: same tests compiled with Elements defines
+# Usage: make test-elements
+test-elements:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=32 \
+	    -DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2 \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
 # Run all tests
-test-all: test test-sound
+test-all: test test-elements test-sound
+
+# Benchmark: measure host-side render throughput for VirtualAnalog engine
+# Reports frames/sec, us/frame, and real-time ratio
+# Usage: make bench
+bench:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DBLOCKSIZE=$(BLOCK_SIZE) -DOSC_VA \
+	    -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Ieurorack \
+	    bench_render.cc $(COMMON_TEST_SRC) \
+	    macro-oscillator2.cc \
+	    eurorack/plaits/dsp/engine/virtual_analog_engine.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    -o bench_render -lm
+	./bench_render
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd

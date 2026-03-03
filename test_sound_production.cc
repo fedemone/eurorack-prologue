@@ -144,8 +144,8 @@ STEST(note_on_produces_audio) {
   unit_init(&desc);
 
   /* Set shape parameters for a strong signal */
-  unit_set_param_value(0, 50);  /* Shape = 50% */
-  unit_set_param_value(1, 50);  /* ShiftShape = 50% */
+  unit_set_param_value(1, 50);  /* Shape = 50% */
+  unit_set_param_value(2, 50);  /* ShiftShape = 50% */
 
   /* Trigger note: A4 (MIDI 69), velocity 127 */
   unit_note_on(69, 127);
@@ -241,7 +241,7 @@ STEST(param_changes_affect_output) {
 
   /* Render with Shape = 0 */
   unit_init(&desc);
-  unit_set_param_value(0, 0);
+  unit_set_param_value(1, 0);
   unit_note_on(60, 127);
 
   float stereo_a[256 * 2];
@@ -252,7 +252,7 @@ STEST(param_changes_affect_output) {
 
   /* Render with Shape = 100 */
   unit_init(&desc);
-  unit_set_param_value(0, 100);
+  unit_set_param_value(1, 100);
   unit_note_on(60, 127);
 
   float stereo_b[256 * 2];
@@ -276,7 +276,7 @@ STEST(param_changes_affect_output) {
 STEST(output_amplitude_reasonable) {
   unit_runtime_desc_t desc = make_valid_desc();
   unit_init(&desc);
-  unit_set_param_value(0, 50);
+  unit_set_param_value(1, 50);
   unit_note_on(69, 127);
 
   float stereo[512 * 2];

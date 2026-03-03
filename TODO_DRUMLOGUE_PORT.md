@@ -40,9 +40,9 @@
 ### Remaining
 
 - [ ] Test ARM cross-compilation (`PLATFORM=drumlogue make`)
-- [ ] Verify `.drmlgunit` ELF output (file type, `.unit_header` section)
-- [ ] Decide whether to remove or keep the 14 redundant `manifest_drumlogue_*.json` files
-- [ ] Test on drumlogue hardware (if available)
+- [x] ~~Verify `.drmlgunit` ELF output~~ (not needed)
+- [x] Removed 14 redundant `manifest_drumlogue_*.json` files (drumlogue uses embedded `unit_header_t` in ELF)
+- [x] Test on drumlogue hardware — sounds working, refinements ongoing
 
 ## Stage 2: Unit Tests for Callbacks (DONE)
 
@@ -215,14 +215,42 @@ Once the drumlogue port is stable and tested:
 | `DRUMLOGUE_VERIFICATION.md` | Updated |
 | `TODO_DRUMLOGUE_PORT.md` | Updated (this file) |
 
-### Legacy (Possibly Redundant)
+### Legacy (Removed)
 
 | File | Notes |
 |---|---|
-| `manifest_drumlogue_*.json` (14) | Created for older approach; drumlogue uses embedded `unit_header_t` in ELF |
+| `manifest_drumlogue_*.json` (14) | **Removed** — drumlogue uses embedded `unit_header_t` in ELF |
 | `userosc.h` (root) | Deleted — was shadowing SDK |
 
+## Stage 9: Future Module Ports
+
+See `FEASIBILITY_STUDY.md` for detailed analysis. Summary:
+
+| Module | Feasibility | Effort | Priority |
+|--------|-------------|--------|----------|
+| **Rings** (resonator) | High | 1-2 weeks | Next port |
+| **Clouds** (granular) | Medium | 2-3 weeks | After Rings |
+| **Plaits Speech** | High | 3-5 days | Quick variant add |
+| MUSS3640 Vocal Synth | Low | 4-6 weeks | Not recommended |
+
+See `PORTING_GUIDE.md` for step-by-step instructions on adding new modules.
+
+## Benchmarking
+
+Host-side render benchmark (`make bench`):
+
+| Metric | Value |
+|--------|-------|
+| Frames/block | 64 |
+| Time/block (host x86) | ~2 us |
+| Real-time ratio (host) | ~700x |
+| Estimated CPU% (Cortex-A7 @1GHz) | ~1% |
+
+Note: Host numbers are for Plaits VirtualAnalog only. Elements and future
+modules (Rings, Clouds) will be heavier. Measure on actual hardware for
+accurate Cortex-A7 figures.
+
 ---
-**Last Updated**: 2026-02-17
+**Last Updated**: 2026-03-02
 **Branch**: claude/prologue-to-drumlogue-port-OZPcA
-**Status**: Stages 1-5 complete. 64 tests passing. SDK Docker build system integrated. Ready for `docker/build_image.sh` + `./build_drumlogue.sh`.
+**Status**: Stages 1-8 complete. 128 tests passing (58+61+9). Feasibility study for Rings/Clouds/Vocal done. Porting guide written. Benchmark infrastructure added.

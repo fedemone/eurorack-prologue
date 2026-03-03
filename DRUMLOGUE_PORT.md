@@ -102,7 +102,7 @@ parameters are correctly labeled and mapped.
 same targets as the shape LFO. Its rate and depth are user-controllable, and its target
 is selectable via the LFO2 Target parameter.
 
-### Elements Parameters (9 params)
+### Elements Parameters (12 params)
 
 | ID | Name | Type | Range | Default | OSC Mapping |
 |---|---|---|---|---|---|
@@ -114,9 +114,19 @@ is selectable via the LFO2 Target parameter.
 | 5 | Damping | percent | 0-100 | 25 | `k_user_osc_param_id4` (0-100) |
 | 6 | Brightness | percent | 0-100 | 50 | `k_user_osc_param_id5` (0-100) |
 | 7 | Base Note | midi_note | 0-127 | 60 | Stored in wrapper (used by gate trigger) |
-| 8 | LFO Target | enum | 0-6 | 0 | `k_user_osc_param_id6` |
+| 8 | LFO Target | enum | 0-8 | 0 | `k_user_osc_param_id6` |
+| 9 | LFO2 Rate | percent | 0-100 | 0 | Custom OSC_PARAM index 8 |
+| 10 | LFO2 Depth | percent | 0-100 | 0 | Custom OSC_PARAM index 9 |
+| 11 | LFO2 Target | enum | 0-6 | 0 | Custom OSC_PARAM index 10 |
 
-**LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness
+**LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
+
+**LFO2 Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness
+
+**LFO2** is a second modulation source (cosine oscillator) for Elements, mirroring the LFO2
+system in macro-oscillator2.cc. Its rate and depth are user-controllable, and its target is
+selectable via the LFO2 Target parameter. Cross-modulation: the shape LFO can target
+LFO2Freq or LFO2Depth (values 7-8), and vice versa.
 
 ### Base Note
 
@@ -230,19 +240,15 @@ make test-all
 - **Elements Full Variant** - `elements_full` project with 64 resonator modes, limiter,
   and extended exciter range (granular sample player to particles).
 
+- **Stage 8: LFO2 for Elements** - Added a `CosineOscillator` LFO2 to `modal-strike.cc`
+  under `#ifdef ELEMENTS_LFO2`, mirroring the LFO2 system in macro-oscillator2.cc.
+  Three new drumlogue params (LFO2 Rate, LFO2 Depth, LFO2 Target) are routed through
+  custom OSC_PARAM indices (8, 9, 10) since all standard param IDs are in use. Both
+  the shape LFO and LFO2 can target any of the 7 sound parameters, plus cross-modulate
+  each other's frequency and depth. All Elements variants (modal_strike, 16_nolimit,
+  24_nolimit, elements_full) have LFO2 enabled via `-DELEMENTS_LFO2`.
+
 ### Next Steps
-
-#### Add LFO2 to Modal-Strike (Elements)
-
-The Elements oscillators currently only have the shape LFO (from the drumlogue's
-modulation system). Adding a second LFO similar to macro-oscillator2.cc would allow
-modulating Timbre, Damping, Brightness, etc. independently.
-
-**Approach:**
-- Add a `CosineOscillator lfo` to `modal-strike.cc` under `#ifdef ELEMENTS_LFO2`
-- Extend the Elements param layout with LFO2 Rate, LFO2 Depth, LFO2 Target params
-- Wire LFO2 into the existing `get_*()` accessor functions
-- Guard behind `#ifdef` so the base modal-strike variants aren't affected
 
 #### Study: Chord Mode (Elements String Resonator)
 
