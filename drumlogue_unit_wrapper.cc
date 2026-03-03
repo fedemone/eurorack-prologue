@@ -5,8 +5,9 @@
  *
  * Bridges the logue-sdk v2.0 Synth Module API (unit_*) to the v1.x
  * User Oscillator API (OSC_*). This allows the same oscillator source
- * code (macro-oscillator2.cc, modal-strike.cc) to run on both
- * prologue-class platforms and drumlogue without modification.
+ * code (macro-oscillator2.cc, modal-strike.cc, rings-resonator.cc)
+ * to run on both prologue-class platforms and drumlogue without
+ * modification.
  *
  * Architecture:
  *   Drumlogue Runtime
@@ -267,6 +268,16 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  * Per-oscillator param mapping via compile-time #ifdef.
  * See header.c for the full param layout per oscillator type.
  *
+ * Rings (rings-resonator.cc):
+ *   id 0  -> base_note  (MIDI 0-127, stored locally)
+ *   id 1  -> shape      (10-bit: 0-1023)  [Position]
+ *   id 2  -> shiftshape (10-bit: 0-1023)  [Structure]
+ *   id 3  -> id1        (0-100 percent)   [Brightness]
+ *   id 4  -> id2        (0-100 percent)   [Damping]
+ *   id 5  -> id3        (0-10 chord)      [Chord]
+ *   id 6  -> custom 8   (0-5 model)       [Model]
+ *   id 7  -> custom 9   (1-4 polyphony)   [Polyphony]
+ *
  * Plaits (macro-oscillator2.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
  *   id 1  -> shape      (10-bit: 0-1023)
@@ -308,7 +319,44 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   uint16_t osc_value;
   user_osc_param_id_t osc_id;
 
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  /* ---- Rings param mapping ---- */
+  switch (id) {
+    case 0: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 2: /* Structure: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shiftshape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 3: /* Brightness: 0-100 percent */
+      osc_id    = k_user_osc_param_id1;
+      osc_value = (uint16_t)value;
+      break;
+    case 4: /* Damping: 0-100 percent */
+      osc_id    = k_user_osc_param_id2;
+      osc_value = (uint16_t)value;
+      break;
+    case 5: /* Chord: 0-10 enum */
+      osc_id    = k_user_osc_param_id3;
+      osc_value = (uint16_t)value;
+      break;
+    case 6: /* Model: 0-5 enum (custom OSC_PARAM index 8) */
+      osc_id    = (user_osc_param_id_t)8;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* Polyphony: 1-4 (custom OSC_PARAM index 9) */
+      osc_id    = (user_osc_param_id_t)9;
+      osc_value = (uint16_t)value;
+      break;
+    default:
+      return;
+  }
+#elif defined(ELEMENTS_RESONATOR_MODES)
   /* ---- Elements param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -435,7 +483,25 @@ static const char * const s_lfo_shape_names[] = {
 };
 #define NUM_LFO_SHAPES 5
 
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+/* ---- Rings model and chord names ---- */
+static const char * const s_rings_model_names[] = {
+  "Modal", "SympStr", "String", "FM", "SympStrQ", "Str+Verb"
+};
+#define NUM_RINGS_MODELS 6
+
+static const char * const s_rings_chord_names[] = {
+  "Oct", "5th", "sus4", "min", "min7",
+  "min9", "min11", "69", "Maj9", "Maj7", "Maj"
+};
+#define NUM_RINGS_CHORDS 11
+
+static const char * const s_rings_poly_names[] = {
+  "1", "2", "3", "4"
+};
+#define NUM_RINGS_POLY 4
+
+#elif defined(ELEMENTS_RESONATOR_MODES)
 /* ---- Elements LFO target names ---- */
 static const char * const s_elements_lfo_target_names[] = {
   "Position", "Geometry", "Strength", "Mallet",
@@ -460,7 +526,22 @@ static const char * const s_plaits_lfo_target_names[] = {
 
 __unit_callback
 const char * unit_get_param_str_value(uint8_t id, int32_t value) {
-#if defined(ELEMENTS_RESONATOR_MODES)
+#if defined(RINGS_RESONATOR)
+  switch (id) {
+    case 5: /* Chord */
+      if (value >= 0 && value < NUM_RINGS_CHORDS)
+        return s_rings_chord_names[value];
+      break;
+    case 6: /* Model */
+      if (value >= 0 && value < NUM_RINGS_MODELS)
+        return s_rings_model_names[value];
+      break;
+    case 7: /* Polyphony */
+      if (value >= 1 && value <= NUM_RINGS_POLY)
+        return s_rings_poly_names[value - 1];
+      break;
+  }
+#elif defined(ELEMENTS_RESONATOR_MODES)
   switch (id) {
     case 8: /* LFO Target */
       if (value >= 0 && value < NUM_ELEMENTS_LFO_TARGETS)
