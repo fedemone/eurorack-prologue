@@ -5,6 +5,10 @@
 #include "elements/dsp/part.h"
 #include "elements/resources.h"
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
 #ifdef ELEMENTS_LFO2
 #include "stmlib/dsp/cosine_oscillator.h"
 #endif
@@ -291,9 +295,21 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 #endif
 
   // Sum all sources of excitation.
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vlevel = vdupq_n_f32(strike_level);
+    size_t i = 0;
+    for (; i + 4 <= kMaxBlockSize; i += 4) {
+      vst1q_f32(raw + i, vmulq_f32(vld1q_f32(strike_buffer_ + i), vlevel));
+    }
+    for (; i < kMaxBlockSize; ++i)
+      raw[i] = strike_buffer_[i] * strike_level;
+  }
+#else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
     raw[i] = strike_buffer_[i] * strike_level;
   }
+#endif
 
     // Some exciters can cause palm mutes on release.
   float damping = patch_.resonator_damping;

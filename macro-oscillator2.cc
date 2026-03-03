@@ -1,5 +1,9 @@
 #include "userosc.h"
 #include "stmlib/dsp/dsp.h"
+
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
 #include "stmlib/dsp/cosine_oscillator.h"
 #include "stmlib/utils/random.h"
 #include "plaits/dsp/dsp.h"
@@ -327,14 +331,56 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
 #if defined(USE_LIMITER)
   limiter_.Process(1.0 - mix, out, plaits::kMaxBlockSize);
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
+    const float32x4_t vmin = vdupq_n_f32(-1.0f);
+    const float32x4_t vmax = vdupq_n_f32(1.0f);
+    size_t i = 0;
+    for (; i + 4 <= plaits::kMaxBlockSize; i += 4) {
+      float32x4_t v = vld1q_f32(out + i);
+      v = vmaxq_f32(vminq_f32(v, vmax), vmin);
+      int32x4_t q = vcvtq_s32_f32(vmulq_f32(v, vscale));
+      vst1q_s32(yn + i, q);
+    }
+    for (; i < plaits::kMaxBlockSize; ++i)
+      yn[i] = f32_to_q31(out[i]);
+  }
+#else
   for(size_t i=0;i<plaits::kMaxBlockSize;i++) {
     yn[i] = f32_to_q31(out[i]);
+  }
+#endif
+#else
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
+    const float32x4_t vmin = vdupq_n_f32(-1.0f);
+    const float32x4_t vmax = vdupq_n_f32(1.0f);
+    const float32x4_t vout_gain = vdupq_n_f32(out_gain);
+    const float32x4_t vaux_gain = vdupq_n_f32(aux_gain);
+    const float32x4_t vmix = vdupq_n_f32(mix);
+    size_t i = 0;
+    for (; i + 4 <= plaits::kMaxBlockSize; i += 4) {
+      float32x4_t o = vmulq_f32(vld1q_f32(out + i), vout_gain);
+      float32x4_t a = vmulq_f32(vld1q_f32(aux + i), vaux_gain);
+      /* Crossfade: o + (a - o) * mix */
+      float32x4_t v = vmlaq_f32(o, vsubq_f32(a, o), vmix);
+      v = vmaxq_f32(vminq_f32(v, vmax), vmin);
+      int32x4_t q = vcvtq_s32_f32(vmulq_f32(v, vscale));
+      vst1q_s32(yn + i, q);
+    }
+    for (; i < plaits::kMaxBlockSize; ++i) {
+      float o2 = out[i] * out_gain, a2 = aux[i] * aux_gain;
+      yn[i] = f32_to_q31(stmlib::Crossfade(o2, a2, mix));
+    }
   }
 #else
   for(size_t i=0;i<plaits::kMaxBlockSize;i++) {
     float o = out[i] * out_gain, a = aux[i] * aux_gain;
     yn[i] = f32_to_q31(stmlib::Crossfade(o, a, mix));
   }
+#endif
 #endif
 }
 
