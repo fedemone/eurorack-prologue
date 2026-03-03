@@ -12,6 +12,13 @@ static float amp = 0.0f;
 static float lfo2_phase = 0.0f;
 static uint16_t lfo1_shape_value = 0;
 static uint16_t lfo2_shape_value = 0;
+static uint16_t gate_mode_value = 0;
+
+enum GateMode {
+  GateModeTrigger = 0,   /* One-shot envelope per gate (default) */
+  GateModeSustain = 1,   /* Hold while gate on, release on off */
+  GateModeContinuous = 2 /* Always full amplitude (drone) */
+};
 
 /* LFO waveshape transfer function for LFO1 (shape LFO modulation).
  * Shapes the incoming modulation value through different curves. */
@@ -271,12 +278,21 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   parameters.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
   parameters.note += (get_lfo_value(LfoTargetPitch) * 0.5);
 
-  if(gate && !previous_gate) {
-    parameters.trigger = plaits::TRIGGER_RISING_EDGE;
-  } else {
-    parameters.trigger = plaits::TRIGGER_LOW;
+  /* Gate mode affects trigger and envelope behavior */
+  { bool effective_gate = gate;
+    if (gate_mode_value == GateModeContinuous)
+      effective_gate = true; /* always on in continuous mode */
+
+    if (effective_gate && !previous_gate) {
+      parameters.trigger = plaits::TRIGGER_RISING_EDGE;
+    } else if (gate_mode_value == GateModeContinuous && !previous_gate) {
+      /* First cycle in continuous mode: trigger */
+      parameters.trigger = plaits::TRIGGER_RISING_EDGE;
+    } else {
+      parameters.trigger = plaits::TRIGGER_LOW;
+    }
+    previous_gate = effective_gate;
   }
-  previous_gate = gate;
 
   update_parameters();
 
@@ -285,8 +301,22 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
 #if !defined(OSC_STRING) && !defined(OSC_MODAL)
   if (!enveloped) {
-    float target = gate ? 1.0f : 0.0f;
-    float alpha = gate ? 0.05f : 0.002f;
+    float target, alpha;
+    switch (gate_mode_value) {
+      default:
+      case GateModeTrigger: /* Standard: attack on gate, decay on release */
+        target = gate ? 1.0f : 0.0f;
+        alpha = gate ? 0.05f : 0.002f;
+        break;
+      case GateModeSustain: /* Hold at full while gate on, fast release */
+        target = gate ? 1.0f : 0.0f;
+        alpha = gate ? 0.1f : 0.01f; /* faster attack, faster release */
+        break;
+      case GateModeContinuous: /* Always full amplitude */
+        target = 1.0f;
+        alpha = 0.05f;
+        break;
+    }
     for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
       amp += (target - amp) * alpha;
       out[i] *= amp;
@@ -338,6 +368,9 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     break;
   case 12: /* LFO2 Shape (0-4) */
     lfo2_shape_value = value;
+    break;
+  case 13: /* Gate Mode (0-2) */
+    gate_mode_value = value;
     break;
 
   default:

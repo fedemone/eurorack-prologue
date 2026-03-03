@@ -19,6 +19,7 @@
  *    id 8:  LFO2 Depth  (0-100%)     -> k_user_osc_param_id5
  *    id 9:  LFO2 Target (strings)    -> k_user_osc_param_id6
  *    id 10: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
+ *    id 11: Gate Mode   (strings)    -> custom OSC_PARAM index 13
  *
  *  Elements oscillators (modal-strike.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -188,11 +189,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Plaits oscillators (macro-oscillator2.cc)
      *
-     * 11 params: Base Note, Shape, ShiftShape, Param 1, Param 2,
+     * 12 params: Base Note, Shape, ShiftShape, Param 1, Param 2,
      *            LFO Target, LFO1 Shape, LFO2 Rate, LFO2 Depth,
-     *            LFO2 Target, LFO2 Shape
+     *            LFO2 Target, LFO2 Shape, Gate Mode
      * ================================================================ */
-    .num_params = 11,
+    .num_params = 12,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -221,7 +222,8 @@ const __unit_header unit_header_t unit_header = {
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 10: LFO2 Shape (waveform for LFO2) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        /* id 11: Gate Mode (envelope/gate behavior) */
+        {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
 
         // Pages 4-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

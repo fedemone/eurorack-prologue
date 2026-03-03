@@ -279,6 +279,7 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 8  -> id5        (LFO2 depth 0-100)
  *   id 9  -> id6        (LFO2 target strings)
  *   id 10 -> custom 12  (LFO2 shape strings)
+ *   id 11 -> custom 13  (Gate mode strings)
  *
  * Elements (modal-strike.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
