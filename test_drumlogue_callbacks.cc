@@ -220,7 +220,7 @@ TEST(unit_header_num_params) {
 #if defined(ELEMENTS_RESONATOR_MODES)
   ASSERT_EQ(14U, unit_header.num_params);
 #else
-  ASSERT_EQ(11U, unit_header.num_params);
+  ASSERT_EQ(12U, unit_header.num_params);
 #endif
 }
 
@@ -296,7 +296,7 @@ TEST(unit_header_unused_params_are_none) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #else
-  for (int i = 11; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 12; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #endif
