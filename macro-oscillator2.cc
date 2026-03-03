@@ -9,6 +9,31 @@ uint16_t p_values[6] = {0};
 float shape = 0, shiftshape = 0, shape_lfo = 0, lfo2 = 0, mix = 0;
 bool gate = false, previous_gate = false;
 static float amp = 0.0f;
+static float lfo2_phase = 0.0f;
+static uint16_t lfo1_shape_value = 0;
+static uint16_t lfo2_shape_value = 0;
+
+/* LFO waveshape transfer function for LFO1 (shape LFO modulation).
+ * Shapes the incoming modulation value through different curves. */
+static inline float apply_lfo1_shape(float x) {
+  switch (lfo1_shape_value) {
+    default:
+    case 0: /* Cosine: pass-through (linear response) */
+      return x;
+    case 1: /* Triangle: S-curve (steeper mid-range, gentler extremes) */
+      { float ax = x < 0.f ? -x : x;
+        float s = ax * (2.0f - ax);
+        return x < 0.f ? -s : s; }
+    case 2: /* Ramp Up: quadratic (gentle start, steep end) */
+      return x < 0.f ? -(x * x) : (x * x);
+    case 3: /* Ramp Down: inverse quadratic (steep start, gentle end) */
+      { if (x > 0.f) { float s = 1.0f - x; return 1.0f - s * s; }
+        if (x < 0.f) { float s = 1.0f + x; return -(1.0f - s * s); }
+        return 0.f; }
+    case 4: /* Fat Sine: soft-clip / fatten (boosted mid-range) */
+      return clip1m1f(x * (1.5f - 0.5f * x * x));
+  }
+}
 
 plaits::EngineParameters parameters = {
     .trigger = plaits::TRIGGER_UNPATCHED,
@@ -193,6 +218,7 @@ void OSC_NOTEON(const user_osc_param_t * const params)
   (void)params;
   gate = true;
   lfo.Start();
+  lfo2_phase = 0.0f;
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
 {
@@ -206,9 +232,41 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   static float out[plaits::kMaxBlockSize], aux[plaits::kMaxBlockSize];
   static bool enveloped;
 
-  shape_lfo = q31_to_f32(params->shape_lfo);
-  lfo.InitApproximate(get_param_lfo2_frequency() / 600.f);
-  lfo2 = (lfo.Next() - 0.5f) * 2.0f * get_param_lfo2_depth();
+  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));
+
+  /* Multi-shape LFO2 generation */
+  { float freq = get_param_lfo2_frequency() / 600.f;
+    float depth = get_param_lfo2_depth();
+    /* Always advance phase accumulator (for non-cosine shapes) */
+    lfo2_phase += freq;
+    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+    /* Always advance cosine oscillator (keeps it in sync) */
+    lfo.InitApproximate(freq);
+    float cos_val = lfo.Next(); /* [0, 1] */
+    float raw;
+    switch (lfo2_shape_value) {
+      default:
+      case 0: /* Cosine */
+        raw = (cos_val - 0.5f) * 2.0f;
+        break;
+      case 1: /* Triangle */
+        raw = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                  : (3.0f - 4.0f * lfo2_phase);
+        break;
+      case 2: /* Ramp Up */
+        raw = 2.0f * lfo2_phase - 1.0f;
+        break;
+      case 3: /* Ramp Down */
+        raw = 1.0f - 2.0f * lfo2_phase;
+        break;
+      case 4: /* Fat Sine (deformed cosine with soft-clip) */
+        raw = (cos_val - 0.5f) * 2.0f;
+        raw = raw * (1.5f - 0.5f * raw * raw);
+        raw = (raw > 1.0f) ? 1.0f : ((raw < -1.0f) ? -1.0f : raw);
+        break;
+    }
+    lfo2 = raw * depth;
+  }
 
   parameters.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
   parameters.note += (get_lfo_value(LfoTargetPitch) * 0.5);
@@ -273,6 +331,13 @@ void OSC_PARAM(uint16_t index, uint16_t value)
 
   case k_user_osc_param_shiftshape:
     shiftshape = param_val_to_f32(value);
+    break;
+
+  case 11: /* LFO1 Shape (0-4) */
+    lfo1_shape_value = value;
+    break;
+  case 12: /* LFO2 Shape (0-4) */
+    lfo2_shape_value = value;
     break;
 
   default:

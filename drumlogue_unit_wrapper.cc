@@ -268,29 +268,33 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  * See header.c for the full param layout per oscillator type.
  *
  * Plaits (macro-oscillator2.cc):
- *   id 0 -> shape      (10-bit: 0-1023)
- *   id 1 -> shiftshape (10-bit: 0-1023)
- *   id 2 -> id1        (0-200 bipolar, centered at 100)
- *   id 3 -> id2        (0-100 percent)
- *   id 4 -> base_note  (MIDI 0-127, stored locally)
- *   id 5 -> id3        (LFO target enum)
- *   id 6 -> id4        (LFO2 rate 0-100)
- *   id 7 -> id5        (LFO2 depth 0-100)
- *   id 8 -> id6        (LFO2 target enum)
+ *   id 0  -> base_note  (MIDI 0-127, stored locally)
+ *   id 1  -> shape      (10-bit: 0-1023)
+ *   id 2  -> shiftshape (10-bit: 0-1023)
+ *   id 3  -> id1        (0-200 bipolar, centered at 100)
+ *   id 4  -> id2        (0-100 percent)
+ *   id 5  -> id3        (LFO target strings)
+ *   id 6  -> custom 11  (LFO1 shape strings)
+ *   id 7  -> id4        (LFO2 rate 0-100)
+ *   id 8  -> id5        (LFO2 depth 0-100)
+ *   id 9  -> id6        (LFO2 target strings)
+ *   id 10 -> custom 12  (LFO2 shape strings)
  *
  * Elements (modal-strike.cc):
- *   id 0  -> shape      (10-bit: 0-1023)  [Position]
- *   id 1  -> shiftshape (10-bit: 0-1023)  [Geometry]
- *   id 2  -> id1        (0-100 percent)   [Strength]
- *   id 3  -> id2        (0-100 percent)   [Mallet]
- *   id 4  -> id3        (0-100 percent)   [Timbre]
- *   id 5  -> id4        (0-100 percent)   [Damping]
- *   id 6  -> id5        (0-100 percent)   [Brightness]
- *   id 7  -> base_note  (MIDI 0-127, stored locally)
- *   id 8  -> id6        (LFO target enum 0-8)
- *   id 9  -> custom 8   (LFO2 rate 0-100)
- *   id 10 -> custom 9   (LFO2 depth 0-100)
- *   id 11 -> custom 10  (LFO2 target enum 0-6)
+ *   id 0  -> base_note  (MIDI 0-127, stored locally)
+ *   id 1  -> shape      (10-bit: 0-1023)  [Position]
+ *   id 2  -> shiftshape (10-bit: 0-1023)  [Geometry]
+ *   id 3  -> id1        (0-100 percent)   [Strength]
+ *   id 4  -> id2        (0-100 percent)   [Mallet]
+ *   id 5  -> id3        (0-100 percent)   [Timbre]
+ *   id 6  -> id4        (0-100 percent)   [Damping]
+ *   id 7  -> id5        (0-100 percent)   [Brightness]
+ *   id 8  -> id6        (LFO target strings 0-8)
+ *   id 9  -> custom 11  (LFO1 shape strings)
+ *   id 10 -> custom 8   (LFO2 rate 0-100)
+ *   id 11 -> custom 9   (LFO2 depth 0-100)
+ *   id 12 -> custom 10  (LFO2 target strings 0-6)
+ *   id 13 -> custom 12  (LFO2 shape strings)
  * ======================================================================== */
 
 __unit_callback
@@ -306,51 +310,59 @@ void unit_set_param_value(uint8_t id, int32_t value) {
 #if defined(ELEMENTS_RESONATOR_MODES)
   /* ---- Elements param mapping ---- */
   switch (id) {
-    case 0: /* Position: 0-100 -> 10-bit (0-1023) */
+    case 0: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
       osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
-    case 1: /* Geometry: 0-100 -> 10-bit (0-1023) */
+    case 2: /* Geometry: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shiftshape;
       osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
-    case 2: /* Strength: 0-100 percent */
+    case 3: /* Strength: 0-100 percent */
       osc_id    = k_user_osc_param_id1;
       osc_value = (uint16_t)value;
       break;
-    case 3: /* Mallet: 0-100 percent */
+    case 4: /* Mallet: 0-100 percent */
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 4: /* Timbre: 0-100 percent */
+    case 5: /* Timbre: 0-100 percent */
       osc_id    = k_user_osc_param_id3;
       osc_value = (uint16_t)value;
       break;
-    case 5: /* Damping: 0-100 percent */
+    case 6: /* Damping: 0-100 percent */
       osc_id    = k_user_osc_param_id4;
       osc_value = (uint16_t)value;
       break;
-    case 6: /* Brightness: 0-100 percent */
+    case 7: /* Brightness: 0-100 percent */
       osc_id    = k_user_osc_param_id5;
       osc_value = (uint16_t)value;
       break;
-    case 7: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
-      return;
-    case 8: /* LFO Target: enum 0-8 */
+    case 8: /* LFO Target: strings enum 0-8 */
       osc_id    = k_user_osc_param_id6;
       osc_value = (uint16_t)value;
       break;
-    case 9: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
+    case 9: /* LFO1 Shape: strings enum (custom OSC_PARAM index 11) */
+      osc_id    = (user_osc_param_id_t)11;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
       osc_id    = (user_osc_param_id_t)8;
       osc_value = (uint16_t)value;
       break;
-    case 10: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
+    case 11: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
       osc_id    = (user_osc_param_id_t)9;
       osc_value = (uint16_t)value;
       break;
-    case 11: /* LFO2 Target: enum 0-6 (custom OSC_PARAM index 10) */
+    case 12: /* LFO2 Target: strings enum 0-6 (custom OSC_PARAM index 10) */
       osc_id    = (user_osc_param_id_t)10;
+      osc_value = (uint16_t)value;
+      break;
+    case 13: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
+      osc_id    = (user_osc_param_id_t)12;
       osc_value = (uint16_t)value;
       break;
     default:
@@ -359,39 +371,47 @@ void unit_set_param_value(uint8_t id, int32_t value) {
 #else
   /* ---- Plaits param mapping ---- */
   switch (id) {
-    case 0: /* Shape: 0-100 -> 10-bit (0-1023) */
+    case 0: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 1: /* Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
       osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
-    case 1: /* Shift-Shape: 0-100 -> 10-bit (0-1023) */
+    case 2: /* Shift-Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shiftshape;
       osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
-    case 2: /* Param 1: 0-100 -> 0-200 (bipolar centered at 100) */
+    case 3: /* Param 1: 0-100 -> 0-200 (bipolar centered at 100) */
       osc_id    = k_user_osc_param_id1;
       osc_value = (uint16_t)(value * 2);
       break;
-    case 3: /* Param 2: 0-100 -> 0-100 (percent) */
+    case 4: /* Param 2: 0-100 -> 0-100 (percent) */
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 4: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
-      return;
-    case 5: /* LFO Target: direct enum value */
+    case 5: /* LFO Target: strings enum value */
       osc_id    = k_user_osc_param_id3;
       osc_value = (uint16_t)value;
       break;
-    case 6: /* LFO2 Rate: 0-100 percent */
+    case 6: /* LFO1 Shape: strings enum (custom OSC_PARAM index 11) */
+      osc_id    = (user_osc_param_id_t)11;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* LFO2 Rate: 0-100 percent */
       osc_id    = k_user_osc_param_id4;
       osc_value = (uint16_t)value;
       break;
-    case 7: /* LFO2 Depth: 0-100 percent */
+    case 8: /* LFO2 Depth: 0-100 percent */
       osc_id    = k_user_osc_param_id5;
       osc_value = (uint16_t)value;
       break;
-    case 8: /* LFO2 Target: direct enum value */
+    case 9: /* LFO2 Target: strings enum value */
       osc_id    = k_user_osc_param_id6;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
+      osc_id    = (user_osc_param_id_t)12;
       osc_value = (uint16_t)value;
       break;
     default:
@@ -408,11 +428,67 @@ int32_t unit_get_param_value(uint8_t id) {
   return s_state.param_values[id];
 }
 
+/* ---- LFO shape names (shared by LFO1 Shape and LFO2 Shape params) ---- */
+static const char * const s_lfo_shape_names[] = {
+  "Cosine", "Triangle", "Ramp Up", "Ramp Down", "Fat Sine"
+};
+#define NUM_LFO_SHAPES 5
+
+#if defined(ELEMENTS_RESONATOR_MODES)
+/* ---- Elements LFO target names ---- */
+static const char * const s_elements_lfo_target_names[] = {
+  "Position", "Geometry", "Strength", "Mallet",
+  "Timbre", "Damping", "Bright.", "LFO2 Frq", "LFO2 Dep"
+};
+#define NUM_ELEMENTS_LFO_TARGETS 9
+
+static const char * const s_elements_lfo2_target_names[] = {
+  "Position", "Geometry", "Strength", "Mallet",
+  "Timbre", "Damping", "Bright."
+};
+#define NUM_ELEMENTS_LFO2_TARGETS 7
+
+#else
+/* ---- Plaits LFO target names ---- */
+static const char * const s_plaits_lfo_target_names[] = {
+  "Shape", "ShftShp", "Param 1", "Param 2",
+  "Pitch", "Amplit.", "LFO2 Frq", "LFO2 Dep"
+};
+#define NUM_PLAITS_LFO_TARGETS 8
+#endif
+
 __unit_callback
 const char * unit_get_param_str_value(uint8_t id, int32_t value) {
-  (void)id;
-  (void)value;
-  /* Let the runtime use the default numeric display */
+#if defined(ELEMENTS_RESONATOR_MODES)
+  switch (id) {
+    case 8: /* LFO Target */
+      if (value >= 0 && value < NUM_ELEMENTS_LFO_TARGETS)
+        return s_elements_lfo_target_names[value];
+      break;
+    case 9: /* LFO1 Shape */
+    case 13: /* LFO2 Shape */
+      if (value >= 0 && value < NUM_LFO_SHAPES)
+        return s_lfo_shape_names[value];
+      break;
+    case 12: /* LFO2 Target */
+      if (value >= 0 && value < NUM_ELEMENTS_LFO2_TARGETS)
+        return s_elements_lfo2_target_names[value];
+      break;
+  }
+#else
+  switch (id) {
+    case 5: /* LFO Target */
+    case 9: /* LFO2 Target (same target list) */
+      if (value >= 0 && value < NUM_PLAITS_LFO_TARGETS)
+        return s_plaits_lfo_target_names[value];
+      break;
+    case 6: /* LFO1 Shape */
+    case 10: /* LFO2 Shape */
+      if (value >= 0 && value < NUM_LFO_SHAPES)
+        return s_lfo_shape_names[value];
+      break;
+  }
+#endif
   return nullptr;
 }
 

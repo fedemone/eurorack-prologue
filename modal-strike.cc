@@ -72,12 +72,31 @@ float shape_lfo;
 #ifdef ELEMENTS_LFO2
 stmlib::CosineOscillator lfo;
 float lfo2 = 0;
+static float lfo2_phase = 0.0f;
 
 /* Custom param indices for LFO2 (beyond standard user_osc_param_id_t range).
  * Passed via OSC_PARAM by the drumlogue wrapper. */
 uint16_t lfo2_rate_value = 0;
 uint16_t lfo2_depth_value = 0;
 uint16_t lfo2_target_value = 0;
+static uint16_t lfo1_shape_value = 0;
+static uint16_t lfo2_shape_value = 0;
+
+/* LFO waveshape transfer function for LFO1 (shape LFO modulation). */
+static inline float apply_lfo1_shape(float x) {
+  switch (lfo1_shape_value) {
+    default:
+    case 0: return x;
+    case 1: { float ax = x < 0.f ? -x : x;
+              float s = ax * (2.0f - ax);
+              return x < 0.f ? -s : s; }
+    case 2: return x < 0.f ? -(x * x) : (x * x);
+    case 3: { if (x > 0.f) { float s = 1.0f - x; return 1.0f - s * s; }
+              if (x < 0.f) { float s = 1.0f + x; return -(1.0f - s * s); }
+              return 0.f; }
+    case 4: return clipminusone_plusonef(x * (1.5f - 0.5f * x * x));
+  }
+}
 
 enum LfoTarget {
   LfoTargetPosition,
@@ -196,8 +215,30 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   shape_lfo = q31_to_f32(params->shape_lfo);
 
 #ifdef ELEMENTS_LFO2
-  lfo.InitApproximate(get_lfo2_frequency() / 600.f);
-  lfo2 = (lfo.Next() - 0.5f) * 2.0f * get_lfo2_depth();
+  shape_lfo = apply_lfo1_shape(shape_lfo);
+
+  /* Multi-shape LFO2 generation */
+  { float freq = get_lfo2_frequency() / 600.f;
+    float depth = get_lfo2_depth();
+    lfo2_phase += freq;
+    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+    lfo.InitApproximate(freq);
+    float cos_val = lfo.Next();
+    float raw_lfo;
+    switch (lfo2_shape_value) {
+      default:
+      case 0: raw_lfo = (cos_val - 0.5f) * 2.0f; break;
+      case 1: raw_lfo = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                             : (3.0f - 4.0f * lfo2_phase); break;
+      case 2: raw_lfo = 2.0f * lfo2_phase - 1.0f; break;
+      case 3: raw_lfo = 1.0f - 2.0f * lfo2_phase; break;
+      case 4: raw_lfo = (cos_val - 0.5f) * 2.0f;
+              raw_lfo = raw_lfo * (1.5f - 0.5f * raw_lfo * raw_lfo);
+              raw_lfo = (raw_lfo > 1.0f) ? 1.0f : ((raw_lfo < -1.0f) ? -1.0f : raw_lfo);
+              break;
+    }
+    lfo2 = raw_lfo * depth;
+  }
 #endif
 
   performance_state_.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
@@ -297,6 +338,7 @@ void OSC_NOTEON(const user_osc_param_t * const params)
   performance_state_.gate = true;
 #ifdef ELEMENTS_LFO2
   lfo.Start();
+  lfo2_phase = 0.0f;
 #endif
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
@@ -337,6 +379,12 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     break;
   case 10: /* LFO2 Target (enum) */
     lfo2_target_value = value;
+    break;
+  case 11: /* LFO1 Shape (0-4) */
+    lfo1_shape_value = value;
+    break;
+  case 12: /* LFO2 Shape (0-4) */
+    lfo2_shape_value = value;
     break;
 #endif
 
