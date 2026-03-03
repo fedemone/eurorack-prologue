@@ -58,8 +58,8 @@ test-rings:
 	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) \
 	    -DRINGS_RESONATOR \
 	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
-	    -o test_drumlogue_callbacks -lm
-	./test_drumlogue_callbacks
+	    -o test_drumlogue_callbacks_rings -lm
+	./test_drumlogue_callbacks_rings
 
 # Run all tests
 test-all: test test-elements test-rings test-sound
