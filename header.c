@@ -47,6 +47,20 @@
  *    id 6:  Model       (strings)    -> custom OSC_PARAM index 8
  *    id 7:  Polyphony   (strings)    -> custom OSC_PARAM index 9
  *
+ *  Clouds oscillators (clouds-granular.cc):
+ *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
+ *    id 1:  Position    (0-100%)     -> k_user_osc_param_shape
+ *    id 2:  Size        (0-100%)     -> k_user_osc_param_shiftshape
+ *    id 3:  Density     (0-100%)     -> k_user_osc_param_id1
+ *    id 4:  Texture     (0-100%)     -> k_user_osc_param_id2
+ *    id 5:  Pitch       (-24..+24)   -> k_user_osc_param_id3 (semitones)
+ *    id 6:  Feedback    (0-100%)     -> k_user_osc_param_id4
+ *    id 7:  Dry/Wet     (0-100%)     -> k_user_osc_param_id5
+ *    id 8:  Reverb      (0-100%)     -> k_user_osc_param_id6
+ *    id 9:  Freeze      (on/off)     -> custom OSC_PARAM index 8
+ *    id 10: Mode        (strings)    -> custom OSC_PARAM index 9
+ *    id 11: Quality     (strings)    -> custom OSC_PARAM index 10
+ *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
  *  Copyright (c) 2020-2022 KORG Inc. (SDK definitions)
@@ -65,7 +79,11 @@ const __unit_header unit_header_t unit_header = {
 
     /* Per-oscillator unit ID and display name (max 13 chars).
      * Struct field order: unit_id, version, name — must stay in order. */
-#if defined(RINGS_RESONATOR)
+#if defined(CLOUDS_GRANULAR)
+    .unit_id = 0x434C4453U,   /* 'CLDS' */
+    .version = 0x00010000U,
+    .name = "Clouds",
+#elif defined(RINGS_RESONATOR)
     .unit_id = 0x524E5253U,   /* 'RNRS' */
     .version = 0x00010000U,
     .name = "Rings",
@@ -140,7 +158,61 @@ const __unit_header unit_header_t unit_header = {
 #endif
     .num_presets = 0,
 
-#if defined(RINGS_RESONATOR)
+#if defined(CLOUDS_GRANULAR)
+    /* ================================================================
+     * Clouds oscillators (clouds-granular.cc)
+     *
+     * 12 params: Base Note, Position, Size, Density, Texture, Pitch,
+     *            Feedback, Dry/Wet, Reverb, Freeze, Mode, Quality
+     * ================================================================ */
+    .num_params = 12,
+    .params = {
+        // Page 1
+        /* id 0: Base Note (MIDI note for gate trigger) */
+        {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
+        /* id 1: Position (granular buffer position) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Position"}},
+        /* id 2: Size (grain size / buffer region) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Size"}},
+        /* id 3: Density (grain density / overlap) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Density"}},
+
+        // Page 2
+        /* id 4: Texture (grain window shape / filter) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Texture"}},
+        /* id 5: Pitch (pitch shift in semitones) */
+        {0, 48, 24, 24, k_unit_param_type_none, 0, 0, 0, {"Pitch"}},
+        /* id 6: Feedback (feedback amount) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Feedback"}},
+        /* id 7: Dry/Wet (output mix) */
+        {0, 100, 0, 100, k_unit_param_type_drywet, 0, 0, 0, {"Dry/Wet"}},
+
+        // Page 3
+        /* id 8: Reverb (reverb amount) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Reverb"}},
+        /* id 9: Freeze (freeze buffer) */
+        {0, 1, 0, 0, k_unit_param_type_onoff, 0, 0, 0, {"Freeze"}},
+        /* id 10: Mode (Granular/Stretch/Delay/Spectral) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Mode"}},
+        /* id 11: Quality (stereo/mono, hi/lo fidelity) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Quality"}},
+
+        // Pages 4-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(RINGS_RESONATOR)
     /* ================================================================
      * Rings oscillators (rings-resonator.cc)
      *

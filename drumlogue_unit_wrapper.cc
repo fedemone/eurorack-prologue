@@ -5,9 +5,9 @@
  *
  * Bridges the logue-sdk v2.0 Synth Module API (unit_*) to the v1.x
  * User Oscillator API (OSC_*). This allows the same oscillator source
- * code (macro-oscillator2.cc, modal-strike.cc, rings-resonator.cc)
- * to run on both prologue-class platforms and drumlogue without
- * modification.
+ * code (macro-oscillator2.cc, modal-strike.cc, rings-resonator.cc,
+ * clouds-granular.cc) to run on both prologue-class platforms and
+ * drumlogue without modification.
  *
  * Architecture:
  *   Drumlogue Runtime
@@ -268,6 +268,20 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  * Per-oscillator param mapping via compile-time #ifdef.
  * See header.c for the full param layout per oscillator type.
  *
+ * Clouds (clouds-granular.cc):
+ *   id 0  -> base_note  (MIDI 0-127, stored locally)
+ *   id 1  -> shape      (10-bit: 0-1023)  [Position]
+ *   id 2  -> shiftshape (10-bit: 0-1023)  [Size]
+ *   id 3  -> id1        (0-100 percent)   [Density]
+ *   id 4  -> id2        (0-100 percent)   [Texture]
+ *   id 5  -> id3        (0-48, centered 24)[Pitch semitones]
+ *   id 6  -> id4        (0-100 percent)   [Feedback]
+ *   id 7  -> id5        (0-100 percent)   [Dry/Wet]
+ *   id 8  -> id6        (0-100 percent)   [Reverb]
+ *   id 9  -> custom 8   (0-1 on/off)     [Freeze]
+ *   id 10 -> custom 9   (0-3 mode)       [Mode]
+ *   id 11 -> custom 10  (0-3 quality)    [Quality]
+ *
  * Rings (rings-resonator.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
  *   id 1  -> shape      (10-bit: 0-1023)  [Position]
@@ -319,7 +333,60 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   uint16_t osc_value;
   user_osc_param_id_t osc_id;
 
-#if defined(RINGS_RESONATOR)
+#if defined(CLOUDS_GRANULAR)
+  /* ---- Clouds param mapping ---- */
+  switch (id) {
+    case 0: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 2: /* Size: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shiftshape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 3: /* Density: 0-100 percent */
+      osc_id    = k_user_osc_param_id1;
+      osc_value = (uint16_t)value;
+      break;
+    case 4: /* Texture: 0-100 percent */
+      osc_id    = k_user_osc_param_id2;
+      osc_value = (uint16_t)value;
+      break;
+    case 5: /* Pitch: 0-48 (centered at 24 = 0 semitones) */
+      osc_id    = k_user_osc_param_id3;
+      osc_value = (uint16_t)(int16_t)(value - 24);
+      break;
+    case 6: /* Feedback: 0-100 percent */
+      osc_id    = k_user_osc_param_id4;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* Dry/Wet: 0-100 percent */
+      osc_id    = k_user_osc_param_id5;
+      osc_value = (uint16_t)value;
+      break;
+    case 8: /* Reverb: 0-100 percent */
+      osc_id    = k_user_osc_param_id6;
+      osc_value = (uint16_t)value;
+      break;
+    case 9: /* Freeze: 0-1 (custom OSC_PARAM index 8) */
+      osc_id    = (user_osc_param_id_t)8;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* Mode: 0-3 (custom OSC_PARAM index 9) */
+      osc_id    = (user_osc_param_id_t)9;
+      osc_value = (uint16_t)value;
+      break;
+    case 11: /* Quality: 0-3 (custom OSC_PARAM index 10) */
+      osc_id    = (user_osc_param_id_t)10;
+      osc_value = (uint16_t)value;
+      break;
+    default:
+      return;
+  }
+#elif defined(RINGS_RESONATOR)
   /* ---- Rings param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -483,7 +550,19 @@ static const char * const s_lfo_shape_names[] = {
 };
 #define NUM_LFO_SHAPES 5
 
-#if defined(RINGS_RESONATOR)
+#if defined(CLOUDS_GRANULAR)
+/* ---- Clouds mode and quality names ---- */
+static const char * const s_clouds_mode_names[] = {
+  "Granular", "Stretch", "Delay", "Spectral"
+};
+#define NUM_CLOUDS_MODES 4
+
+static const char * const s_clouds_quality_names[] = {
+  "StHi", "MoHi", "StLo", "MoLo"
+};
+#define NUM_CLOUDS_QUALITIES 4
+
+#elif defined(RINGS_RESONATOR)
 /* ---- Rings model and chord names ---- */
 static const char * const s_rings_model_names[] = {
   "Modal", "SympStr", "String", "FM", "SympStrQ", "Str+Verb"
@@ -526,7 +605,18 @@ static const char * const s_plaits_lfo_target_names[] = {
 
 __unit_callback
 const char * unit_get_param_str_value(uint8_t id, int32_t value) {
-#if defined(RINGS_RESONATOR)
+#if defined(CLOUDS_GRANULAR)
+  switch (id) {
+    case 10: /* Mode */
+      if (value >= 0 && value < NUM_CLOUDS_MODES)
+        return s_clouds_mode_names[value];
+      break;
+    case 11: /* Quality */
+      if (value >= 0 && value < NUM_CLOUDS_QUALITIES)
+        return s_clouds_quality_names[value];
+      break;
+  }
+#elif defined(RINGS_RESONATOR)
   switch (id) {
     case 5: /* Chord */
       if (value >= 0 && value < NUM_RINGS_CHORDS)
