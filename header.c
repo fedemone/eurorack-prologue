@@ -60,6 +60,8 @@
  *    id 9:  Freeze      (on/off)     -> custom OSC_PARAM index 8
  *    id 10: Mode        (strings)    -> custom OSC_PARAM index 9
  *    id 11: Quality     (strings)    -> custom OSC_PARAM index 10
+ *    id 12: SampleBank  (0-15)       -> custom OSC_PARAM index 11
+ *    id 13: SampleNum   (0-64)       -> custom OSC_PARAM index 12
  *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
@@ -162,10 +164,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Clouds oscillators (clouds-granular.cc)
      *
-     * 12 params: Base Note, Position, Size, Density, Texture, Pitch,
-     *            Feedback, Dry/Wet, Reverb, Freeze, Mode, Quality
+     * 14 params: Base Note, Position, Size, Density, Texture, Pitch,
+     *            Feedback, Dry/Wet, Reverb, Freeze, Mode, Quality,
+     *            SampleBank, SampleNum
      * ================================================================ */
-    .num_params = 12,
+    .num_params = 14,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -197,11 +200,15 @@ const __unit_header unit_header_t unit_header = {
         /* id 11: Quality (stereo/mono, hi/lo fidelity) */
         {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Quality"}},
 
-        // Pages 4-6: blank
+        // Page 4
+        /* id 12: SampleBank (drumlogue sample bank selection) */
+        {0, 15, 0, 0, k_unit_param_type_none, 0, 0, 0, {"SampleBank"}},
+        /* id 13: SampleNum (0=internal osc, 1+=sample from bank) */
+        {0, 64, 0, 0, k_unit_param_type_none, 0, 0, 0, {"SampleNum"}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+
+        // Pages 5-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

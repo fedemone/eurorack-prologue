@@ -5,8 +5,10 @@
  * to the drumlogue User Oscillator API.
  *
  * Since Clouds is an audio processor (not a generator), this port
- * includes a built-in sawtooth oscillator that follows MIDI pitch.
- * The sawtooth provides input audio for Clouds to record and process.
+ * supports two input sources:
+ *   1. A built-in sawtooth oscillator that follows MIDI pitch (default)
+ *   2. Sample playback from the drumlogue sample bank
+ * Select via SampleNum parameter: 0 = sawtooth, 1+ = sample from bank.
  *
  * Clouds was designed for 32 kHz; we run it at drumlogue's native
  * 48 kHz. The only audible effect is slightly different feedback
@@ -30,6 +32,7 @@
  */
 
 #include "userosc.h"
+#include "drumlogue_osc_adapter.h"
 #include "stmlib/dsp/dsp.h"
 
 #include <cstring>
@@ -72,13 +75,66 @@ float shape_lfo = 0;
 /* Custom param storage */
 static int32_t pitch_semitones_ = 0;
 
+/* Sample playback state */
+static uint8_t sample_bank_ = 0;
+static uint8_t sample_number_ = 0;  /* 0 = use sawtooth, 1+ = sample */
+static const float *sample_ptr_ = nullptr;
+static size_t sample_frames_ = 0;
+static uint8_t sample_channels_ = 0;
+static size_t sample_read_pos_ = 0;
+
 /* ======================================================================
- * Built-in Oscillator
+ * Audio Input Sources
  *
- * Provides a simple sawtooth wave as audio input for Clouds.
- * The sawtooth follows the current MIDI note pitch, giving
- * Clouds tonal material to granulate/stretch/process.
+ * Two sources feed Clouds:
+ *   1. Built-in sawtooth oscillator (follows MIDI pitch)
+ *   2. Sample from drumlogue sample bank (looped playback)
+ * Selected via sample_number_: 0 = sawtooth, 1+ = sample.
  * ==================================================================== */
+
+static void load_sample(void) {
+  if (sample_number_ == 0) {
+    sample_ptr_ = nullptr;
+    sample_frames_ = 0;
+    sample_channels_ = 0;
+    return;
+  }
+  /* sample_number_ is 1-based; API is 0-based */
+  const sample_wrapper_t *sw =
+      osc_adapter_get_sample(sample_bank_, sample_number_ - 1);
+  if (sw && sw->sample_ptr && sw->frames > 0) {
+    sample_ptr_ = sw->sample_ptr;
+    sample_frames_ = sw->frames;
+    sample_channels_ = sw->channels;
+  } else {
+    sample_ptr_ = nullptr;
+    sample_frames_ = 0;
+    sample_channels_ = 0;
+  }
+  sample_read_pos_ = 0;
+}
+
+/**
+ * Generate sample-based input into ShortFrame buffer.
+ * Reads from the loaded sample, looping at the end.
+ * Converts float [-1,+1] to int16 at 50% amplitude.
+ */
+static void generate_sample_input(ShortFrame *input, size_t size) {
+  for (size_t i = 0; i < size; ++i) {
+    float left, right;
+    if (sample_channels_ == 2) {
+      left = sample_ptr_[sample_read_pos_ * 2];
+      right = sample_ptr_[sample_read_pos_ * 2 + 1];
+    } else {
+      left = right = sample_ptr_[sample_read_pos_];
+    }
+    input[i].l = (int16_t)(left * 16384.0f);
+    input[i].r = (int16_t)(right * 16384.0f);
+    sample_read_pos_++;
+    if (sample_read_pos_ >= sample_frames_)
+      sample_read_pos_ = 0;
+  }
+}
 
 static inline float midi_to_hz(float note) {
   /* Fast MIDI-to-Hz: 440 * 2^((note - 69) / 12) */
@@ -140,6 +196,13 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   osc_frequency_ = midi_to_hz(60.0f);
   osc_active_ = false;
   pitch_semitones_ = 0;
+
+  sample_bank_ = 0;
+  sample_number_ = 0;
+  sample_ptr_ = nullptr;
+  sample_frames_ = 0;
+  sample_channels_ = 0;
+  sample_read_pos_ = 0;
 }
 
 void OSC_CYCLE(const user_osc_param_t *const params,
@@ -170,12 +233,16 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   /* Prepare handles mode/quality switches and buffer resets */
   processor_.Prepare();
 
-  /* Generate input audio from built-in sawtooth */
+  /* Generate input audio */
   ShortFrame input[kMaxBlockSize];
   ShortFrame output[kMaxBlockSize];
 
   if (osc_active_) {
-    generate_input(input, kMaxBlockSize, osc_frequency_);
+    if (sample_ptr_ && sample_frames_ > 0) {
+      generate_sample_input(input, kMaxBlockSize);
+    } else {
+      generate_input(input, kMaxBlockSize, osc_frequency_);
+    }
   } else {
     memset(input, 0, sizeof(ShortFrame) * kMaxBlockSize);
   }
@@ -219,6 +286,7 @@ void OSC_NOTEON(const user_osc_param_t *const params)
 {
   (void)params;
   osc_active_ = true;
+  sample_read_pos_ = 0;
   processor_.mutable_parameters()->gate = true;
 }
 
@@ -264,6 +332,16 @@ void OSC_PARAM(uint16_t index, uint16_t value)
 
     case 10: /* Quality (0-3: StHi/MoHi/StLo/MoLo) */
       processor_.set_quality(value & 0x3);
+      break;
+
+    case 11: /* SampleBank (0-15) */
+      sample_bank_ = (uint8_t)(value & 0xF);
+      load_sample();
+      break;
+
+    case 12: /* SampleNum (0=sawtooth, 1+=sample from bank) */
+      sample_number_ = (uint8_t)value;
+      load_sample();
       break;
 
     default:
