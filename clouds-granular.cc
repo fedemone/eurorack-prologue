@@ -82,6 +82,8 @@ static const float *sample_ptr_ = nullptr;
 static size_t sample_frames_ = 0;
 static uint8_t sample_channels_ = 0;
 static size_t sample_read_pos_ = 0;
+static uint16_t sample_start_permil_ = 0;     /* 0-1000 (0.0%-100.0%) */
+static uint16_t sample_end_permil_ = 1000;    /* 0-1000 (0.0%-100.0%) */
 
 /* ======================================================================
  * Audio Input Sources
@@ -111,15 +113,32 @@ static void load_sample(void) {
     sample_frames_ = 0;
     sample_channels_ = 0;
   }
-  sample_read_pos_ = 0;
+  /* Reset read position to start point */
+  if (sample_frames_ > 0) {
+    size_t start = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
+    if (start >= sample_frames_) start = sample_frames_ - 1;
+    sample_read_pos_ = start;
+  } else {
+    sample_read_pos_ = 0;
+  }
 }
 
 /**
  * Generate sample-based input into ShortFrame buffer.
- * Reads from the loaded sample, looping at the end.
+ * Reads from the loaded sample between start and end points.
+ * If end < start, plays backwards. Loops at region boundary.
  * Converts float [-1,+1] to int16 at 50% amplitude.
  */
 static void generate_sample_input(ShortFrame *input, size_t size) {
+  size_t start_frame = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
+  size_t end_frame   = (size_t)((uint64_t)sample_end_permil_ * sample_frames_ / 1000);
+
+  /* Clamp to valid range */
+  if (start_frame >= sample_frames_) start_frame = sample_frames_ - 1;
+  if (end_frame > sample_frames_) end_frame = sample_frames_;
+
+  bool reverse = (end_frame <= start_frame);
+
   for (size_t i = 0; i < size; ++i) {
     float left, right;
     if (sample_channels_ == 2) {
@@ -130,9 +149,19 @@ static void generate_sample_input(ShortFrame *input, size_t size) {
     }
     input[i].l = (int16_t)(left * 16384.0f);
     input[i].r = (int16_t)(right * 16384.0f);
-    sample_read_pos_++;
-    if (sample_read_pos_ >= sample_frames_)
-      sample_read_pos_ = 0;
+
+    if (reverse) {
+      /* Play from start_frame down to end_frame */
+      if (sample_read_pos_ == 0 || sample_read_pos_ <= end_frame)
+        sample_read_pos_ = start_frame;
+      else
+        sample_read_pos_--;
+    } else {
+      /* Play from start_frame up to end_frame */
+      sample_read_pos_++;
+      if (sample_read_pos_ >= end_frame)
+        sample_read_pos_ = start_frame;
+    }
   }
 }
 
@@ -203,6 +232,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   sample_frames_ = 0;
   sample_channels_ = 0;
   sample_read_pos_ = 0;
+  sample_start_permil_ = 0;
+  sample_end_permil_ = 1000;
 }
 
 void OSC_CYCLE(const user_osc_param_t *const params,
@@ -286,7 +317,15 @@ void OSC_NOTEON(const user_osc_param_t *const params)
 {
   (void)params;
   osc_active_ = true;
-  sample_read_pos_ = 0;
+  /* Reset sample playback to start point */
+  if (sample_ptr_ && sample_frames_ > 0) {
+    size_t start = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
+    if (start >= sample_frames_) start = sample_frames_ - 1;
+    bool reverse = (sample_end_permil_ <= sample_start_permil_);
+    sample_read_pos_ = reverse ? start : start;
+  } else {
+    sample_read_pos_ = 0;
+  }
   processor_.mutable_parameters()->gate = true;
 }
 
@@ -342,6 +381,14 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     case 12: /* SampleNum (0=sawtooth, 1+=sample from bank) */
       sample_number_ = (uint8_t)value;
       load_sample();
+      break;
+
+    case 13: /* SmplStart (0-1000 permil) */
+      sample_start_permil_ = (value > 1000) ? 1000 : (uint16_t)value;
+      break;
+
+    case 14: /* SmplEnd (0-1000 permil) */
+      sample_end_permil_ = (value > 1000) ? 1000 : (uint16_t)value;
       break;
 
     default:

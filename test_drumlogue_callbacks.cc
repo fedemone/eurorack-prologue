@@ -218,7 +218,7 @@ TEST(unit_header_api) {
 
 TEST(unit_header_num_params) {
 #if defined(CLOUDS_GRANULAR)
-  ASSERT_EQ(14U, unit_header.num_params);
+  ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
   ASSERT_EQ(8U, unit_header.num_params);
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -245,6 +245,8 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[11].name, "Quality"));
   ASSERT_EQ(0, strcmp(unit_header.params[12].name, "SampleBank"));
   ASSERT_EQ(0, strcmp(unit_header.params[13].name, "SampleNum"));
+  ASSERT_EQ(0, strcmp(unit_header.params[14].name, "SmplStart"));
+  ASSERT_EQ(0, strcmp(unit_header.params[15].name, "SmplEnd"));
 #elif defined(RINGS_RESONATOR)
   /* Rings layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
@@ -304,6 +306,8 @@ TEST(unit_header_param_types) {
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[11].type);
   ASSERT_EQ(k_unit_param_type_none,      unit_header.params[12].type);
   ASSERT_EQ(k_unit_param_type_none,      unit_header.params[13].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[14].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[15].type);
 #elif defined(RINGS_RESONATOR)
   /* Rings layout */
   ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
@@ -348,7 +352,7 @@ TEST(unit_header_param_types) {
 
 TEST(unit_header_unused_params_are_none) {
 #if defined(CLOUDS_GRANULAR)
-  for (int i = 14; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(RINGS_RESONATOR)
@@ -704,7 +708,7 @@ TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
 #if defined(CLOUDS_GRANULAR)
-  unit_set_param_value(14, 50);  /* id 14 -> default case, should return */
+  unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
   unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -1083,6 +1087,24 @@ TEST(clouds_param_sample_num) {
   unit_set_param_value(13, 3);
   ASSERT_EQ(12, g_mock.last_param_index);
   ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_smpl_start) {
+  init_unit();
+  /* SmplStart: id 14 -> custom OSC_PARAM index 13 */
+  unit_set_param_value(14, 250);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(250, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_smpl_end) {
+  init_unit();
+  /* SmplEnd: id 15 -> custom OSC_PARAM index 14 */
+  unit_set_param_value(15, 750);
+  ASSERT_EQ(14, g_mock.last_param_index);
+  ASSERT_EQ(750, g_mock.last_param_value);
   teardown_unit();
 }
 
@@ -1574,6 +1596,8 @@ int main(void) {
   run_test_clouds_param_quality();
   run_test_clouds_param_sample_bank();
   run_test_clouds_param_sample_num();
+  run_test_clouds_param_smpl_start();
+  run_test_clouds_param_smpl_end();
 #elif defined(RINGS_RESONATOR)
   run_test_rings_param_base_note();
   run_test_rings_param_position_scaling();

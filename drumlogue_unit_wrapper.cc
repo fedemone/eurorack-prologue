@@ -293,6 +293,8 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 11 -> custom 10  (0-3 quality)    [Quality]
  *   id 12 -> custom 11  (0-15 bank)      [SampleBank]
  *   id 13 -> custom 12  (0-64 number)    [SampleNum]
+ *   id 14 -> custom 13  (0-1000 permil)  [SmplStart]
+ *   id 15 -> custom 14  (0-1000 permil)  [SmplEnd]
  *
  * Rings (rings-resonator.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
@@ -401,6 +403,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       break;
     case 13: /* SampleNum: 0-64 (custom OSC_PARAM index 12) */
       osc_id    = (user_osc_param_id_t)12;
+      osc_value = (uint16_t)value;
+      break;
+    case 14: /* SmplStart: 0-1000 (custom OSC_PARAM index 13) */
+      osc_id    = (user_osc_param_id_t)13;
+      osc_value = (uint16_t)value;
+      break;
+    case 15: /* SmplEnd: 0-1000 (custom OSC_PARAM index 14) */
+      osc_id    = (user_osc_param_id_t)14;
       osc_value = (uint16_t)value;
       break;
     default:
