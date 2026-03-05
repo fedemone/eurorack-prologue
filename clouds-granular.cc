@@ -75,15 +75,31 @@ float shape_lfo = 0;
 /* Custom param storage */
 static int32_t pitch_semitones_ = 0;
 
-/* Sample playback state */
+/* Sample playback state
+ *
+ * Thread safety: load_sample() is called from the param/UI thread,
+ * while generate_sample_input() runs on the audio thread. To avoid
+ * torn reads, OSC_CYCLE snapshots the sample state into a local
+ * SampleSnapshot before calling generate_sample_input(). load_sample()
+ * writes sample_ptr_ last (after frames/channels) so the audio thread
+ * sees either the old complete state or the new complete state.
+ */
 static uint8_t sample_bank_ = 0;
 static uint8_t sample_number_ = 0;  /* 0 = use sawtooth, 1+ = sample */
-static const float *sample_ptr_ = nullptr;
-static size_t sample_frames_ = 0;
-static uint8_t sample_channels_ = 0;
+static const float * volatile sample_ptr_ = nullptr;
+static volatile size_t sample_frames_ = 0;
+static volatile uint8_t sample_channels_ = 0;
 static size_t sample_read_pos_ = 0;
-static uint16_t sample_start_permil_ = 0;     /* 0-1000 (0.0%-100.0%) */
-static uint16_t sample_end_permil_ = 1000;    /* 0-1000 (0.0%-100.0%) */
+static volatile uint16_t sample_start_permil_ = 0;     /* 0-1000 (0.0%-100.0%) */
+static volatile uint16_t sample_end_permil_ = 1000;    /* 0-1000 (0.0%-100.0%) */
+
+struct SampleSnapshot {
+  const float *ptr;
+  size_t frames;
+  uint8_t channels;
+  uint16_t start_permil;
+  uint16_t end_permil;
+};
 
 /* ======================================================================
  * Audio Input Sources
@@ -96,6 +112,7 @@ static uint16_t sample_end_permil_ = 1000;    /* 0-1000 (0.0%-100.0%) */
 
 static void load_sample(void) {
   if (sample_number_ == 0) {
+    /* Nullify ptr first to signal audio thread to stop reading */
     sample_ptr_ = nullptr;
     sample_frames_ = 0;
     sample_channels_ = 0;
@@ -105,47 +122,54 @@ static void load_sample(void) {
   const sample_wrapper_t *sw =
       osc_adapter_get_sample(sample_bank_, sample_number_ - 1);
   if (sw && sw->sample_ptr && sw->frames > 0) {
-    sample_ptr_ = sw->sample_ptr;
+    /* Nullify ptr first so audio thread won't use stale frames/channels
+     * with a new pointer. Then set size/channels, then ptr last. */
+    sample_ptr_ = nullptr;
     sample_frames_ = sw->frames;
     sample_channels_ = sw->channels;
+    /* Reset read position before exposing the new pointer */
+    size_t start = (size_t)((uint64_t)sample_start_permil_ * sw->frames / 1000);
+    if (start >= sw->frames) start = sw->frames - 1;
+    sample_read_pos_ = start;
+    /* Publish pointer last — audio thread checks ptr before reading */
+    sample_ptr_ = sw->sample_ptr;
   } else {
     sample_ptr_ = nullptr;
     sample_frames_ = 0;
     sample_channels_ = 0;
-  }
-  /* Reset read position to start point */
-  if (sample_frames_ > 0) {
-    size_t start = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
-    if (start >= sample_frames_) start = sample_frames_ - 1;
-    sample_read_pos_ = start;
-  } else {
     sample_read_pos_ = 0;
   }
 }
 
 /**
  * Generate sample-based input into ShortFrame buffer.
- * Reads from the loaded sample between start and end points.
+ * Uses a snapshot of sample state taken at the start of OSC_CYCLE
+ * to avoid torn reads if load_sample() runs concurrently.
  * If end < start, plays backwards. Loops at region boundary.
  * Converts float [-1,+1] to int16 at 50% amplitude.
  */
-static void generate_sample_input(ShortFrame *input, size_t size) {
-  size_t start_frame = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
-  size_t end_frame   = (size_t)((uint64_t)sample_end_permil_ * sample_frames_ / 1000);
+static void generate_sample_input(ShortFrame *input, size_t size,
+                                  const SampleSnapshot &snap) {
+  size_t start_frame = (size_t)((uint64_t)snap.start_permil * snap.frames / 1000);
+  size_t end_frame   = (size_t)((uint64_t)snap.end_permil * snap.frames / 1000);
 
   /* Clamp to valid range */
-  if (start_frame >= sample_frames_) start_frame = sample_frames_ - 1;
-  if (end_frame > sample_frames_) end_frame = sample_frames_;
+  if (start_frame >= snap.frames) start_frame = snap.frames - 1;
+  if (end_frame > snap.frames) end_frame = snap.frames;
 
   bool reverse = (end_frame <= start_frame);
 
+  /* Ensure read position is within the snapshot's valid range */
+  if (sample_read_pos_ >= snap.frames)
+    sample_read_pos_ = start_frame;
+
   for (size_t i = 0; i < size; ++i) {
     float left, right;
-    if (sample_channels_ == 2) {
-      left = sample_ptr_[sample_read_pos_ * 2];
-      right = sample_ptr_[sample_read_pos_ * 2 + 1];
+    if (snap.channels == 2) {
+      left = snap.ptr[sample_read_pos_ * 2];
+      right = snap.ptr[sample_read_pos_ * 2 + 1];
     } else {
-      left = right = sample_ptr_[sample_read_pos_];
+      left = right = snap.ptr[sample_read_pos_];
     }
     input[i].l = (int16_t)(left * 16384.0f);
     input[i].r = (int16_t)(right * 16384.0f);
@@ -264,13 +288,21 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   /* Prepare handles mode/quality switches and buffer resets */
   processor_.Prepare();
 
+  /* Snapshot sample state for thread-safe access during this block */
+  SampleSnapshot snap;
+  snap.ptr = sample_ptr_;
+  snap.frames = sample_frames_;
+  snap.channels = sample_channels_;
+  snap.start_permil = sample_start_permil_;
+  snap.end_permil = sample_end_permil_;
+
   /* Generate input audio */
   ShortFrame input[kMaxBlockSize];
   ShortFrame output[kMaxBlockSize];
 
   if (osc_active_) {
-    if (sample_ptr_ && sample_frames_ > 0) {
-      generate_sample_input(input, kMaxBlockSize);
+    if (snap.ptr && snap.frames > 0) {
+      generate_sample_input(input, kMaxBlockSize, snap);
     } else {
       generate_input(input, kMaxBlockSize, osc_frequency_);
     }
@@ -318,13 +350,16 @@ void OSC_NOTEON(const user_osc_param_t *const params)
   (void)params;
   osc_active_ = true;
   /* Reset sample playback to start point */
-  if (sample_ptr_ && sample_frames_ > 0) {
-    size_t start = (size_t)((uint64_t)sample_start_permil_ * sample_frames_ / 1000);
-    if (start >= sample_frames_) start = sample_frames_ - 1;
-    bool reverse = (sample_end_permil_ <= sample_start_permil_);
-    sample_read_pos_ = reverse ? start : start;
-  } else {
-    sample_read_pos_ = 0;
+  {
+    const float *ptr = sample_ptr_;
+    size_t frames = sample_frames_;
+    if (ptr && frames > 0) {
+      size_t start = (size_t)((uint64_t)sample_start_permil_ * frames / 1000);
+      if (start >= frames) start = frames - 1;
+      sample_read_pos_ = start;
+    } else {
+      sample_read_pos_ = 0;
+    }
   }
   processor_.mutable_parameters()->gate = true;
 }
