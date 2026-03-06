@@ -68,9 +68,9 @@ static float osc_frequency_ = 440.0f;
 static bool osc_active_ = false;
 
 /* User-facing parameter storage */
-uint16_t p_values[6] = {0};
-float shape = 0, shiftshape = 0;
-float shape_lfo = 0;
+static uint16_t p_values[6] = {0};
+static float shape = 0, shiftshape = 0;
+static float shape_lfo = 0;
 
 /* Custom param storage */
 static int32_t pitch_semitones_ = 0;

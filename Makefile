@@ -15,7 +15,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings test-clouds bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings test-clouds test-clouds-sample bench
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -70,8 +70,16 @@ test-clouds:
 	    -o test_drumlogue_callbacks -lm
 	./test_drumlogue_callbacks
 
+# Clouds sample playback logic tests (standalone, no SDK dependencies)
+# Usage: make test-clouds-sample
+test-clouds-sample:
+	$(CXX) -std=c++11 -Wall -Wextra \
+	    test_clouds_sample_playback.cc \
+	    -o test_clouds_sample_playback -lm
+	./test_clouds_sample_playback
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-sound
 
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio
