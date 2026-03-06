@@ -15,7 +15,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings test-clouds test-clouds-sample bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-mussola bench
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -78,8 +78,17 @@ test-clouds-sample:
 	    -o test_clouds_sample_playback -lm
 	./test_clouds_sample_playback
 
+# Mussola callback tests: same tests compiled with Mussola defines
+# Usage: make test-mussola
+test-mussola:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=24 \
+	    -DMUSSOLA_VOCAL \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks_mussola -lm
+	./test_drumlogue_callbacks_mussola
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-mussola test-sound
 
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio

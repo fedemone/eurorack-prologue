@@ -347,7 +347,77 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   uint16_t osc_value;
   user_osc_param_id_t osc_id;
 
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola custom OSC_PARAM indices (must match mussola.cc enum) */
+  enum {
+    k_mussola_param_speed     = 8,
+    k_mussola_param_prosody   = 9,
+    k_mussola_param_decay     = 10,
+    k_mussola_param_mix       = 11,
+    k_mussola_param_model     = 12,
+    k_mussola_param_gate_mode = 13,
+  };
+  /* ---- Mussola param mapping ----
+   * id 0:  Base Note   -> stored in wrapper
+   * id 1:  Phoneme     -> k_user_osc_param_shape (10-bit)
+   * id 2:  Timbre      -> k_user_osc_param_shiftshape (10-bit)
+   * id 3:  Harmonics   -> k_user_osc_param_id1 (0-100)
+   * id 4:  Morph       -> k_user_osc_param_id2 (0-100)
+   * id 5:  Speed       -> k_mussola_param_speed (0-100)
+   * id 6:  Prosody     -> k_mussola_param_prosody (0-100)
+   * id 7:  Decay       -> k_mussola_param_decay (0-100)
+   * id 8:  Mix         -> k_mussola_param_mix (0-100)
+   * id 9:  Model       -> k_mussola_param_model (0-3)
+   * id 10: Gate Mode   -> k_mussola_param_gate_mode (0-2)
+   */
+  switch (id) {
+    case 0: /* Base Note: MIDI note 0-127 */
+      s_state.base_note = (uint8_t)(value & 0x7F);
+      return;
+    case 1: /* Phoneme: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 2: /* Timbre: 0-100 -> 10-bit (0-1023) */
+      osc_id    = k_user_osc_param_shiftshape;
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
+      break;
+    case 3: /* Harmonics: 0-100 percent */
+      osc_id    = k_user_osc_param_id1;
+      osc_value = (uint16_t)value;
+      break;
+    case 4: /* Morph: 0-100 percent */
+      osc_id    = k_user_osc_param_id2;
+      osc_value = (uint16_t)value;
+      break;
+    case 5: /* Speed: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_speed;
+      osc_value = (uint16_t)value;
+      break;
+    case 6: /* Prosody: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_prosody;
+      osc_value = (uint16_t)value;
+      break;
+    case 7: /* Decay: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_decay;
+      osc_value = (uint16_t)value;
+      break;
+    case 8: /* Mix: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_mix;
+      osc_value = (uint16_t)value;
+      break;
+    case 9: /* Model: 0-3 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_model;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_gate_mode;
+      osc_value = (uint16_t)value;
+      break;
+    default:
+      return;
+  }
+#elif defined(CLOUDS_GRANULAR)
   /* ---- Clouds param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -580,7 +650,19 @@ static const char * const s_lfo_shape_names[] = {
 };
 #define NUM_LFO_SHAPES 5
 
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+/* ---- Mussola model and gate mode names ---- */
+static const char * const s_mussola_model_names[] = {
+  "Naive", "SAM", "LPC", "Blend"
+};
+#define NUM_MUSSOLA_MODELS 4
+
+static const char * const s_mussola_gate_names[] = {
+  "Trigger", "Sustain", "Contin."
+};
+#define NUM_MUSSOLA_GATES 3
+
+#elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
 static const char * const s_clouds_mode_names[] = {
   "Granular", "Stretch", "Delay", "Spectral"
@@ -635,7 +717,18 @@ static const char * const s_plaits_lfo_target_names[] = {
 
 __unit_callback
 const char * unit_get_param_str_value(uint8_t id, int32_t value) {
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  switch (id) {
+    case 9: /* Model */
+      if (value >= 0 && value < NUM_MUSSOLA_MODELS)
+        return s_mussola_model_names[value];
+      break;
+    case 10: /* Gate Mode */
+      if (value >= 0 && value < NUM_MUSSOLA_GATES)
+        return s_mussola_gate_names[value];
+      break;
+  }
+#elif defined(CLOUDS_GRANULAR)
   switch (id) {
     case 10: /* Mode */
       if (value >= 0 && value < NUM_CLOUDS_MODES)

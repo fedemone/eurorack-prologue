@@ -65,6 +65,19 @@
  *    id 14: SmplStart   (0-1000 ‰)   -> custom OSC_PARAM index 13
  *    id 15: SmplEnd     (0-1000 ‰)   -> custom OSC_PARAM index 14
  *
+ *  Mussola vocal synth (mussola.cc):
+ *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
+ *    id 1:  Phoneme     (0-100%)     -> k_user_osc_param_shape
+ *    id 2:  Timbre      (0-100%)     -> k_user_osc_param_shiftshape
+ *    id 3:  Harmonics   (0-100%)     -> k_user_osc_param_id1
+ *    id 4:  Morph       (0-100%)     -> k_user_osc_param_id2
+ *    id 5:  Speed       (0-100%)     -> custom OSC_PARAM index 8
+ *    id 6:  Prosody     (0-100%)     -> custom OSC_PARAM index 9
+ *    id 7:  Decay       (0-100%)     -> custom OSC_PARAM index 10
+ *    id 8:  Mix         (0-100%)     -> custom OSC_PARAM index 11
+ *    id 9:  Model       (strings)    -> custom OSC_PARAM index 12
+ *    id 10: Gate Mode   (strings)    -> custom OSC_PARAM index 13
+ *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
  *  Copyright (c) 2020-2022 KORG Inc. (SDK definitions)
@@ -83,7 +96,11 @@ const __unit_header unit_header_t unit_header = {
 
     /* Per-oscillator unit ID and display name (max 13 chars).
      * Struct field order: unit_id, version, name — must stay in order. */
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+    .unit_id = 0x4D555353U,   /* 'MUSS' */
+    .version = 0x00010000U,
+    .name = "Mussola",
+#elif defined(CLOUDS_GRANULAR)
     .unit_id = 0x434C4453U,   /* 'CLDS' */
     .version = 0x00010000U,
     .name = "Clouds",
@@ -162,7 +179,60 @@ const __unit_header unit_header_t unit_header = {
 #endif
     .num_presets = 0,
 
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+    /* ================================================================
+     * Mussola vocal synth (mussola.cc)
+     *
+     * 11 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
+     *            Speed, Prosody, Decay, Mix, Model, Gate Mode
+     * ================================================================ */
+    .num_params = 11,
+    .params = {
+        // Page 1
+        /* id 0: Base Note (MIDI note) */
+        {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
+        /* id 1: Phoneme (vowel/phoneme selection) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Phoneme"}},
+        /* id 2: Timbre (vocal register / formant shift) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Timbre"}},
+        /* id 3: Harmonics (model blend: Naive/SAM/LPC) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
+
+        // Page 2
+        /* id 4: Morph (morph within current model) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Morph"}},
+        /* id 5: Speed (LPC playback speed, 50=normal) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Speed"}},
+        /* id 6: Prosody (prosody replay amount) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Prosody"}},
+        /* id 7: Decay (envelope decay time) */
+        {0, 100, 0, 30, k_unit_param_type_percent, 0, 0, 0, {"Decay"}},
+
+        // Page 3
+        /* id 8: Mix (main/aux crossfade) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Mix"}},
+        /* id 9: Model (0=Naive, 1=SAM, 2=LPC, 3=Blend) */
+        {0, 3, 0, 3, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
+        /* id 10: Gate Mode (Trigger/Sustain/Continuous) */
+        {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+
+        // Pages 4-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(CLOUDS_GRANULAR)
     /* ================================================================
      * Clouds oscillators (clouds-granular.cc)
      *
