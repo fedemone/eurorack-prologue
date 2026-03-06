@@ -217,7 +217,9 @@ TEST(unit_header_api) {
 }
 
 TEST(unit_header_num_params) {
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  ASSERT_EQ(11U, unit_header.num_params);
+#elif defined(CLOUDS_GRANULAR)
   ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
   ASSERT_EQ(8U, unit_header.num_params);
@@ -229,7 +231,20 @@ TEST(unit_header_num_params) {
 }
 
 TEST(unit_header_param_names) {
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Phoneme"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Timbre"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Harmonics"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Morph"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Speed"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Prosody"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Decay"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "Mix"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "Model"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "Gate Mode"));
+#elif defined(CLOUDS_GRANULAR)
   /* Clouds layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
   ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
@@ -290,7 +305,20 @@ TEST(unit_header_param_names) {
 }
 
 TEST(unit_header_param_types) {
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+#elif defined(CLOUDS_GRANULAR)
   /* Clouds layout */
   ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
@@ -351,7 +379,11 @@ TEST(unit_header_param_types) {
 }
 
 TEST(unit_header_unused_params_are_none) {
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  for (int i = 11; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#elif defined(CLOUDS_GRANULAR)
   for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
@@ -707,7 +739,9 @@ TEST(wrapper_param_lfo2_shape) {
 TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  unit_set_param_value(11, 50);  /* id 11 -> default case, should return */
+#elif defined(CLOUDS_GRANULAR)
   unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
   unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
@@ -1111,6 +1145,112 @@ TEST(clouds_param_smpl_end) {
 #endif /* CLOUDS_GRANULAR */
 
 /* ===========================================================================
+ * Tests: Mussola param mapping (MUSSOLA_VOCAL only)
+ * ======================================================================== */
+
+#if defined(MUSSOLA_VOCAL)
+
+TEST(mussola_param_base_note) {
+  init_unit();
+  unit_set_param_value(0, 48);
+  /* Base Note is stored in wrapper, not forwarded to OSC_PARAM */
+  teardown_unit();
+}
+
+TEST(mussola_param_phoneme_scaling) {
+  init_unit();
+  /* Phoneme: id 1 -> shape, 0-100 scaled to 0-1023 */
+  unit_set_param_value(1, 50);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  /* 50*1023/100 + 50/100 = 511 + 0 = 512 (rounded) */
+  ASSERT_EQ(512, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_timbre_scaling) {
+  init_unit();
+  /* Timbre: id 2 -> shiftshape, 0-100 scaled to 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_harmonics) {
+  init_unit();
+  /* Harmonics: id 3 -> id1, 0-100 */
+  unit_set_param_value(3, 75);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_morph) {
+  init_unit();
+  /* Morph: id 4 -> id2, 0-100 */
+  unit_set_param_value(4, 60);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(60, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_speed) {
+  init_unit();
+  /* Speed: id 5 -> custom OSC_PARAM index 8 */
+  unit_set_param_value(5, 50);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_prosody) {
+  init_unit();
+  /* Prosody: id 6 -> custom OSC_PARAM index 9 */
+  unit_set_param_value(6, 80);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_decay) {
+  init_unit();
+  /* Decay: id 7 -> custom OSC_PARAM index 10 */
+  unit_set_param_value(7, 30);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(30, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_mix) {
+  init_unit();
+  /* Mix: id 8 -> custom OSC_PARAM index 11 */
+  unit_set_param_value(8, 100);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(100, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_model) {
+  init_unit();
+  /* Model: id 9 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(9, 2);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(2, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_gate_mode) {
+  init_unit();
+  /* Gate Mode: id 10 -> custom OSC_PARAM index 13 */
+  unit_set_param_value(10, 1);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(1, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* MUSSOLA_VOCAL */
+
+/* ===========================================================================
  * Tests: Shape LFO
  * ======================================================================== */
 
@@ -1480,6 +1620,19 @@ TEST(param_str_value_lfo_shape_strings) {
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(7, 4), "4"));
   ASSERT_TRUE(unit_get_param_str_value(7, 0) == nullptr); /* out of range (min is 1) */
   ASSERT_TRUE(unit_get_param_str_value(7, 5) == nullptr); /* out of range */
+#elif defined(MUSSOLA_VOCAL)
+  /* Mussola: Model at id 9, Gate Mode at id 10 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Naive"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "SAM"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 2), "LPC"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 3), "Blend"));
+  ASSERT_TRUE(unit_get_param_str_value(9, 4) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 0), "Trigger"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 1), "Sustain"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 2), "Contin."));
+  ASSERT_TRUE(unit_get_param_str_value(10, 3) == nullptr); /* out of range */
+  /* Non-string params return nullptr */
+  ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
 #elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements: LFO1 Shape at id 9, LFO2 Shape at id 13 */
   ASSERT_TRUE(unit_get_param_str_value(9, 0) != nullptr);
@@ -1581,7 +1734,19 @@ int main(void) {
   run_test_wrapper_pitch_bend_down();
 
   printf("\nParameter Mapping:\n");
-#if defined(CLOUDS_GRANULAR)
+#if defined(MUSSOLA_VOCAL)
+  run_test_mussola_param_base_note();
+  run_test_mussola_param_phoneme_scaling();
+  run_test_mussola_param_timbre_scaling();
+  run_test_mussola_param_harmonics();
+  run_test_mussola_param_morph();
+  run_test_mussola_param_speed();
+  run_test_mussola_param_prosody();
+  run_test_mussola_param_decay();
+  run_test_mussola_param_mix();
+  run_test_mussola_param_model();
+  run_test_mussola_param_gate_mode();
+#elif defined(CLOUDS_GRANULAR)
   run_test_clouds_param_base_note();
   run_test_clouds_param_position_scaling();
   run_test_clouds_param_size_scaling();
