@@ -81,7 +81,7 @@ test-clouds-sample:
 # Mussola callback tests: same tests compiled with Mussola defines
 # Usage: make test-mussola
 test-mussola:
-	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=32 \
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=24 \
 	    -DMUSSOLA_VOCAL \
 	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
 	    -o test_drumlogue_callbacks_mussola -lm

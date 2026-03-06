@@ -348,18 +348,27 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   user_osc_param_id_t osc_id;
 
 #if defined(MUSSOLA_VOCAL)
+  /* Mussola custom OSC_PARAM indices (must match mussola.cc enum) */
+  enum {
+    k_mussola_param_speed     = 8,
+    k_mussola_param_prosody   = 9,
+    k_mussola_param_decay     = 10,
+    k_mussola_param_mix       = 11,
+    k_mussola_param_model     = 12,
+    k_mussola_param_gate_mode = 13,
+  };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
    * id 1:  Phoneme     -> k_user_osc_param_shape (10-bit)
    * id 2:  Timbre      -> k_user_osc_param_shiftshape (10-bit)
    * id 3:  Harmonics   -> k_user_osc_param_id1 (0-100)
    * id 4:  Morph       -> k_user_osc_param_id2 (0-100)
-   * id 5:  Speed       -> custom OSC_PARAM index 8 (0-100)
-   * id 6:  Prosody     -> custom OSC_PARAM index 9 (0-100)
-   * id 7:  Decay       -> custom OSC_PARAM index 10 (0-100)
-   * id 8:  Mix         -> custom OSC_PARAM index 11 (0-100)
-   * id 9:  Model       -> custom OSC_PARAM index 12 (0-3)
-   * id 10: Gate Mode   -> custom OSC_PARAM index 13 (0-2)
+   * id 5:  Speed       -> k_mussola_param_speed (0-100)
+   * id 6:  Prosody     -> k_mussola_param_prosody (0-100)
+   * id 7:  Decay       -> k_mussola_param_decay (0-100)
+   * id 8:  Mix         -> k_mussola_param_mix (0-100)
+   * id 9:  Model       -> k_mussola_param_model (0-3)
+   * id 10: Gate Mode   -> k_mussola_param_gate_mode (0-2)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -381,28 +390,28 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 5: /* Speed: 0-100 (custom OSC_PARAM index 8) */
-      osc_id    = (user_osc_param_id_t)8;
+    case 5: /* Speed: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_speed;
       osc_value = (uint16_t)value;
       break;
-    case 6: /* Prosody: 0-100 (custom OSC_PARAM index 9) */
-      osc_id    = (user_osc_param_id_t)9;
+    case 6: /* Prosody: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_prosody;
       osc_value = (uint16_t)value;
       break;
-    case 7: /* Decay: 0-100 (custom OSC_PARAM index 10) */
-      osc_id    = (user_osc_param_id_t)10;
+    case 7: /* Decay: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_decay;
       osc_value = (uint16_t)value;
       break;
-    case 8: /* Mix: 0-100 (custom OSC_PARAM index 11) */
-      osc_id    = (user_osc_param_id_t)11;
+    case 8: /* Mix: 0-100 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_mix;
       osc_value = (uint16_t)value;
       break;
-    case 9: /* Model: 0-3 (custom OSC_PARAM index 12) */
-      osc_id    = (user_osc_param_id_t)12;
+    case 9: /* Model: 0-3 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_model;
       osc_value = (uint16_t)value;
       break;
-    case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index 13) */
-      osc_id    = (user_osc_param_id_t)13;
+    case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index) */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_gate_mode;
       osc_value = (uint16_t)value;
       break;
     default:

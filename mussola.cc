@@ -35,6 +35,16 @@
 #include "plaits/dsp/engine/engine.h"
 #include "plaits/dsp/engine/speech_engine.h"
 
+/* --- Custom OSC_PARAM indices (beyond standard k_user_osc_param_*) --- */
+enum {
+  k_mussola_param_speed     = 8,
+  k_mussola_param_prosody   = 9,
+  k_mussola_param_decay     = 10,
+  k_mussola_param_mix       = 11,
+  k_mussola_param_model     = 12,
+  k_mussola_param_gate_mode = 13,
+};
+
 /* --- Static state --- */
 static plaits::SpeechEngine engine_;
 static plaits::EngineParameters parameters_;
@@ -83,16 +93,6 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   parameters_.morph = 0.5f;
   parameters_.harmonics = 0.0f;
   parameters_.accent = 0.5f;
-
-  amp_ = 0.0f;
-  gate_ = false;
-  previous_gate_ = false;
-  prosody_ = 0.0f;
-  speed_ = 1.0f;
-  decay_alpha_ = 0.002f;
-  mix_ = 0.0f;
-  model_select_ = 3;
-  gate_mode_ = 0;
 }
 
 void OSC_NOTEON(const user_osc_param_t *const params)
@@ -135,8 +135,8 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     previous_gate_ = effective_gate;
   }
 
-  /* Map parameters */
-  parameters_.timbre = clip01f(shape_);                    /* Phoneme */
+  /* Map parameters — shape_lfo_ modulates Phoneme */
+  parameters_.timbre = clip01f(shape_ + shape_lfo_);       /* Phoneme + LFO */
   parameters_.morph = clip01f(shiftshape_);                /* Timbre/register */
 
   /* Harmonics controls model blend (0-1)
@@ -238,27 +238,27 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       shiftshape_ = param_val_to_f32(value);
       break;
 
-    case 8: /* Speed: 0-100 -> 0.0-2.0 (50 = 1.0 normal) */
+    case k_mussola_param_speed: /* Speed: 0-100 -> 0.0-2.0 (50 = 1.0 normal) */
       speed_ = value * 0.02f;
       break;
 
-    case 9: /* Prosody: 0-100 -> 0.0-1.0 */
+    case k_mussola_param_prosody: /* Prosody: 0-100 -> 0.0-1.0 */
       prosody_ = value * 0.01f;
       break;
 
-    case 10: /* Decay: 0-100 -> decay alpha (0.0005 to 0.05) */
+    case k_mussola_param_decay: /* Decay: 0-100 -> decay alpha (0.0005 to 0.05) */
       decay_alpha_ = 0.0005f + value * 0.0005f;
       break;
 
-    case 11: /* Mix: 0-100 -> 0.0-1.0 */
+    case k_mussola_param_mix: /* Mix: 0-100 -> 0.0-1.0 */
       mix_ = value * 0.01f;
       break;
 
-    case 12: /* Model: 0-3 (Naive/SAM/LPC/Blend) */
+    case k_mussola_param_model: /* Model: 0-3 (Naive/SAM/LPC/Blend) */
       model_select_ = (value > 3) ? 3 : value;
       break;
 
-    case 13: /* Gate Mode: 0-2 */
+    case k_mussola_param_gate_mode: /* Gate Mode: 0-2 */
       gate_mode_ = (value > 2) ? 2 : value;
       break;
 
