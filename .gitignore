@@ -13,6 +13,8 @@ eurorack_*
 .vscode/ipch
 .DS_Store
 test_drumlogue_callbacks
+test_drumlogue_callbacks_rings
+test_clouds_sample_playback
 test_sound_production
 bench_render
 build/drumlogue/

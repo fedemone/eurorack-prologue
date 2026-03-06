@@ -57,6 +57,11 @@ static struct {
 
   /* Stored parameter values (drumlogue int32 range) */
   int32_t  param_values[UNIT_MAX_PARAM_COUNT];
+
+  /* Sample access function pointers from runtime descriptor */
+  unit_runtime_get_num_sample_banks_ptr     get_num_sample_banks;
+  unit_runtime_get_num_samples_for_bank_ptr get_num_samples_for_bank;
+  unit_runtime_get_sample_ptr               get_sample;
 } s_state;
 
 /* ===========================================================================
@@ -91,6 +96,11 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   s_state.base_note         = 60;  /* default base note for gate trigger */
 
   memset(s_state.param_values, 0, sizeof(s_state.param_values));
+
+  /* Store sample access function pointers */
+  s_state.get_num_sample_banks     = desc->get_num_sample_banks;
+  s_state.get_num_samples_for_bank = desc->get_num_samples_for_bank;
+  s_state.get_sample               = desc->get_sample;
 
   /* Initialize the OSC adapter, which calls OSC_INIT */
   osc_adapter_init(desc->target, desc->api);
@@ -281,6 +291,10 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 9  -> custom 8   (0-1 on/off)     [Freeze]
  *   id 10 -> custom 9   (0-3 mode)       [Mode]
  *   id 11 -> custom 10  (0-3 quality)    [Quality]
+ *   id 12 -> custom 11  (0-15 bank)      [SampleBank]
+ *   id 13 -> custom 12  (0-64 number)    [SampleNum]
+ *   id 14 -> custom 13  (0-1000 permil)  [SmplStart]
+ *   id 15 -> custom 14  (0-1000 permil)  [SmplEnd]
  *
  * Rings (rings-resonator.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
@@ -381,6 +395,22 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       break;
     case 11: /* Quality: 0-3 (custom OSC_PARAM index 10) */
       osc_id    = (user_osc_param_id_t)10;
+      osc_value = (uint16_t)value;
+      break;
+    case 12: /* SampleBank: 0-15 (custom OSC_PARAM index 11) */
+      osc_id    = (user_osc_param_id_t)11;
+      osc_value = (uint16_t)value;
+      break;
+    case 13: /* SampleNum: 0-64 (custom OSC_PARAM index 12) */
+      osc_id    = (user_osc_param_id_t)12;
+      osc_value = (uint16_t)value;
+      break;
+    case 14: /* SmplStart: 0-1000 (custom OSC_PARAM index 13) */
+      osc_id    = (user_osc_param_id_t)13;
+      osc_value = (uint16_t)value;
+      break;
+    case 15: /* SmplEnd: 0-1000 (custom OSC_PARAM index 14) */
+      osc_id    = (user_osc_param_id_t)14;
       osc_value = (uint16_t)value;
       break;
     default:
@@ -699,6 +729,29 @@ __unit_callback
 void unit_set_tempo(uint32_t tempo) {
   if (!s_state.initialized) return;
   osc_adapter_set_tempo(tempo);
+}
+
+/* ===========================================================================
+ * Sample Access (exposed to oscillator code via drumlogue_osc_adapter.h)
+ * ======================================================================== */
+
+uint8_t osc_adapter_get_num_sample_banks(void) {
+  if (!s_state.get_num_sample_banks) return 0;
+  return s_state.get_num_sample_banks();
+}
+
+uint8_t osc_adapter_get_num_samples_for_bank(uint8_t bank) {
+  if (!s_state.get_num_samples_for_bank) return 0;
+  return s_state.get_num_samples_for_bank(bank);
+}
+
+const sample_wrapper_t* osc_adapter_get_sample(uint8_t bank, uint8_t number) {
+  if (!s_state.get_sample) return nullptr;
+  if (!s_state.get_num_sample_banks) return nullptr;
+  if (bank >= s_state.get_num_sample_banks()) return nullptr;
+  if (!s_state.get_num_samples_for_bank) return nullptr;
+  if (number >= s_state.get_num_samples_for_bank(bank)) return nullptr;
+  return s_state.get_sample(bank, number);
 }
 
 } /* extern "C" */

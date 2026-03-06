@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "userosc.h"
+#include "runtime.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,6 +81,17 @@ void osc_adapter_set_tempo(uint32_t tempo);
  * @param frames  Number of mono frames to render
  */
 void osc_adapter_render(float *output, uint32_t frames);
+
+/* ---- Sample Access (drumlogue SDK sample banks) ---- */
+
+/** Get number of available sample banks (0 if not available) */
+uint8_t osc_adapter_get_num_sample_banks(void);
+
+/** Get number of samples in a bank (0 if bank invalid) */
+uint8_t osc_adapter_get_num_samples_for_bank(uint8_t bank);
+
+/** Get a sample wrapper (nullptr if invalid bank/index or not available) */
+const sample_wrapper_t* osc_adapter_get_sample(uint8_t bank, uint8_t number);
 
 #ifdef __cplusplus
 }
