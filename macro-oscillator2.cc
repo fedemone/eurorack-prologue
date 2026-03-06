@@ -240,7 +240,8 @@ void OSC_NOTEOFF(const user_osc_param_t * const params)
 void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t frames)
 {
   (void)frames;
-  static float out[plaits::kMaxBlockSize], aux[plaits::kMaxBlockSize];
+  static float out[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  static float aux[plaits::kMaxBlockSize] __attribute__((aligned(16)));
   static bool enveloped;
 
   shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));

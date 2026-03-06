@@ -111,7 +111,8 @@ void OSC_CYCLE(const user_osc_param_t *const params,
                int32_t *yn, const uint32_t frames)
 {
   (void)frames;
-  static float out[plaits::kMaxBlockSize], aux[plaits::kMaxBlockSize];
+  static float out[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  static float aux[plaits::kMaxBlockSize] __attribute__((aligned(16)));
   static bool enveloped;
 
   shape_lfo_ = q31_to_f32(params->shape_lfo);
@@ -135,9 +136,9 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     previous_gate_ = effective_gate;
   }
 
-  /* Map parameters — shape_lfo_ modulates Phoneme */
-  parameters_.timbre = clip01f(shape_ + shape_lfo_);       /* Phoneme + LFO */
-  parameters_.morph = clip01f(shiftshape_);                /* Timbre/register */
+  /* Map parameters — shape_lfo_ modulates Phoneme (phoneme selection) */
+  parameters_.morph = clip01f(shape_ + shape_lfo_);        /* Phoneme + LFO → phoneme/vowel */
+  parameters_.timbre = clip01f(shiftshape_);               /* Timbre → vocal register/formant */
 
   /* Harmonics controls model blend (0-1)
    * Model select overrides: force harmonics into the sub-range for that model */
@@ -150,7 +151,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     parameters_.harmonics = clip01f(p_values_[k_user_osc_param_id1] * 0.01f);
   }
 
-  /* Morph param (id4) adds to morph */
+  /* Morph param (id4) further modulates phoneme selection */
   float morph_mod = p_values_[k_user_osc_param_id2] * 0.01f;
   parameters_.morph = clip01f(parameters_.morph + (morph_mod - 0.5f));
 

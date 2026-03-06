@@ -35,11 +35,11 @@ float exciter_level_ = 0.f;
 float strength_ = 0.f;
 float envelope_value_ = 0.f;
 
-float strike_buffer_[kMaxBlockSize];
+float strike_buffer_[kMaxBlockSize] __attribute__((aligned(16)));
 
-float bow_strength_buffer_[kMaxBlockSize];
+float bow_strength_buffer_[kMaxBlockSize] __attribute__((aligned(16)));
 
-float raw[kMaxBlockSize];
+float raw[kMaxBlockSize] __attribute__((aligned(16)));
 float center[kMaxBlockSize+2] = {.0f};
 
 Patch patch_ = {
