@@ -171,8 +171,6 @@ void OSC_NOTEOFF(const user_osc_param_t *const params)
 void OSC_CYCLE(const user_osc_param_t *const params,
                int32_t *yn, const uint32_t frames)
 {
-  (void)frames;
-
   shape_lfo_ = q31_to_f32(params->shape_lfo);
 
   /* Pitch from adapter */
@@ -217,8 +215,9 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* ---- Multi-voice rendering ---- */
   const uint32_t nframes = (frames <= plaits::kMaxBlockSize) ? frames : plaits::kMaxBlockSize;
-  static float left[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-  static float right[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  /* Render directly into the stereo output buffers to avoid a final memcpy */
+  float *left = s_stereo_left_;
+  float *right = s_stereo_right_;
   memset(left, 0, nframes * sizeof(float));
   memset(right, 0, nframes * sizeof(float));
 
@@ -226,6 +225,17 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   const float voice_gain = 1.0f / sqrtf((float)num_voices_);
   const uint16_t vi = num_voices_ - 1; /* table index */
   bool any_enveloped = false;
+
+  /* Precompute per-voice pan gains (avoid sqrtf inside the voice loop) */
+  float gain_l[kMaxVoices], gain_r[kMaxVoices];
+  for (uint16_t v = 0; v < num_voices_; ++v) {
+    float pan = 0.5f + (kVoicePan[vi][v] - 0.5f) * spread_;
+    gain_l[v] = sqrtf(1.0f - pan) * voice_gain;
+    gain_r[v] = sqrtf(pan) * voice_gain;
+    /* Set engine params once (invariant across frames) */
+    engines_[v].set_prosody_amount(prosody_);
+    engines_[v].set_speed(speed_);
+  }
 
   for (uint16_t v = 0; v < num_voices_; ++v) {
     plaits::EngineParameters vp = parameters_;
@@ -236,64 +246,55 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     /* Per-voice gender (formant shift via timbre offset) */
     vp.timbre = clip01f(vp.timbre + gender_ * 0.5f);
 
-    /* Update engine speed/prosody */
-    engines_[v].set_prosody_amount(prosody_);
-    engines_[v].set_speed(speed_);
-
     /* Render this voice */
-    static float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
+    float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
     bool venveloped = false;
     engines_[v].Render(vp, vout, vaux, nframes, &venveloped);
     if (venveloped) any_enveloped = true;
 
-    /* Pan position: interpolate toward center when spread=0 */
-    float pan = 0.5f + (kVoicePan[vi][v] - 0.5f) * spread_;
-    float gain_l = sqrtf(1.0f - pan) * voice_gain;
-    float gain_r = sqrtf(pan) * voice_gain;
-
     /* Mix out/aux per voice, accumulate into L/R */
+    const float gl = gain_l[v], gr = gain_r[v];
     for (uint32_t i = 0; i < nframes; ++i) {
       float mixed = stmlib::Crossfade(vout[i], vaux[i], mix_);
-      left[i]  += mixed * gain_l;
-      right[i] += mixed * gain_r;
+      left[i]  += mixed * gl;
+      right[i] += mixed * gr;
     }
   }
 
-  /* Apply envelope if no engine did */
-  if (!any_enveloped) {
-    float target, alpha;
-    switch (gate_mode_) {
-      default:
-      case 0: /* Trigger */
-        target = gate_ ? 1.0f : 0.0f;
-        alpha = gate_ ? attack_alpha_ : decay_alpha_;
-        break;
-      case 1: /* Sustain */
-        target = gate_ ? 1.0f : 0.0f;
-        alpha = gate_ ? attack_alpha_ : 0.01f;
-        break;
-      case 2: /* Continuous */
-        target = 1.0f;
-        alpha = attack_alpha_;
-        break;
-    }
-    for (uint32_t i = 0; i < nframes; ++i) {
-      amp_ += (target - amp_) * alpha;
-      left[i]  *= amp_;
-      right[i] *= amp_;
+  /* Apply envelope (if no engine did) and output gain in a single pass */
+  {
+    const float out_gain = 0.8f;
+    if (!any_enveloped) {
+      float target, alpha;
+      switch (gate_mode_) {
+        default:
+        case 0: /* Trigger */
+          target = gate_ ? 1.0f : 0.0f;
+          alpha = gate_ ? attack_alpha_ : decay_alpha_;
+          break;
+        case 1: /* Sustain */
+          target = gate_ ? 1.0f : 0.0f;
+          alpha = gate_ ? attack_alpha_ : 0.01f;
+          break;
+        case 2: /* Continuous */
+          target = 1.0f;
+          alpha = attack_alpha_;
+          break;
+      }
+      for (uint32_t i = 0; i < nframes; ++i) {
+        amp_ += (target - amp_) * alpha;
+        float g = amp_ * out_gain;
+        left[i]  *= g;
+        right[i] *= g;
+      }
+    } else {
+      for (uint32_t i = 0; i < nframes; ++i) {
+        left[i]  *= out_gain;
+        right[i] *= out_gain;
+      }
     }
   }
 
-  /* Apply output gain */
-  const float out_gain = 0.8f;
-  for (uint32_t i = 0; i < nframes; ++i) {
-    left[i]  *= out_gain;
-    right[i] *= out_gain;
-  }
-
-  /* Store stereo for adapter's stereo path */
-  memcpy(s_stereo_left_, left, sizeof(float) * nframes);
-  memcpy(s_stereo_right_, right, sizeof(float) * nframes);
   s_stereo_frames_ = nframes;
 
   /* Output mono Q31 (L+R average) as fallback */
