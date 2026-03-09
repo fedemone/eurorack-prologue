@@ -217,8 +217,8 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* ---- Multi-voice rendering ---- */
   const uint32_t nframes = (frames <= plaits::kMaxBlockSize) ? frames : plaits::kMaxBlockSize;
-  float left[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-  float right[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  static float left[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  static float right[plaits::kMaxBlockSize] __attribute__((aligned(16)));
   memset(left, 0, nframes * sizeof(float));
   memset(right, 0, nframes * sizeof(float));
 
@@ -241,7 +241,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     engines_[v].set_speed(speed_);
 
     /* Render this voice */
-    float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
+    static float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
     bool venveloped = false;
     engines_[v].Render(vp, vout, vaux, nframes, &venveloped);
     if (venveloped) any_enveloped = true;
@@ -297,10 +297,32 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   s_stereo_frames_ = nframes;
 
   /* Output mono Q31 (L+R average) as fallback */
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
+    const float32x4_t vhalf = vdupq_n_f32(0.5f);
+    const float32x4_t vmin = vdupq_n_f32(-1.0f);
+    const float32x4_t vmax = vdupq_n_f32(1.0f);
+    uint32_t i = 0;
+    for (; i + 4 <= nframes; i += 4) {
+      float32x4_t l = vld1q_f32(left + i);
+      float32x4_t r = vld1q_f32(right + i);
+      float32x4_t m = vmulq_f32(vaddq_f32(l, r), vhalf);
+      m = vmaxq_f32(vminq_f32(m, vmax), vmin);
+      int32x4_t q = vcvtq_s32_f32(vmulq_f32(m, vscale));
+      vst1q_s32(yn + i, q);
+    }
+    for (; i < nframes; ++i) {
+      float mono = (left[i] + right[i]) * 0.5f;
+      yn[i] = f32_to_q31(mono);
+    }
+  }
+#else
   for (uint32_t i = 0; i < nframes; ++i) {
     float mono = (left[i] + right[i]) * 0.5f;
     yn[i] = f32_to_q31(mono);
   }
+#endif
 }
 
 void OSC_PARAM(uint16_t index, uint16_t value)
