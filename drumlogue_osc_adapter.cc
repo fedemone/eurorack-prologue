@@ -42,7 +42,11 @@ static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
 #if defined(MUSSOLA_VOCAL)
-/* Stereo buffers: filled alongside mono when OSC_CYCLE is called */
+/* Stereo buffers: filled alongside mono when OSC_CYCLE is called.
+ * OSC_NATIVE_BLOCK_SIZE must not exceed the oscillator's internal
+ * buffer size (plaits::kMaxBlockSize = 24) to avoid out-of-bounds reads. */
+static_assert(OSC_NATIVE_BLOCK_SIZE <= 24,
+              "OSC_NATIVE_BLOCK_SIZE exceeds Mussola internal buffer size");
 extern "C" void mussola_get_last_stereo(const float **left, const float **right);
 static float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
 static float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];

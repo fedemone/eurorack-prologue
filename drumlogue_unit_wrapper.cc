@@ -206,10 +206,26 @@ void unit_render(const float *in, float *out, uint32_t frames) {
 
     osc_adapter_render_stereo(left, right, n);
     float *dst = out + (offset * 2);
+#ifdef __ARM_NEON
+    uint32_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+      float32x4_t l = vld1q_f32(left + i);
+      float32x4_t r = vld1q_f32(right + i);
+      float32x4x2_t s;
+      s.val[0] = l;
+      s.val[1] = r;
+      vst2q_f32(dst + i * 2, s);
+    }
+    for (; i < n; ++i) {
+      dst[i * 2]     = left[i];
+      dst[i * 2 + 1] = right[i];
+    }
+#else
     for (uint32_t i = 0; i < n; ++i) {
       dst[i * 2]     = left[i];
       dst[i * 2 + 1] = right[i];
     }
+#endif
 
     offset    += n;
     remaining -= n;
@@ -418,48 +434,19 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 5: /* Speed: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_speed;
-      osc_value = (uint16_t)value;
-      break;
-    case 6: /* Prosody: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_prosody;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* Decay: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_decay;
-      osc_value = (uint16_t)value;
-      break;
-    case 8: /* Mix: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_mix;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* Model: 0-3 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_model;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_gate_mode;
-      osc_value = (uint16_t)value;
-      break;
-    case 11: /* Voices: 1-4 */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_voices;
-      osc_value = (uint16_t)value;
-      break;
-    case 12: /* Detune: 0-100 */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_detune;
-      osc_value = (uint16_t)value;
-      break;
-    case 13: /* Spread: 0-100 */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_spread;
-      osc_value = (uint16_t)value;
-      break;
-    case 14: /* Gender: 0-100 */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_gender;
-      osc_value = (uint16_t)value;
-      break;
-    case 15: /* Attack: 0-100 */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_attack;
+    /* Cases 5-15 all map to custom OSC_PARAM index = drumlogue_id + 3 */
+    case 5:  /* Speed */
+    case 6:  /* Prosody */
+    case 7:  /* Decay */
+    case 8:  /* Mix */
+    case 9:  /* Model */
+    case 10: /* Gate Mode */
+    case 11: /* Voices */
+    case 12: /* Detune */
+    case 13: /* Spread */
+    case 14: /* Gender */
+    case 15: /* Attack */
+      osc_id    = (user_osc_param_id_t)(id + 3);
       osc_value = (uint16_t)value;
       break;
     default:

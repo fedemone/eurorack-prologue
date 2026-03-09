@@ -98,6 +98,7 @@ static uint8_t engine_buffers_[kMaxVoices][kEngineBufferSize];
 /* Stereo output buffers filled by OSC_CYCLE, read by adapter */
 static float s_stereo_left_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
 static float s_stereo_right_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+static uint32_t s_stereo_frames_ = 0;
 
 /*
  * Per-voice detune offsets (in units of detune_semitones).
@@ -215,10 +216,11 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   parameters_.accent = 0.8f;
 
   /* ---- Multi-voice rendering ---- */
+  const uint32_t nframes = (frames <= plaits::kMaxBlockSize) ? frames : plaits::kMaxBlockSize;
   float left[plaits::kMaxBlockSize] __attribute__((aligned(16)));
   float right[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-  memset(left, 0, sizeof(left));
-  memset(right, 0, sizeof(right));
+  memset(left, 0, nframes * sizeof(float));
+  memset(right, 0, nframes * sizeof(float));
 
   const float detune_semitones = detune_ * 0.15f; /* max ±15 cents */
   const float voice_gain = 1.0f / sqrtf((float)num_voices_);
@@ -241,16 +243,16 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     /* Render this voice */
     float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
     bool venveloped = false;
-    engines_[v].Render(vp, vout, vaux, plaits::kMaxBlockSize, &venveloped);
+    engines_[v].Render(vp, vout, vaux, nframes, &venveloped);
     if (venveloped) any_enveloped = true;
 
     /* Pan position: interpolate toward center when spread=0 */
     float pan = 0.5f + (kVoicePan[vi][v] - 0.5f) * spread_;
-    float gain_l = (1.0f - pan) * voice_gain;
-    float gain_r = pan * voice_gain;
+    float gain_l = sqrtf(1.0f - pan) * voice_gain;
+    float gain_r = sqrtf(pan) * voice_gain;
 
     /* Mix out/aux per voice, accumulate into L/R */
-    for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+    for (uint32_t i = 0; i < nframes; ++i) {
       float mixed = stmlib::Crossfade(vout[i], vaux[i], mix_);
       left[i]  += mixed * gain_l;
       right[i] += mixed * gain_r;
@@ -275,7 +277,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
         alpha = attack_alpha_;
         break;
     }
-    for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+    for (uint32_t i = 0; i < nframes; ++i) {
       amp_ += (target - amp_) * alpha;
       left[i]  *= amp_;
       right[i] *= amp_;
@@ -284,17 +286,18 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* Apply output gain */
   const float out_gain = 0.8f;
-  for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+  for (uint32_t i = 0; i < nframes; ++i) {
     left[i]  *= out_gain;
     right[i] *= out_gain;
   }
 
   /* Store stereo for adapter's stereo path */
-  memcpy(s_stereo_left_, left, sizeof(float) * plaits::kMaxBlockSize);
-  memcpy(s_stereo_right_, right, sizeof(float) * plaits::kMaxBlockSize);
+  memcpy(s_stereo_left_, left, sizeof(float) * nframes);
+  memcpy(s_stereo_right_, right, sizeof(float) * nframes);
+  s_stereo_frames_ = nframes;
 
   /* Output mono Q31 (L+R average) as fallback */
-  for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+  for (uint32_t i = 0; i < nframes; ++i) {
     float mono = (left[i] + right[i]) * 0.5f;
     yn[i] = f32_to_q31(mono);
   }
@@ -341,7 +344,9 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       break;
 
     case k_mussola_param_voices: /* Voices: 1-4 */
-      num_voices_ = (value < 1) ? 1 : (value > kMaxVoices) ? kMaxVoices : value;
+      num_voices_ = value;
+      if (num_voices_ < 1) num_voices_ = 1;
+      if (num_voices_ > kMaxVoices) num_voices_ = kMaxVoices;
       break;
 
     case k_mussola_param_detune: /* Detune: 0-100 -> 0.0-1.0 */
