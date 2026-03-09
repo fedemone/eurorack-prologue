@@ -165,6 +165,23 @@ void OSC_PARAM(uint16_t index, uint16_t value) {
   }
 }
 
+#if defined(MUSSOLA_VOCAL)
+/* Mock stereo accessor — adapter calls this after OSC_CYCLE */
+static float s_mock_stereo_l[64] = {0};
+static float s_mock_stereo_r[64] = {0};
+
+void mussola_get_last_stereo(const float **left, const float **right) {
+  /* Fill with deterministic stereo data derived from cycle_fill_value */
+  float mono = (float)g_mock.cycle_fill_value / 2147483648.0f;
+  for (int i = 0; i < 64; ++i) {
+    s_mock_stereo_l[i] = mono * 0.6f;  /* left slightly louder */
+    s_mock_stereo_r[i] = mono * 0.4f;  /* right slightly quieter */
+  }
+  *left = s_mock_stereo_l;
+  *right = s_mock_stereo_r;
+}
+#endif
+
 } /* extern "C" */
 
 /* ===========================================================================
@@ -218,7 +235,7 @@ TEST(unit_header_api) {
 
 TEST(unit_header_num_params) {
 #if defined(MUSSOLA_VOCAL)
-  ASSERT_EQ(11U, unit_header.num_params);
+  ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(CLOUDS_GRANULAR)
   ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
@@ -380,7 +397,7 @@ TEST(unit_header_param_types) {
 
 TEST(unit_header_unused_params_are_none) {
 #if defined(MUSSOLA_VOCAL)
-  for (int i = 11; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(CLOUDS_GRANULAR)
@@ -740,7 +757,7 @@ TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
 #if defined(MUSSOLA_VOCAL)
-  unit_set_param_value(11, 50);  /* id 11 -> default case, should return */
+  unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(CLOUDS_GRANULAR)
   unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
@@ -1476,10 +1493,18 @@ TEST(unit_render_stereo_interleave) {
 
   unit_render(nullptr, stereo_out, 48);
 
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola stereo path: mock returns L=mono*0.6, R=mono*0.4 */
+  for (int i = 0; i < 48; ++i) {
+    ASSERT_NEAR(0.3f, stereo_out[i * 2],     1e-4f); /* L = 0.5 * 0.6 */
+    ASSERT_NEAR(0.2f, stereo_out[i * 2 + 1], 1e-4f); /* R = 0.5 * 0.4 */
+  }
+#else
   for (int i = 0; i < 48; ++i) {
     ASSERT_NEAR(0.5f, stereo_out[i * 2],     1e-4f); /* L */
     ASSERT_NEAR(0.5f, stereo_out[i * 2 + 1], 1e-4f); /* R (same as L) */
   }
+#endif
   teardown_unit();
 }
 
@@ -1514,7 +1539,11 @@ TEST(unit_render_resume_after_suspend) {
 
   /* Should produce audio again after resume */
   ASSERT_TRUE(g_mock.cycle_count > 0);
+#if defined(MUSSOLA_VOCAL)
+  ASSERT_NEAR(0.3f, stereo_out[0], 1e-4f); /* L = 0.5 * 0.6 */
+#else
   ASSERT_NEAR(0.5f, stereo_out[0], 1e-4f);
+#endif
   teardown_unit();
 }
 

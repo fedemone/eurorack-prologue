@@ -183,10 +183,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Mussola vocal synth (mussola.cc)
      *
-     * 11 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
-     *            Speed, Prosody, Decay, Mix, Model, Gate Mode
+     * 16 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
+     *            Speed, Prosody, Decay, Mix, Model, Gate Mode,
+     *            Voices, Detune, Spread, Gender, Attack
      * ================================================================ */
-    .num_params = 11,
+    .num_params = 16,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note) */
@@ -215,13 +216,20 @@ const __unit_header unit_header_t unit_header = {
         {0, 3, 0, 3, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
         /* id 10: Gate Mode (Trigger/Sustain/Continuous) */
         {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        /* id 11: Voices (1-4 unison voice count) */
+        {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Voices"}},
 
-        // Pages 4-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        // Page 4
+        /* id 12: Detune (unison detune amount) */
+        {0, 100, 0, 30, k_unit_param_type_percent, 0, 0, 0, {"Detune"}},
+        /* id 13: Spread (stereo spread of voices) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Spread"}},
+        /* id 14: Gender (formant shift, 50=neutral) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Gender"}},
+        /* id 15: Attack (envelope attack time) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Attack"}},
+
+        // Pages 5-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

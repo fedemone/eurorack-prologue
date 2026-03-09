@@ -191,15 +191,48 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   }
 
   /*
-   * osc_adapter_render fills a mono float buffer.
-   * We then duplicate to stereo interleaved.
+   * Render audio and write to stereo interleaved output.
    * Process in chunks to stay within stack limits.
    */
   const uint32_t chunk_size = 64;
-  float mono[64];
   uint32_t offset = 0;
   uint32_t remaining = frames;
 
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola: use stereo render path for true stereo spread */
+  float left[64], right[64];
+  while (remaining > 0) {
+    uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
+
+    osc_adapter_render_stereo(left, right, n);
+    float *dst = out + (offset * 2);
+#ifdef __ARM_NEON
+    uint32_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+      float32x4_t l = vld1q_f32(left + i);
+      float32x4_t r = vld1q_f32(right + i);
+      float32x4x2_t s;
+      s.val[0] = l;
+      s.val[1] = r;
+      vst2q_f32(dst + i * 2, s);
+    }
+    for (; i < n; ++i) {
+      dst[i * 2]     = left[i];
+      dst[i * 2 + 1] = right[i];
+    }
+#else
+    for (uint32_t i = 0; i < n; ++i) {
+      dst[i * 2]     = left[i];
+      dst[i * 2 + 1] = right[i];
+    }
+#endif
+
+    offset    += n;
+    remaining -= n;
+  }
+#else
+  /* Other modules: mono render duplicated to stereo */
+  float mono[64];
   while (remaining > 0) {
     uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
 
@@ -209,6 +242,7 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     offset    += n;
     remaining -= n;
   }
+#endif
 }
 
 /* ===========================================================================
@@ -356,6 +390,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     k_mussola_param_mix       = 11,
     k_mussola_param_model     = 12,
     k_mussola_param_gate_mode = 13,
+    k_mussola_param_voices    = 14,
+    k_mussola_param_detune    = 15,
+    k_mussola_param_spread    = 16,
+    k_mussola_param_gender    = 17,
+    k_mussola_param_attack    = 18,
   };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
@@ -369,6 +408,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * id 8:  Mix         -> k_mussola_param_mix (0-100)
    * id 9:  Model       -> k_mussola_param_model (0-3)
    * id 10: Gate Mode   -> k_mussola_param_gate_mode (0-2)
+   * id 11: Voices      -> k_mussola_param_voices (1-4)
+   * id 12: Detune      -> k_mussola_param_detune (0-100)
+   * id 13: Spread      -> k_mussola_param_spread (0-100)
+   * id 14: Gender      -> k_mussola_param_gender (0-100)
+   * id 15: Attack      -> k_mussola_param_attack (0-100)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -390,28 +434,19 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    case 5: /* Speed: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_speed;
-      osc_value = (uint16_t)value;
-      break;
-    case 6: /* Prosody: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_prosody;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* Decay: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_decay;
-      osc_value = (uint16_t)value;
-      break;
-    case 8: /* Mix: 0-100 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_mix;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* Model: 0-3 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_model;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index) */
-      osc_id    = (user_osc_param_id_t)k_mussola_param_gate_mode;
+    /* Cases 5-15 all map to custom OSC_PARAM index = drumlogue_id + 3 */
+    case 5:  /* Speed */
+    case 6:  /* Prosody */
+    case 7:  /* Decay */
+    case 8:  /* Mix */
+    case 9:  /* Model */
+    case 10: /* Gate Mode */
+    case 11: /* Voices */
+    case 12: /* Detune */
+    case 13: /* Spread */
+    case 14: /* Gender */
+    case 15: /* Attack */
+      osc_id    = (user_osc_param_id_t)(id + 3);
       osc_value = (uint16_t)value;
       break;
     default:
@@ -662,6 +697,11 @@ static const char * const s_mussola_gate_names[] = {
 };
 #define NUM_MUSSOLA_GATES 3
 
+static const char * const s_mussola_voices_names[] = {
+  "1", "2", "3", "4"
+};
+#define NUM_MUSSOLA_VOICES 4
+
 #elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
 static const char * const s_clouds_mode_names[] = {
@@ -726,6 +766,10 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 10: /* Gate Mode */
       if (value >= 0 && value < NUM_MUSSOLA_GATES)
         return s_mussola_gate_names[value];
+      break;
+    case 11: /* Voices */
+      if (value >= 1 && value <= NUM_MUSSOLA_VOICES)
+        return s_mussola_voices_names[value - 1];
       break;
   }
 #elif defined(CLOUDS_GRANULAR)

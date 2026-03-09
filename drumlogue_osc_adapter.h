@@ -82,6 +82,20 @@ void osc_adapter_set_tempo(uint32_t tempo);
  */
 void osc_adapter_render(float *output, uint32_t frames);
 
+#if defined(MUSSOLA_VOCAL)
+/**
+ * Render stereo audio into separate L/R float buffers.
+ *
+ * For Mussola builds, OSC_CYCLE produces stereo internally.
+ * This function reads the stereo buffers instead of converting from mono Q31.
+ *
+ * @param left   Left channel output buffer (must hold at least `frames` floats)
+ * @param right  Right channel output buffer (must hold at least `frames` floats)
+ * @param frames Number of frames to render
+ */
+void osc_adapter_render_stereo(float *left, float *right, uint32_t frames);
+#endif
+
 /* ---- Sample Access (drumlogue SDK sample banks) ---- */
 
 /** Get number of available sample banks (0 if not available) */

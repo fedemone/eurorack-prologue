@@ -41,6 +41,17 @@ static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
 static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
+#if defined(MUSSOLA_VOCAL)
+/* Stereo buffers: filled alongside mono when OSC_CYCLE is called.
+ * OSC_NATIVE_BLOCK_SIZE must not exceed the oscillator's internal
+ * buffer size (plaits::kMaxBlockSize = 24) to avoid out-of-bounds reads. */
+static_assert(OSC_NATIVE_BLOCK_SIZE <= 24,
+              "OSC_NATIVE_BLOCK_SIZE exceeds Mussola internal buffer size");
+extern "C" void mussola_get_last_stereo(const float **left, const float **right);
+static float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
+static float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];
+#endif
+
 /* ---- Q31 / Float Helpers ---- */
 static const float kQ31Reciprocal = 1.0f / (float)(1U << 31); // 2147483648.0f = 2^31
 
@@ -224,6 +235,15 @@ static void render_one_block(void) {
   OSC_CYCLE(&s_adapter.params, q31_buf, OSC_NATIVE_BLOCK_SIZE);
 
   q31_buf_to_float(q31_buf, s_render_buf, OSC_NATIVE_BLOCK_SIZE);
+
+#if defined(MUSSOLA_VOCAL)
+  /* Grab stereo data that OSC_CYCLE just computed */
+  const float *l, *r;
+  mussola_get_last_stereo(&l, &r);
+  memcpy(s_render_buf_l, l, OSC_NATIVE_BLOCK_SIZE * sizeof(float));
+  memcpy(s_render_buf_r, r, OSC_NATIVE_BLOCK_SIZE * sizeof(float));
+#endif
+
   s_render_rd    = 0;
   s_render_avail = OSC_NATIVE_BLOCK_SIZE;
 }
@@ -251,3 +271,29 @@ void osc_adapter_render(float *output, uint32_t frames) {
     written        += n;
   }
 }
+
+#if defined(MUSSOLA_VOCAL)
+void osc_adapter_render_stereo(float *left, float *right, uint32_t frames) {
+  if (!s_adapter.initialized || !left || !right) {
+    if (left) memset(left, 0, frames * sizeof(float));
+    if (right) memset(right, 0, frames * sizeof(float));
+    return;
+  }
+
+  uint32_t written = 0;
+  while (written < frames) {
+    if (s_render_avail == 0) {
+      render_one_block();
+    }
+
+    uint32_t need = frames - written;
+    uint32_t n = (need < s_render_avail) ? need : s_render_avail;
+    memcpy(left + written, s_render_buf_l + s_render_rd, n * sizeof(float));
+    memcpy(right + written, s_render_buf_r + s_render_rd, n * sizeof(float));
+
+    s_render_rd    += n;
+    s_render_avail -= n;
+    written        += n;
+  }
+}
+#endif
