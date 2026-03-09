@@ -4,6 +4,8 @@
  * Based on Mutable Instruments Plaits SpeechEngine.
  * Produces abstract choral vocalizations (not realistic speech).
  *
+ * Phase 2: Multi-voice unison with detune, gender, stereo spread.
+ *
  * Three synthesis sub-models blended via Harmonics parameter:
  *   0.0-0.33: NaiveSpeechSynth (formant filters, warm choir pads)
  *   0.33-0.67: SAMSpeechSynth (retro robotic vocalization)
@@ -14,15 +16,20 @@
  *   id 1:  Phoneme    (shape knob, 0-100% -> vowel/phoneme selection)
  *   id 2:  Timbre     (shiftshape knob, 0-100% -> vocal register/formant)
  *   id 3:  Harmonics  (0-100% -> model blend Naive/SAM/LPC)
- *   id 4:  Morph      (0-100% -> morph within current model)
+ *   id 4:  Morph      (0-100% -> additional phoneme modulation)
  *   id 5:  Speed      (0-100% -> LPC playback speed, centered at 50)
  *   id 6:  Prosody    (0-100% -> prosody replay amount for LPC words)
  *   id 7:  Decay      (0-100% -> envelope decay time)
  *   id 8:  Mix        (0-100% -> main/aux output crossfade)
- *   id 9:  Model      (0-2 -> force Naive/SAM/LPC, 3=blend)
+ *   id 9:  Model      (0-3 -> force Naive/SAM/LPC, 3=blend)
  *   id 10: Gate Mode  (0-2 -> Trigger/Sustain/Continuous)
+ *   id 11: Voices     (1-4 -> unison voice count)
+ *   id 12: Detune     (0-100% -> unison detune amount, max ±15 cents)
+ *   id 13: Spread     (0-100% -> stereo spread of unison voices)
+ *   id 14: Gender     (0-100% -> formant shift, 50=neutral)
+ *   id 15: Attack     (0-100% -> envelope attack time)
  *
- * Output: Mono Q31 (main output, with envelope)
+ * Output: Stereo float via mussola_render_stereo(), mono Q31 fallback via yn
  */
 
 #include "userosc.h"
@@ -35,6 +42,12 @@
 #include "plaits/dsp/engine/engine.h"
 #include "plaits/dsp/engine/speech_engine.h"
 
+#include <cstring>
+#include <cmath>
+
+/* --- Constants --- */
+static const uint16_t kMaxVoices = 4;
+
 /* --- Custom OSC_PARAM indices (beyond standard k_user_osc_param_*) --- */
 enum {
   k_mussola_param_speed     = 8,
@@ -43,10 +56,15 @@ enum {
   k_mussola_param_mix       = 11,
   k_mussola_param_model     = 12,
   k_mussola_param_gate_mode = 13,
+  k_mussola_param_voices    = 14,
+  k_mussola_param_detune    = 15,
+  k_mussola_param_spread    = 16,
+  k_mussola_param_gender    = 17,
+  k_mussola_param_attack    = 18,
 };
 
 /* --- Static state --- */
-static plaits::SpeechEngine engine_;
+static plaits::SpeechEngine engines_[kMaxVoices];
 static plaits::EngineParameters parameters_;
 
 static uint16_t p_values_[6] = {0};
@@ -59,18 +77,58 @@ static float amp_ = 0.0f;
 static float prosody_ = 0.0f;
 static float speed_ = 1.0f;
 static float decay_alpha_ = 0.002f;
+static float attack_alpha_ = 0.05f;
 static float mix_ = 0.0f;
 static uint16_t model_select_ = 3; /* 0=Naive, 1=SAM, 2=LPC, 3=blend */
 static uint16_t gate_mode_ = 0;    /* 0=Trigger, 1=Sustain, 2=Continuous */
+static uint16_t num_voices_ = 1;   /* 1-4 */
+static float detune_ = 0.0f;       /* 0.0-1.0 */
+static float spread_ = 0.0f;       /* 0.0-1.0 */
+static float gender_ = 0.0f;       /* -1.0 to +1.0 (0 = neutral) */
 
 /*
- * Engine buffer: SpeechEngine.Init() uses BufferAllocator for:
+ * Engine buffers: each SpeechEngine.Init() uses BufferAllocator for:
  *   - LPCSpeechSynthWordBank internal buffers (~4KB)
  *   - 2 × kMaxBlockSize float temp buffers (2 × 32 × 4 = 256 bytes)
- * Total ~5KB is sufficient, allocate 8KB for safety.
+ * 8KB per engine × 4 engines = 32KB total.
  */
 static const size_t kEngineBufferSize = 8192;
-static uint8_t engine_buffer_[kEngineBufferSize];
+static uint8_t engine_buffers_[kMaxVoices][kEngineBufferSize];
+
+/* Stereo output buffers filled by OSC_CYCLE, read by adapter */
+static float s_stereo_left_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+static float s_stereo_right_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+
+/*
+ * Per-voice detune offsets (in units of detune_semitones).
+ * Indexed by [num_voices - 1][voice_index].
+ */
+static const float kVoiceDetune[kMaxVoices][kMaxVoices] = {
+  { 0.0f,   0.0f,  0.0f,  0.0f},   /* 1 voice: no detune */
+  {-1.0f,   1.0f,  0.0f,  0.0f},   /* 2 voices: symmetric */
+  {-1.0f,   0.0f,  1.0f,  0.0f},   /* 3 voices: center + sides */
+  {-1.0f,   1.0f, -0.6f,  0.6f},   /* 4 voices: wide + narrow pair */
+};
+
+/*
+ * Per-voice pan positions (0=left, 0.5=center, 1=right).
+ * Modulated by spread_ parameter.
+ */
+static const float kVoicePan[kMaxVoices][kMaxVoices] = {
+  {0.5f,  0.0f,  0.0f,  0.0f},     /* 1 voice: center */
+  {0.25f, 0.75f, 0.0f,  0.0f},     /* 2 voices: L/R */
+  {0.15f, 0.5f,  0.85f, 0.0f},     /* 3 voices: L/C/R */
+  {0.1f,  0.9f,  0.35f, 0.65f},    /* 4 voices: L/R/CL/CR */
+};
+
+/* ======================================================================
+ * Stereo accessor for adapter
+ * ==================================================================== */
+
+extern "C" void mussola_get_last_stereo(const float **left, const float **right) {
+  *left = s_stereo_left_;
+  *right = s_stereo_right_;
+}
 
 /* ======================================================================
  * OSC API Implementation
@@ -81,11 +139,13 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   (void)platform;
   (void)api;
 
-  stmlib::BufferAllocator allocator;
-  allocator.Init(engine_buffer_, kEngineBufferSize);
-  engine_.Init(&allocator);
-  engine_.set_prosody_amount(0.0f);
-  engine_.set_speed(1.0f);
+  for (uint16_t v = 0; v < kMaxVoices; ++v) {
+    stmlib::BufferAllocator allocator;
+    allocator.Init(engine_buffers_[v], kEngineBufferSize);
+    engines_[v].Init(&allocator);
+    engines_[v].set_prosody_amount(0.0f);
+    engines_[v].set_speed(1.0f);
+  }
 
   parameters_.trigger = plaits::TRIGGER_UNPATCHED;
   parameters_.note = 60.0f;
@@ -111,9 +171,6 @@ void OSC_CYCLE(const user_osc_param_t *const params,
                int32_t *yn, const uint32_t frames)
 {
   (void)frames;
-  static float out[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-  static float aux[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-  static bool enveloped;
 
   shape_lfo_ = q31_to_f32(params->shape_lfo);
 
@@ -157,70 +214,90 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   parameters_.accent = 0.8f;
 
-  /* Update engine speed/prosody */
-  engine_.set_prosody_amount(prosody_);
-  engine_.set_speed(speed_);
+  /* ---- Multi-voice rendering ---- */
+  float left[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  float right[plaits::kMaxBlockSize] __attribute__((aligned(16)));
+  memset(left, 0, sizeof(left));
+  memset(right, 0, sizeof(right));
 
-  /* Render */
-  enveloped = false;
-  engine_.Render(parameters_, out, aux, plaits::kMaxBlockSize, &enveloped);
+  const float detune_semitones = detune_ * 0.15f; /* max ±15 cents */
+  const float voice_gain = 1.0f / sqrtf((float)num_voices_);
+  const uint16_t vi = num_voices_ - 1; /* table index */
+  bool any_enveloped = false;
 
-  /* Apply envelope if engine didn't */
-  if (!enveloped) {
+  for (uint16_t v = 0; v < num_voices_; ++v) {
+    plaits::EngineParameters vp = parameters_;
+
+    /* Per-voice detune */
+    vp.note += detune_semitones * kVoiceDetune[vi][v];
+
+    /* Per-voice gender (formant shift via timbre offset) */
+    vp.timbre = clip01f(vp.timbre + gender_ * 0.5f);
+
+    /* Update engine speed/prosody */
+    engines_[v].set_prosody_amount(prosody_);
+    engines_[v].set_speed(speed_);
+
+    /* Render this voice */
+    float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
+    bool venveloped = false;
+    engines_[v].Render(vp, vout, vaux, plaits::kMaxBlockSize, &venveloped);
+    if (venveloped) any_enveloped = true;
+
+    /* Pan position: interpolate toward center when spread=0 */
+    float pan = 0.5f + (kVoicePan[vi][v] - 0.5f) * spread_;
+    float gain_l = (1.0f - pan) * voice_gain;
+    float gain_r = pan * voice_gain;
+
+    /* Mix out/aux per voice, accumulate into L/R */
+    for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+      float mixed = stmlib::Crossfade(vout[i], vaux[i], mix_);
+      left[i]  += mixed * gain_l;
+      right[i] += mixed * gain_r;
+    }
+  }
+
+  /* Apply envelope if no engine did */
+  if (!any_enveloped) {
     float target, alpha;
     switch (gate_mode_) {
       default:
       case 0: /* Trigger */
         target = gate_ ? 1.0f : 0.0f;
-        alpha = gate_ ? 0.05f : decay_alpha_;
+        alpha = gate_ ? attack_alpha_ : decay_alpha_;
         break;
       case 1: /* Sustain */
         target = gate_ ? 1.0f : 0.0f;
-        alpha = gate_ ? 0.1f : 0.01f;
+        alpha = gate_ ? attack_alpha_ : 0.01f;
         break;
       case 2: /* Continuous */
         target = 1.0f;
-        alpha = 0.05f;
+        alpha = attack_alpha_;
         break;
     }
     for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
       amp_ += (target - amp_) * alpha;
-      out[i] *= amp_;
-      aux[i] *= amp_;
+      left[i]  *= amp_;
+      right[i] *= amp_;
     }
   }
 
-  /* Mix out/aux and convert to Q31 */
+  /* Apply output gain */
   const float out_gain = 0.8f;
-  const float aux_gain = 0.8f;
-#ifdef __ARM_NEON
-  {
-    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
-    const float32x4_t vmin = vdupq_n_f32(-1.0f);
-    const float32x4_t vmax = vdupq_n_f32(1.0f);
-    const float32x4_t vout_gain = vdupq_n_f32(out_gain);
-    const float32x4_t vaux_gain = vdupq_n_f32(aux_gain);
-    const float32x4_t vmix = vdupq_n_f32(mix_);
-    size_t i = 0;
-    for (; i + 4 <= plaits::kMaxBlockSize; i += 4) {
-      float32x4_t o = vmulq_f32(vld1q_f32(out + i), vout_gain);
-      float32x4_t a = vmulq_f32(vld1q_f32(aux + i), vaux_gain);
-      float32x4_t v = vmlaq_f32(o, vsubq_f32(a, o), vmix);
-      v = vmaxq_f32(vminq_f32(v, vmax), vmin);
-      int32x4_t q = vcvtq_s32_f32(vmulq_f32(v, vscale));
-      vst1q_s32(yn + i, q);
-    }
-    for (; i < plaits::kMaxBlockSize; ++i) {
-      float o2 = out[i] * out_gain, a2 = aux[i] * aux_gain;
-      yn[i] = f32_to_q31(stmlib::Crossfade(o2, a2, mix_));
-    }
-  }
-#else
   for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
-    float o = out[i] * out_gain, a = aux[i] * aux_gain;
-    yn[i] = f32_to_q31(stmlib::Crossfade(o, a, mix_));
+    left[i]  *= out_gain;
+    right[i] *= out_gain;
   }
-#endif
+
+  /* Store stereo for adapter's stereo path */
+  memcpy(s_stereo_left_, left, sizeof(float) * plaits::kMaxBlockSize);
+  memcpy(s_stereo_right_, right, sizeof(float) * plaits::kMaxBlockSize);
+
+  /* Output mono Q31 (L+R average) as fallback */
+  for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+    float mono = (left[i] + right[i]) * 0.5f;
+    yn[i] = f32_to_q31(mono);
+  }
 }
 
 void OSC_PARAM(uint16_t index, uint16_t value)
@@ -261,6 +338,26 @@ void OSC_PARAM(uint16_t index, uint16_t value)
 
     case k_mussola_param_gate_mode: /* Gate Mode: 0-2 */
       gate_mode_ = (value > 2) ? 2 : value;
+      break;
+
+    case k_mussola_param_voices: /* Voices: 1-4 */
+      num_voices_ = (value < 1) ? 1 : (value > kMaxVoices) ? kMaxVoices : value;
+      break;
+
+    case k_mussola_param_detune: /* Detune: 0-100 -> 0.0-1.0 */
+      detune_ = value * 0.01f;
+      break;
+
+    case k_mussola_param_spread: /* Spread: 0-100 -> 0.0-1.0 */
+      spread_ = value * 0.01f;
+      break;
+
+    case k_mussola_param_gender: /* Gender: 0-100 -> -1.0 to +1.0 (50=neutral) */
+      gender_ = (value - 50) * 0.02f;
+      break;
+
+    case k_mussola_param_attack: /* Attack: 0-100 -> alpha (0.1 fast to 0.001 slow) */
+      attack_alpha_ = (value == 0) ? 0.1f : 0.1f / (1.0f + value * 0.5f);
       break;
 
     default:

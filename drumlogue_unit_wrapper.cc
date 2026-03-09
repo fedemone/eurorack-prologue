@@ -191,15 +191,32 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   }
 
   /*
-   * osc_adapter_render fills a mono float buffer.
-   * We then duplicate to stereo interleaved.
+   * Render audio and write to stereo interleaved output.
    * Process in chunks to stay within stack limits.
    */
   const uint32_t chunk_size = 64;
-  float mono[64];
   uint32_t offset = 0;
   uint32_t remaining = frames;
 
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola: use stereo render path for true stereo spread */
+  float left[64], right[64];
+  while (remaining > 0) {
+    uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
+
+    osc_adapter_render_stereo(left, right, n);
+    float *dst = out + (offset * 2);
+    for (uint32_t i = 0; i < n; ++i) {
+      dst[i * 2]     = left[i];
+      dst[i * 2 + 1] = right[i];
+    }
+
+    offset    += n;
+    remaining -= n;
+  }
+#else
+  /* Other modules: mono render duplicated to stereo */
+  float mono[64];
   while (remaining > 0) {
     uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
 
@@ -209,6 +226,7 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     offset    += n;
     remaining -= n;
   }
+#endif
 }
 
 /* ===========================================================================
@@ -356,6 +374,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     k_mussola_param_mix       = 11,
     k_mussola_param_model     = 12,
     k_mussola_param_gate_mode = 13,
+    k_mussola_param_voices    = 14,
+    k_mussola_param_detune    = 15,
+    k_mussola_param_spread    = 16,
+    k_mussola_param_gender    = 17,
+    k_mussola_param_attack    = 18,
   };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
@@ -369,6 +392,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * id 8:  Mix         -> k_mussola_param_mix (0-100)
    * id 9:  Model       -> k_mussola_param_model (0-3)
    * id 10: Gate Mode   -> k_mussola_param_gate_mode (0-2)
+   * id 11: Voices      -> k_mussola_param_voices (1-4)
+   * id 12: Detune      -> k_mussola_param_detune (0-100)
+   * id 13: Spread      -> k_mussola_param_spread (0-100)
+   * id 14: Gender      -> k_mussola_param_gender (0-100)
+   * id 15: Attack      -> k_mussola_param_attack (0-100)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -412,6 +440,26 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       break;
     case 10: /* Gate Mode: 0-2 (custom OSC_PARAM index) */
       osc_id    = (user_osc_param_id_t)k_mussola_param_gate_mode;
+      osc_value = (uint16_t)value;
+      break;
+    case 11: /* Voices: 1-4 */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_voices;
+      osc_value = (uint16_t)value;
+      break;
+    case 12: /* Detune: 0-100 */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_detune;
+      osc_value = (uint16_t)value;
+      break;
+    case 13: /* Spread: 0-100 */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_spread;
+      osc_value = (uint16_t)value;
+      break;
+    case 14: /* Gender: 0-100 */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_gender;
+      osc_value = (uint16_t)value;
+      break;
+    case 15: /* Attack: 0-100 */
+      osc_id    = (user_osc_param_id_t)k_mussola_param_attack;
       osc_value = (uint16_t)value;
       break;
     default:
@@ -662,6 +710,11 @@ static const char * const s_mussola_gate_names[] = {
 };
 #define NUM_MUSSOLA_GATES 3
 
+static const char * const s_mussola_voices_names[] = {
+  "1", "2", "3", "4"
+};
+#define NUM_MUSSOLA_VOICES 4
+
 #elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
 static const char * const s_clouds_mode_names[] = {
@@ -726,6 +779,10 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 10: /* Gate Mode */
       if (value >= 0 && value < NUM_MUSSOLA_GATES)
         return s_mussola_gate_names[value];
+      break;
+    case 11: /* Voices */
+      if (value >= 1 && value <= NUM_MUSSOLA_VOICES)
+        return s_mussola_voices_names[value - 1];
       break;
   }
 #elif defined(CLOUDS_GRANULAR)
