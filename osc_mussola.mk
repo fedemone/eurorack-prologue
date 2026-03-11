@@ -3,16 +3,8 @@ PROJECT = $(OSCILLATOR)
 
 OSC_DDEFS = -DMUSSOLA_VOCAL
 
-UCXXSRC = mussola.cc \
-	eurorack/plaits/dsp/engine/speech_engine.cc \
-	eurorack/plaits/dsp/speech/naive_speech_synth.cc \
-	eurorack/plaits/dsp/speech/sam_speech_synth.cc \
-	eurorack/plaits/dsp/speech/lpc_speech_synth.cc \
-	eurorack/plaits/dsp/speech/lpc_speech_synth_controller.cc \
-	eurorack/plaits/dsp/speech/lpc_speech_synth_phonemes.cc \
-	eurorack/plaits/dsp/speech/lpc_speech_synth_words.cc \
-	eurorack/plaits/resources.cc \
-	eurorack/stmlib/dsp/units.cc
+MUSSOLA_ENGINE_SOURCES := $(shell cat osc_mussola.sources)
+UCXXSRC = mussola.cc $(MUSSOLA_ENGINE_SOURCES)
 
 # Add drumlogue wrapper for drumlogue platform
 ifeq ($(PLATFORM),drumlogue)

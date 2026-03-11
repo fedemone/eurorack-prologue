@@ -242,7 +242,7 @@ create_project "elements_full" "elements_full" \
 # Mussola vocal synth (mussola.cc, block size 24)
 ##############################################################################
 
-MUSSOLA_SOURCES="eurorack/plaits/dsp/engine/speech_engine.cc eurorack/plaits/dsp/speech/naive_speech_synth.cc eurorack/plaits/dsp/speech/sam_speech_synth.cc eurorack/plaits/dsp/speech/lpc_speech_synth.cc eurorack/plaits/dsp/speech/lpc_speech_synth_controller.cc eurorack/plaits/dsp/speech/lpc_speech_synth_phonemes.cc eurorack/plaits/dsp/speech/lpc_speech_synth_words.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc"
+MUSSOLA_SOURCES=$(cat osc_mussola.sources)
 
 create_project "mussola" "mussola" \
     "mussola.cc" \
