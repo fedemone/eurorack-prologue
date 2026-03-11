@@ -40,6 +40,9 @@ ALL_PROJECTS=(
     mo2_wta mo2_wtb mo2_wtc mo2_wtd mo2_wte mo2_wtf
     modal_strike modal_strike_16_nolimit modal_strike_24_nolimit
     elements_full
+    rings
+    clouds
+    mussola
 )
 
 # Colors (disabled if not a terminal)
@@ -198,6 +201,15 @@ list_projects() {
     echo "    modal_strike_16_nolimit  - Modal Strike (16 modes, no limiter)"
     echo "    modal_strike_24_nolimit  - Modal Strike (24 modes, no limiter)"
     echo "    elements_full            - Elements Full (64 modes, full DSP)"
+    echo ""
+    echo "  Rings-based (block size 24):"
+    echo "    rings                    - Resonator (modal/sympathetic/string/FM)"
+    echo ""
+    echo "  Clouds-based (block size 32):"
+    echo "    clouds                   - Texture Synthesizer (granular/stretch/delay/spectral)"
+    echo ""
+    echo "  Mussola (block size 24):"
+    echo "    mussola                  - Abstract Vocal Synth (SpeechEngine, multi-voice)"
 }
 
 check_prerequisites() {

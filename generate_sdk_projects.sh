@@ -239,6 +239,28 @@ create_project "elements_full" "elements_full" \
     "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL -DELEMENTS_LFO2" 32
 
 ##############################################################################
+# Rings-based oscillator (rings-resonator.cc, block size 24)
+##############################################################################
+
+RINGS_SOURCES="eurorack/rings/dsp/part.cc eurorack/rings/dsp/resonator.cc eurorack/rings/dsp/string.cc eurorack/rings/dsp/fm_voice.cc eurorack/rings/dsp/string_synth_part.cc eurorack/rings/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc"
+
+create_project "rings" "rings" \
+    "rings-resonator.cc" \
+    "$RINGS_SOURCES" \
+    "-DRINGS_RESONATOR" 24
+
+##############################################################################
+# Clouds-based oscillator (clouds-granular.cc, block size 32)
+##############################################################################
+
+CLOUDS_SOURCES="eurorack/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc"
+
+create_project "clouds" "clouds" \
+    "clouds-granular.cc" \
+    "$CLOUDS_SOURCES" \
+    "-DCLOUDS_GRANULAR" 32
+
+##############################################################################
 # Mussola vocal synth (mussola.cc, block size 24)
 ##############################################################################
 
@@ -250,7 +272,7 @@ create_project "mussola" "mussola" \
     "-DMUSSOLA_VOCAL" 24
 
 echo ""
-echo "Done! Created 16 SDK project directories under:"
+echo "Done! Created 18 SDK project directories under:"
 echo "  ${PROJECT_BASE}/"
 echo ""
 echo "To build with Docker:"
