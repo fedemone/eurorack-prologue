@@ -272,7 +272,7 @@ create_project "mussola" "mussola" \
     "-DMUSSOLA_VOCAL" 24
 
 echo ""
-echo "Done! Created 18 SDK project directories under:"
+echo "Done! Created 19 SDK project directories under:"
 echo "  ${PROJECT_BASE}/"
 echo ""
 echo "To build with Docker:"

@@ -52,19 +52,22 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 
 `LFO2 Target` sets the target for LFO2 according to the table below.
 
-**On drumlogue** (9 params):
+**On drumlogue** (12 params):
 
-| ID | Name | Type | Range | Default | Description |
-|---|---|---|---|---|---|
-| 0 | Shape | percent | 0-100 | 0 | Primary timbre control |
-| 1 | ShiftShape | percent | 0-100 | 0 | Secondary timbre control |
-| 2 | Param 1 | percent | 0-100 | 50 | Oscillator-specific (bipolar) |
-| 3 | Param 2 | percent | 0-100 | 50 | Out/aux mix |
-| 4 | Base Note | midi_note | 0-127 | 60 | Pitch for gate trigger (see [Base Note](#base-note)) |
-| 5 | LFO Target | enum | 0-7 | 0 | Shape LFO target |
-| 6 | LFO2 Rate | percent | 0-100 | 0 | LFO2 frequency |
-| 7 | LFO2 Depth | percent | 0-100 | 0 | LFO2 intensity |
-| 8 | LFO2 Target | enum | 0-7 | 0 | LFO2 modulation target |
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
+| 1 | Shape | Primary timbre control (0-100%) |
+| 2 | ShiftShape | Secondary timbre / color control (0-100%) |
+| 3 | Param 1 | Engine-specific parameter, bipolar (0-100%, center=50) |
+| 4 | Param 2 | Engine-specific parameter (0-100%) |
+| 5 | LFO Target | Which parameter the shape LFO modulates |
+| 6 | LFO1 Shape | Waveform of the shape LFO |
+| 7 | LFO2 Rate | Second LFO speed (0-100%) |
+| 8 | LFO2 Depth | Second LFO amount (0-100%) |
+| 9 | LFO2 Target | Which parameter LFO2 modulates |
+| 10 | LFO2 Shape | Waveform of LFO2 |
+| 11 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
 
 ### LFO2
 
@@ -113,22 +116,24 @@ Modal Resonator (based on Elements)
 | `Brightness` menu           | Resonator brightness  | 7 | Muting of high frequencies |
 | `LFO Target` menu           | multi-engine `Shape` LFO target |  | Sets which parameter is modulated by the `Shape` LFO (see LFO Target column)      |
 
-**On drumlogue** (12 params):
+**On drumlogue** (14 params):
 
-| ID | Name | Type | Range | Default | Description |
-|---|---|---|---|---|---|
-| 0 | Position | percent | 0-100 | 30 | Resonator position (comb-filtering) |
-| 1 | Geometry | percent | 0-100 | 20 | Resonator geometry/stiffness |
-| 2 | Strength | percent | 0-100 | 80 | Strike strength |
-| 3 | Mallet | percent | 0-100 | 50 | Mallet type (>70% = bouncing particles) |
-| 4 | Timbre | percent | 0-100 | 50 | Strike brightness/speed |
-| 5 | Damping | percent | 0-100 | 25 | Energy dissipation rate |
-| 6 | Brightness | percent | 0-100 | 50 | High frequency muting |
-| 7 | Base Note | midi_note | 0-127 | 60 | Pitch for gate trigger (see [Base Note](#base-note)) |
-| 8 | LFO Target | enum | 0-8 | 0 | Shape LFO target |
-| 9 | LFO2 Rate | percent | 0-100 | 0 | LFO2 frequency |
-| 10 | LFO2 Depth | percent | 0-100 | 0 | LFO2 intensity |
-| 11 | LFO2 Target | enum | 0-6 | 0 | LFO2 modulation target |
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
+| 1 | Position | Where the exciter hits the resonator (0-100%) |
+| 2 | Geometry | Modal density / resonator shape (0-100%) |
+| 3 | Strength | Strike exciter level (0-100%) |
+| 4 | Mallet | Exciter type: mallet (0) through particles (100) |
+| 5 | Timbre | Exciter brightness / spectral content (0-100%) |
+| 6 | Damping | How quickly resonances decay (0-100%) |
+| 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
+| 8 | LFO Target | Which parameter the shape LFO modulates |
+| 9 | LFO1 Shape | Waveform of the shape LFO |
+| 10 | LFO2 Rate | Second LFO speed (0-100%) |
+| 11 | LFO2 Depth | Second LFO amount (0-100%) |
+| 12 | LFO2 Target | Which parameter LFO2 modulates |
+| 13 | LFO2 Shape | Waveform of LFO2 |
 
 **Elements LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
 
@@ -166,6 +171,143 @@ Due to compute and memory (32K!) limitations in the prologue multi-engine quite 
 
 The drumlogue platform has significantly more CPU and memory, so `elements_full` runs with 64 resonator modes and the full exciter range.
 
+Rings Resonator (based on Rings)
+----
+*Resonant string and modal synthesis*
+
+Based on Mutable Instruments **Rings**, a resonator module with six distinct models. Produces tuned resonant sounds from plucked strings to metallic reverberant tones.
+
+| Name | Models | Description |
+|--|--|--|
+| `rings` | 6 | Resonant strings, bells, reverberant metallic sounds |
+
+**The 6 resonator models:**
+
+| # | Model | Description |
+|---|-------|-------------|
+| 0 | Modal | Bank of bandpass filters — bells, tubes, plates |
+| 1 | Sympathetic String | Physical string with sympathetic resonance — sitar-like |
+| 2 | Karplus-Strong | String with stiffness — plucked and hammered strings |
+| 3 | FM Voice | FM synthesis with envelope follower — electric piano, DX tones |
+| 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
+| 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
+
+**Parameters (8):**
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
+| 1 | Position | Excitation point along the resonator (0-100%) |
+| 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
+| 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
+| 4 | Damping | Resonance decay time (0-100%) |
+| 5 | Chord | Chord voicing for sympathetic models (0-10) |
+| 6 | Model | Resonator type (0-5, see table above) |
+| 7 | Polyphony | Number of voices (1-4) |
+
+**Sound design tips:**
+- Start with Model 0 (Modal) and sweep Structure for metallic to harmonic
+- Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
+- Increase Polyphony for chordal playing (uses more CPU per voice)
+- Chord parameter only affects sympathetic models (1 and 4)
+
+For more information please read the excellent [Mutable Instruments Rings documentation](https://mutable-instruments.net/modules/rings/manual/).
+
+Clouds (based on Clouds)
+----
+*Granular audio processor*
+
+Based on Mutable Instruments **Clouds**, a granular audio processor with four playback modes. Transforms incoming audio or internal oscillator into textural clouds, time-stretched drones, delays, and spectral freezes.
+
+| Name | Modes | Description |
+|--|--|--|
+| `clouds` | 4 | Granular textures, stretches, spectral freezes |
+
+**The 4 playback modes:**
+
+| # | Mode | Description |
+|---|------|-------------|
+| 0 | Granular | Up to 40 overlapping grains — clouds of particles |
+| 1 | Stretch (WSOLA) | Time-stretching with pitch tracking — frozen textures |
+| 2 | Looping Delay | Pitch-shifted delay with sync — rhythmic effects |
+| 3 | Spectral | Phase vocoder with FFT — spectral freezes, smearing |
+
+**Parameters (16):**
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
+| 1 | Position | Where in the buffer to read grains (0-100%) |
+| 2 | Size | Grain length / buffer region (0-100%) |
+| 3 | Density | Grain rate / overlap amount (0-100%) |
+| 4 | Texture | Grain window shape / filtering (0-100%) |
+| 5 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
+| 6 | Feedback | Amount of output fed back into input (0-100%) |
+| 7 | Dry/Wet | Mix between dry input and processed output (0-100%) |
+| 8 | Reverb | Built-in reverb amount (0-100%) |
+| 9 | Freeze | Freeze the audio buffer (on/off) |
+| 10 | Mode | Playback mode (0-3, see table above) |
+| 11 | Quality | Audio quality / stereo mode (0-3) |
+| 12 | SampleBank | Drumlogue sample bank to use as source (0-15) |
+| 13 | SampleNum | Sample number within bank (0=internal, 1+=sample) |
+| 14 | SmplStart | Sample start point in per-mille (0-1000 = 0-100%) |
+| 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
+
+**Sound design tips:**
+- Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
+- Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
+- Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects
+- Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
+- Feedback > 70% creates self-oscillating loops — use with care
+
+For more information please read the excellent [Mutable Instruments Clouds documentation](https://mutable-instruments.net/modules/clouds/manual/).
+
+Mussola (Vocal Synthesis)
+----
+*Abstract vocal synthesizer*
+
+A vocal synthesis engine combining three speech synthesis models (Naive formant, SAM phoneme, LPC speech) with unison voicing and stereo spread. Produces vowel sounds, robotic speech, choir-like textures, and vocal percussion.
+
+| Name | Models | Description |
+|--|--|--|
+| `mussola` | 4 | Vocal tones, formant sweeps, robotic speech, choir |
+
+**The 4 synthesis models:**
+
+| # | Model | Description |
+|---|-------|-------------|
+| 0 | Naive | Simple formant synthesis — vowel-like tones, smooth |
+| 1 | SAM | Software Automatic Mouth — classic 8-bit speech, robotic |
+| 2 | LPC | Linear Predictive Coding — natural-sounding speech fragments |
+| 3 | Blend | Crossfade between all three models |
+
+**Parameters (16):**
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
+| 1 | Phoneme | Vowel / phoneme selection (0-100%) |
+| 2 | Timbre | Vocal register / formant shift (0-100%) |
+| 3 | Harmonics | Harmonic richness / model blend (0-100%) |
+| 4 | Morph | Morph within current model (0-100%) |
+| 5 | Speed | LPC playback speed, 50=normal (0-100%) |
+| 6 | Prosody | Prosody replay amount (0-100%) |
+| 7 | Decay | Envelope decay time (0-100%) |
+| 8 | Mix | Main/auxiliary output crossfade (0-100%) |
+| 9 | Model | Synthesis model (0-3, see table above) |
+| 10 | Gate Mode | Trigger/Sustain/Continuous |
+| 11 | Voices | Unison voice count (1-4) |
+| 12 | Detune | Unison detune amount (0-100%) |
+| 13 | Spread | Stereo spread of unison voices (0-100%) |
+| 14 | Gender | Formant shift — bass (0) to soprano (100), neutral at 50 |
+| 15 | Attack | Envelope attack time (0-100%) |
+
+**Sound design tips:**
+- Sweep Phoneme slowly for vowel animation ("aah" to "eee" to "ooh")
+- Model 1 (SAM) at low Phoneme values produces classic robot voice
+- Voices=4 with Detune=30-50 and Spread=80 creates a wide stereo choir
+- Gender shifts the formant spectrum — low values = bass voice, high = soprano
+
 Base Note
 ----
 
@@ -176,7 +318,7 @@ The **Base Note** parameter sets the MIDI note played when the drumlogue's trigg
 Drumlogue Architecture
 ====
 
-**Same source code, different HW APIs.** The oscillator source files (`macro-oscillator2.cc`, `modal-strike.cc`) compile unchanged for both prologue-class platforms and drumlogue. A thin wrapper layer translates between the drumlogue Synth Module API (logue-sdk v2.0) and the User Oscillator API (logue-sdk v1.x) that the oscillators were written against.
+**Same source code, different HW APIs.** The oscillator source files (`macro-oscillator2.cc`, `modal-strike.cc`, `rings-resonator.cc`, `clouds-granular.cc`, `mussola.cc`) compile unchanged for both prologue-class platforms and drumlogue. A thin wrapper layer translates between the drumlogue Synth Module API (logue-sdk v2.0) and the User Oscillator API (logue-sdk v1.x) that the oscillators were written against.
 
 ```
 Drumlogue Runtime (Linux, ARM Cortex-A7)
