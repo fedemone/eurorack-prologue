@@ -52,7 +52,7 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 
 `LFO2 Target` sets the target for LFO2 according to the table below.
 
-**On drumlogue** (12 params):
+**On drumlogue** (13 params):
 
 | # | Name | Description |
 |---|------|-------------|
@@ -63,11 +63,12 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 | 4 | Param 2 | Engine-specific parameter (0-100%) |
 | 5 | LFO Target | Which parameter the shape LFO modulates |
 | 6 | LFO1 Shape | Waveform of the shape LFO |
-| 7 | LFO2 Rate | Second LFO speed (0-100%) |
-| 8 | LFO2 Depth | Second LFO amount (0-100%) |
-| 9 | LFO2 Target | Which parameter LFO2 modulates |
-| 10 | LFO2 Shape | Waveform of LFO2 |
-| 11 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
+| 7 | LFO1 Rate | Shape LFO speed (0-100%) |
+| 8 | LFO2 Rate | Second LFO speed (0-100%) |
+| 9 | LFO2 Depth | Second LFO amount (0-100%) |
+| 10 | LFO2 Target | Which parameter LFO2 modulates |
+| 11 | LFO2 Shape | Waveform of LFO2 |
+| 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
 
 ### LFO2
 
@@ -116,7 +117,7 @@ Modal Resonator (based on Elements)
 | `Brightness` menu           | Resonator brightness  | 7 | Muting of high frequencies |
 | `LFO Target` menu           | multi-engine `Shape` LFO target |  | Sets which parameter is modulated by the `Shape` LFO (see LFO Target column)      |
 
-**On drumlogue** (14 params):
+**On drumlogue** (15 params):
 
 | # | Name | Description |
 |---|------|-------------|
@@ -130,10 +131,11 @@ Modal Resonator (based on Elements)
 | 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
 | 8 | LFO Target | Which parameter the shape LFO modulates |
 | 9 | LFO1 Shape | Waveform of the shape LFO |
-| 10 | LFO2 Rate | Second LFO speed (0-100%) |
-| 11 | LFO2 Depth | Second LFO amount (0-100%) |
-| 12 | LFO2 Target | Which parameter LFO2 modulates |
-| 13 | LFO2 Shape | Waveform of LFO2 |
+| 10 | LFO1 Rate | Shape LFO speed (0-100%) |
+| 11 | LFO2 Rate | Second LFO speed (0-100%) |
+| 12 | LFO2 Depth | Second LFO amount (0-100%) |
+| 13 | LFO2 Target | Which parameter LFO2 modulates |
+| 14 | LFO2 Shape | Waveform of LFO2 |
 
 **Elements LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
 

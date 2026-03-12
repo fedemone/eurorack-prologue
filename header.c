@@ -15,11 +15,12 @@
  *    id 4:  Param 2     (0-100%)     -> k_user_osc_param_id2
  *    id 5:  LFO Target  (strings)    -> k_user_osc_param_id3
  *    id 6:  LFO1 Shape  (strings)    -> custom OSC_PARAM index 11
- *    id 7:  LFO2 Rate   (0-100%)     -> k_user_osc_param_id4
- *    id 8:  LFO2 Depth  (0-100%)     -> k_user_osc_param_id5
- *    id 9:  LFO2 Target (strings)    -> k_user_osc_param_id6
- *    id 10: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
- *    id 11: Gate Mode   (strings)    -> custom OSC_PARAM index 13
+ *    id 7:  LFO1 Rate   (0-100%)     -> stored in wrapper (internal LFO1)
+ *    id 8:  LFO2 Rate   (0-100%)     -> k_user_osc_param_id4
+ *    id 9:  LFO2 Depth  (0-100%)     -> k_user_osc_param_id5
+ *    id 10: LFO2 Target (strings)    -> k_user_osc_param_id6
+ *    id 11: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
+ *    id 12: Gate Mode   (strings)    -> custom OSC_PARAM index 13
  *
  *  Elements oscillators (modal-strike.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -32,10 +33,11 @@
  *    id 7:  Brightness  (0-100%)     -> k_user_osc_param_id5
  *    id 8:  LFO Target  (strings)    -> k_user_osc_param_id6
  *    id 9:  LFO1 Shape  (strings)    -> custom OSC_PARAM index 11
- *    id 10: LFO2 Rate   (0-100%)     -> custom OSC_PARAM index 8
- *    id 11: LFO2 Depth  (0-100%)     -> custom OSC_PARAM index 9
- *    id 12: LFO2 Target (strings)    -> custom OSC_PARAM index 10
- *    id 13: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
+ *    id 10: LFO1 Rate   (0-100%)     -> stored in wrapper (internal LFO1)
+ *    id 11: LFO2 Rate   (0-100%)     -> custom OSC_PARAM index 8
+ *    id 12: LFO2 Depth  (0-100%)     -> custom OSC_PARAM index 9
+ *    id 13: LFO2 Target (strings)    -> custom OSC_PARAM index 10
+ *    id 14: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
  *
  *  Rings oscillators (rings-resonator.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -353,11 +355,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Elements oscillators (modal-strike.cc)
      *
-     * 14 params: Base Note, Position, Geometry, Strength, Mallet,
+     * 15 params: Base Note, Position, Geometry, Strength, Mallet,
      *            Timbre, Damping, Brightness, LFO Target, LFO1 Shape,
-     *            LFO2 Rate, LFO2 Depth, LFO2 Target, LFO2 Shape
+     *            LFO1 Rate, LFO2 Rate, LFO2 Depth, LFO2 Target, LFO2 Shape
      * ================================================================ */
-    .num_params = 14,
+    .num_params = 15,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -384,17 +386,18 @@ const __unit_header unit_header_t unit_header = {
         {0, 8, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
         /* id 9: LFO1 Shape (waveshape for shape LFO modulation) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
-        /* id 10: LFO2 Rate */
+        /* id 10: LFO1 Rate (internal shape LFO frequency) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
+        /* id 11: LFO2 Rate */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
-        /* id 11: LFO2 Depth */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
 
         // Page 4
-        /* id 12: LFO2 Target (which param LFO2 modulates) */
+        /* id 12: LFO2 Depth */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
+        /* id 13: LFO2 Target (which param LFO2 modulates) */
         {0, 6, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
-        /* id 13: LFO2 Shape (waveform for LFO2) */
+        /* id 14: LFO2 Shape (waveform for LFO2) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
 
         // Pages 5-6: blank
@@ -412,11 +415,11 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Plaits oscillators (macro-oscillator2.cc)
      *
-     * 12 params: Base Note, Shape, ShiftShape, Param 1, Param 2,
-     *            LFO Target, LFO1 Shape, LFO2 Rate, LFO2 Depth,
-     *            LFO2 Target, LFO2 Shape, Gate Mode
+     * 13 params: Base Note, Shape, ShiftShape, Param 1, Param 2,
+     *            LFO Target, LFO1 Shape, LFO1 Rate, LFO2 Rate,
+     *            LFO2 Depth, LFO2 Target, LFO2 Shape, Gate Mode
      * ================================================================ */
-    .num_params = 12,
+    .num_params = 13,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -435,21 +438,24 @@ const __unit_header unit_header_t unit_header = {
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
         /* id 6: LFO1 Shape (waveshape for shape LFO modulation) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
-        /* id 7: LFO2 Rate */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 7: LFO1 Rate (internal shape LFO frequency) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
 
         // Page 3
-        /* id 8: LFO2 Depth */
+        /* id 8: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 9: LFO2 Depth */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
-        /* id 9: LFO2 Target (which param LFO2 modulates) */
+        /* id 10: LFO2 Target (which param LFO2 modulates) */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
-        /* id 10: LFO2 Shape (waveform for LFO2) */
+        /* id 11: LFO2 Shape (waveform for LFO2) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
-        /* id 11: Gate Mode (envelope/gate behavior) */
+
+        // Page 4
+        /* id 12: Gate Mode (envelope/gate behavior) */
         {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
 
-        // Pages 4-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        // Pages 5-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
