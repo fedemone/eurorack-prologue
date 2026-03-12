@@ -204,13 +204,17 @@ void unit_render(const float *in, float *out, uint32_t frames) {
    * Frequency range matches LFO2: param/600 per block of 24 samples at 48kHz,
    * giving 0-3.3 Hz at 0-100%.  Here we compute per render call. */
   if (s_state.lfo1_rate > 0.0f) {
-    float freq_hz = (s_state.lfo1_rate * 0.01f) / 600.0f
-                  * ((float)s_state.samplerate / 24.0f);
-    float phase_inc = freq_hz * (float)frames / (float)s_state.samplerate;
+    static const float TWO_PI = 2.0f * 3.1415926535f;
+
+    // Match LFO2 frequency scaling: param/600 per 24-sample block.
+    const float param_val = s_state.lfo1_rate * 0.01f;
+    const float phase_inc = (param_val / 600.0f) * ((float)frames / 24.0f);
+
     s_state.lfo1_phase += phase_inc;
-    if (s_state.lfo1_phase >= 1.0f)
+    if (s_state.lfo1_phase >= 1.0f) {
       s_state.lfo1_phase -= (float)(int)s_state.lfo1_phase;
-    float lfo_val = cosf(s_state.lfo1_phase * 2.0f * 3.14159265f);
+    }
+    const float lfo_val = cosf(s_state.lfo1_phase * TWO_PI);
     osc_adapter_set_shape_lfo(lfo_val);
   }
 
