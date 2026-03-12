@@ -1,239 +1,196 @@
-# Drumlogue Port - TODO List
+# Drumlogue Port — Project Status (CONCLUDED)
 
-## Stage 1: Same Source Code, Different HW APIs
+This document records the final state of the drumlogue port project.
 
-### Completed
+**Status**: All planned development stages complete. 347 tests passing. 19 oscillator
+variants ported and building. Project concluded 2026-03-11.
 
-1. **SDK compatibility headers** (`drumlogue/` directory)
-   - [x] `drumlogue/runtime.h` — `unit_runtime_desc_t`, `unit_header_t`, `unit_param_t`, constants
-   - [x] `drumlogue/unit.h` — `unit_*` function declarations
-   - [x] `drumlogue/attributes.h` — `__unit_callback`, `__unit_header` macros
-   - [x] `drumlogue/userosc.h` — OSC API types for drumlogue with correct `user_osc_param_t` layout
+---
 
-2. **Unit wrapper** (`drumlogue_unit_wrapper.cc`)
-   - [x] Correct `unit_init` signature: `int8_t unit_init(const unit_runtime_desc_t *desc)`
-   - [x] Correct `unit_header_t` with packed format in `.unit_header` ELF section
-   - [x] All Synth Module API callbacks implemented
-   - [x] Parameter mapping: drumlogue int32 (0-100) -> OSC 10-bit/enum
-   - [x] Mono float -> stereo interleaved float in `unit_render`
+## Completed Stages
 
-3. **OSC adapter** (`drumlogue_osc_adapter.cc` / `.h`)
-   - [x] Clean interface with no duplicate definitions
-   - [x] Buffered rendering with `OSC_NATIVE_BLOCK_SIZE` support
-   - [x] Q31 <-> float conversion
-   - [x] Pitch management (note on/off, pitch bend)
-   - [x] `user_osc_param_t` state management
+### Stage 1: Same Source Code, Different HW APIs
 
-4. **Build system**
-   - [x] `makefile.inc` — drumlogue toolchain, flags, include paths, shared library
-   - [x] `Makefile` — drumlogue in build loop, fixed nts-1 platform name
-   - [x] All 15 `.mk` files — wrapper auto-inclusion + `OSC_NATIVE_BLOCK_SIZE` defines
+- SDK compatibility headers (`drumlogue/runtime.h`, `unit.h`, `attributes.h`, `userosc.h`)
+- Unit wrapper (`drumlogue_unit_wrapper.cc`) — Synth Module API implementation
+- OSC adapter (`drumlogue_osc_adapter.cc`) — buffered rendering, Q31/float conversion, pitch management
+- Build system (`makefile.inc`, `Makefile`, 19 `.mk` files)
+- Deleted root `userosc.h` that shadowed SDK headers
+- Fixed `unit_init` signature, `unit_header_t` format, platform name consistency
 
-5. **Fixes applied to pre-existing code**
-   - [x] Deleted root `userosc.h` that was shadowing SDK headers for prologue builds
-   - [x] Fixed `unit_init` signature (was `void(uint32_t, uint32_t)`)
-   - [x] Fixed `unit_header_t` format (was custom struct, now SDK-matching packed struct)
-   - [x] Removed duplicate function definitions in adapter
-   - [x] Added buffered rendering to handle block size mismatch
-   - [x] Fixed `nutekt-digital` -> `nts-1` platform name in Makefile
+### Stage 2: Unit Tests for Callbacks
 
-### Remaining
+- 61 Plaits callback tests + 64 Elements callback tests
+- Covers init validation, note events, pitch bend, parameter mapping, Q31/float conversion,
+  buffered rendering, stereo interleaving, lifecycle, and edge cases
+- Bugs found and fixed: forward references, buffer flush on init, missing teardown, float_to_q31 overflow
 
-- [ ] Test ARM cross-compilation (`PLATFORM=drumlogue make`)
-- [x] ~~Verify `.drmlgunit` ELF output~~ (not needed)
-- [x] Removed 14 redundant `manifest_drumlogue_*.json` files (drumlogue uses embedded `unit_header_t` in ELF)
-- [x] Test on drumlogue hardware — sounds working, refinements ongoing
+### Stage 3: NEON Optimizations
 
-## Stage 2: Unit Tests for Callbacks (DONE)
+- Q31->float conversion loop via NEON intrinsics (4 samples/iter)
+- Mono->stereo interleaving via `vst2q_f32` (4 samples -> 8 floats/iter)
+- All NEON code gated by `#ifdef __ARM_NEON` with scalar fallback
+- Existing tests pass on host (scalar path)
 
-### Completed
+### Stage 4: SDK Structure Alignment & Sound Production Test
 
-- [x] 55 callback tests in `test_drumlogue_callbacks.cc` with mock OSC_* functions
-- [x] `unit_init` — null desc, bad target, bad API, bad samplerate, success
-- [x] `unit_render` — stereo interleave, silence when suspended, resume after suspend
-- [x] `unit_note_on` / `unit_note_off` — pitch encoding, delegation, all-note-off
-- [x] `unit_set_param_value` — scaling for all 6 params, out-of-range guard, get/set roundtrip
-- [x] `unit_teardown` — prevents further calls, adapter teardown
-- [x] Buffered rendering — exact block, partial, multi-block, accumulation, 96-frame requests
-- [x] Pitch bend — neutral, up, down
-- [x] Shape LFO — Q31 conversion, channel pressure mapping
-- [x] Q31/Float — zero, positive, negative conversion accuracy
-- [x] Edge cases — null output, uninitialized render
+- `header.c` — per-oscillator unit_header with `#ifdef` parameter layouts
+- `config.mk` — SDK-compatible project configuration
+- 9 sound production tests with real Plaits VirtualAnalogEngine
 
-### Bugs Found & Fixed
+### Stage 5: SDK Docker Build Integration
 
-- Forward reference: `s_render_rd`/`s_render_avail` used before declaration
-- Buffer not flushed on init: leftover samples across init/teardown cycles
-- Missing `osc_adapter_teardown()`: adapter stayed initialized after teardown
-- `float_to_q31(1.0)` overflow: `1.0 * 2^31` exceeds `INT32_MAX`, now clamped
+- `logue-sdk` submodule updated to main branch with `platform/drumlogue/` support
+- `generate_sdk_projects.sh` — creates per-oscillator SDK project directories
+- `build_drumlogue.sh` — Docker build convenience wrapper
+- Make dry-run validation passed for all project types
 
-### Build
+### Stage 6: Base Note Parameter
 
-```bash
-make test  # Runs 55 callback tests (host compiler, no ARM required)
-```
+- User-editable MIDI note (0-127) for gate trigger tuning
+- MIDI note-on events bypass Base Note and use received note directly
 
-## Stage 3: NEON Optimizations (DONE)
+### Stage 7: LFO2 for Plaits + Elements
 
-### Completed
+- LFO2 Rate, Depth, and Target params exposed for all Plaits and Elements variants
+- Cross-modulation between shape LFO and LFO2
 
-- [x] Q31 -> float conversion loop: `q31_buf_to_float()` in adapter
-  - NEON: `vld1q_s32` -> `vcvtq_f32_s32` -> `vmulq_f32` -> `vst1q_f32` (4 samples/iter)
-  - Both block sizes (24, 32) are multiples of 4 — no tail needed
-- [x] Mono -> stereo interleaving: `mono_to_stereo()` in wrapper
-  - NEON: `vld1q_f32` -> `vst2q_f32` interleaved store (4 samples -> 8 floats/iter)
-  - Tail loop handles non-multiple-of-4 frame counts
-- [x] All NEON code gated by `#ifdef __ARM_NEON` with scalar fallback
-- [x] Existing 55 tests pass (scalar fallback on x86 host)
+### Stage 8: Additional Module Ports
 
-### Not optimized (analysis)
+- **Rings** (resonator) — 6 resonator models, 58 tests
+- **Clouds** (granular) — 4 playback modes + sample access, 66 + 28 tests
+- **Mussola** (vocal synth) — 4 synthesis models with stereo output, 61 tests
 
-- Buffer copy (`memcpy` in `osc_adapter_render`): already optimal via libc
-- DSP engine inner loops: inside unmodified oscillator source code, out of scope
-- `float_to_q31`: called once per shape_lfo update, not a hot path
+---
 
-## Stage 4: SDK Structure Alignment & Sound Production Test (DONE)
+## Test Summary
 
-### Completed
+| Suite | Command | Tests |
+|-------|---------|-------|
+| Plaits callbacks | `make test` | 61 |
+| Elements callbacks | `make test-elements` | 64 |
+| Rings callbacks | `make test-rings` | 58 |
+| Clouds callbacks | `make test-clouds` | 66 |
+| Clouds sample playback | `make test-clouds-sample` | 28 |
+| Mussola callbacks | `make test-mussola` | 61 |
+| Sound production | `make test-sound` | 9 |
+| **Total** | `make test-all` | **347** |
 
-- [x] `header.c` — unit_header extracted to separate C file per SDK convention
-- [x] `config.mk` — SDK-compatible project configuration file
-- [x] `unit_init` target validation now uses `unit_header.target` (matches Braids port pattern)
-- [x] All 15 `.mk` files updated to include `header.c` for drumlogue builds
-- [x] Plaits source code (eurorack/plaits/) confirmed present with all 16 engine files
-- [x] stmlib submodule initialized (was empty)
-- [x] Sound production test (`test_sound_production.cc`) — 9 tests with real VirtualAnalogEngine
-  - Engine init, render before note-on, note-on produces audio, stereo output
-  - Different notes produce different pitch, param changes affect output
-  - Amplitude within valid range, continuous rendering, note-off stability
+All tests run on the host compiler (x86) with no ARM toolchain required.
 
-### Build
+---
 
-```bash
-make test-sound  # Runs 9 sound production tests (links real Plaits engine)
-make test-all    # Runs all 64 tests (55 callback + 9 sound production)
-```
+## Oscillator Inventory (19 variants)
 
-## Stage 5: SDK Docker Build Integration (DONE)
+### Plaits-based (12) — `macro-oscillator2.cc`, block size 24
 
-### Completed
+| Unit | Engine | Sound Character |
+|------|--------|----------------|
+| mo2_va | VirtualAnalogEngine | Classic analog waveforms (saw, square, pulse) |
+| mo2_wsh | WaveshapingEngine | Waveshaping synthesis |
+| mo2_fm | FMEngine | FM synthesis (2-op) |
+| mo2_grn | GrainEngine | Granular synthesis |
+| mo2_add | AdditiveEngine | Additive harmonics |
+| mo2_string | StringEngine | Physical modelling strings |
+| mo2_wta–wtf | WavetableEngine | Wavetable banks A through F |
 
-- [x] Updated `logue-sdk` submodule from v1.x (Sept 2019) to main branch (commit 10a38b3)
-  - Now has `platform/drumlogue/` with `common/` headers and `dummy-synth/` template
-  - Now has `docker/` with `run_interactive.sh`, `run_cmd.sh`, `build_image.sh`
-- [x] SDK header compatibility verified: core structs match, SDK has additional helper macros
-- [x] Created 15 per-oscillator SDK project directories under `logue-sdk/platform/drumlogue/`
-  - Each contains: `Makefile` (SDK template copy) + `config.mk` (oscillator-specific)
-  - Source files referenced via `$(PROJROOT)` relative paths back to repo root
-  - Include paths: `$(PROJROOT)/drumlogue` (userosc.h), `$(PROJROOT)/eurorack`, `$(PROJROOT)`
-  - SDK `common/` headers added automatically by SDK Makefile (`DINCDIR`)
-  - SDK `_unit_base.c` (weak fallback symbols) added automatically
-- [x] `generate_sdk_projects.sh` — reproducible project directory generation script
-- [x] `build_drumlogue.sh` — convenience wrapper for Docker builds (all/individual/clean/collect)
-- [x] Make dry-run validation passed for all project types (mo2_va, modal_strike)
-  - Correct compiler flags: `-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4`
-  - Correct defines: oscillator-specific + `OSC_NATIVE_BLOCK_SIZE`
-  - Correct output: `<project>.drmlgunit` shared library
-- [x] All 64 existing tests still pass
+### Elements-based (4) — `modal-strike.cc`, block size 32
 
-### Build (requires Docker)
+| Unit | Modes | Limiter | Description |
+|------|-------|---------|-------------|
+| modal_strike | 24 | Yes | Strike exciter + modal resonator |
+| modal_strike_16_nolimit | 16 | No | Lighter variant (fewer modes) |
+| modal_strike_24_nolimit | 24 | No | Full modes, no limiter |
+| elements_full | 64 | Yes | Full Elements DSP (64 modes, extended exciter) |
 
-```bash
-# Build Docker image (first time only)
-cd logue-sdk && docker/build_image.sh
+### Rings — `rings-resonator.cc`, block size 24
 
-# Build all oscillators
-./build_drumlogue.sh
+| Unit | Models | Description |
+|------|--------|-------------|
+| rings | 6 | Modal, Sympathetic String, Karplus-Strong, FM, Quantized, String+Reverb |
 
-# Build one oscillator
-./build_drumlogue.sh mo2_va
+### Clouds — `clouds-granular.cc`, block size 32
 
-# Collect .drmlgunit files
-./build_drumlogue.sh --collect
+| Unit | Modes | Description |
+|------|-------|-------------|
+| clouds | 4 | Granular, Stretch (WSOLA), Looping Delay, Spectral |
 
-# Interactive Docker shell
-./build_drumlogue.sh --interactive
-```
+### Mussola — `mussola.cc`, block size 24
 
-## Stage 6: Verification of Optimized Output
+| Unit | Models | Description |
+|------|--------|-------------|
+| mussola | 4 | Naive formant, SAM phoneme, LPC speech, Blend |
 
-- [ ] Bit-exact comparison: NEON vs scalar output for Q31/float conversion
-- [ ] Near-exact comparison: full render output (within floating-point tolerance)
-- [ ] Performance benchmarks on actual Cortex-A7 (cycles per frame)
-- [ ] Audio quality listening tests on drumlogue hardware
+---
 
-## Future: Template Abstraction
+## Hardware-Dependent Items (Not Tested)
 
-Once the drumlogue port is stable and tested:
+These items require ARM cross-compilation or drumlogue hardware and were not
+verified in this development environment:
 
-- [ ] Extract the wrapper pattern into a reusable template/framework
-- [ ] Document how to add a new platform (what to implement, what to configure)
-- [ ] Enable porting additional Mutable Instruments modules (Clouds, Rings, etc.)
-- [ ] Enable porting from other open-source DSP projects
+- ARM cross-compilation (`PLATFORM=drumlogue make`)
+- NEON vs scalar bit-exact comparison
+- Performance benchmarks on Cortex-A7 (cycles per frame)
+- Audio quality listening tests on drumlogue hardware
+- CPU usage profiling under real-time constraints
+
+---
 
 ## File Inventory
 
 ### Core Files
 
-| File | Status | Purpose |
-|---|---|---|
-| `drumlogue/runtime.h` | New | SDK type definitions |
-| `drumlogue/unit.h` | New | SDK function declarations |
-| `drumlogue/attributes.h` | New | Compiler attribute macros |
-| `drumlogue/userosc.h` | New | OSC API compatibility layer |
-| `header.c` | New (Stage 4) | SDK-style unit_header in `.unit_header` ELF section |
-| `config.mk` | New (Stage 4) | SDK-compatible project configuration |
-| `generate_sdk_projects.sh` | New (Stage 5) | Creates per-oscillator SDK project dirs |
-| `build_drumlogue.sh` | New (Stage 5) | Docker build convenience wrapper |
-| `logue-sdk/platform/drumlogue/<project>/` | New (Stage 5) | 15 SDK project dirs (Makefile + config.mk) |
-| `drumlogue_unit_wrapper.cc` | Rewritten | Synth Module API implementation (NEON mono->stereo) |
-| `drumlogue_osc_adapter.cc` | Rewritten | OSC API bridge + buffered rendering (NEON Q31->float) |
-| `drumlogue_osc_adapter.h` | Rewritten | Adapter interface |
-| `makefile.inc` | Modified | Build system (include paths, toolchain) |
-| `Makefile` | Modified | Top-level build, test targets |
-| `osc_*.mk` (15 files) | Modified | Per-oscillator build config + header.c |
+| File | Purpose |
+|------|---------|
+| `drumlogue/runtime.h` | SDK type definitions |
+| `drumlogue/unit.h` | SDK function declarations |
+| `drumlogue/attributes.h` | Compiler attribute macros |
+| `drumlogue/userosc.h` | OSC API compatibility layer |
+| `header.c` | Per-oscillator unit_header with `#ifdef` param layouts |
+| `config.mk` | SDK-compatible project configuration |
+| `drumlogue_unit_wrapper.cc` | Synth Module API implementation (NEON mono->stereo) |
+| `drumlogue_osc_adapter.cc` | OSC API bridge + buffered rendering (NEON Q31->float) |
+| `drumlogue_osc_adapter.h` | Adapter interface |
+
+### Oscillator Source Files
+
+| File | Block Size | Description |
+|------|-----------|-------------|
+| `macro-oscillator2.cc` | 24 | Plaits engine (12 oscillators) |
+| `modal-strike.cc` | 32 | Elements resonator (4 variants) |
+| `rings-resonator.cc` | 24 | Rings resonator (6 models) |
+| `clouds-granular.cc` | 32 | Clouds granular processor (4 modes) |
+| `mussola.cc` | 24 | Mussola vocal synth (4 models) |
+
+### Build Files
+
+| File | Purpose |
+|------|---------|
+| `Makefile` | Top-level build, test targets, packaging |
+| `makefile.inc` | Toolchain, flags, include paths |
+| `osc_*.mk` (19 files) | Per-oscillator build configuration |
+| `generate_sdk_projects.sh` | Creates per-oscillator SDK project dirs |
+| `build_drumlogue.sh` | Docker build convenience wrapper |
 
 ### Test Files
 
 | File | Tests | Description |
-|---|---|---|
-| `test_drumlogue_callbacks.cc` | 55 | Mock-based callback chain tests |
+|------|-------|-------------|
+| `test_drumlogue_callbacks.cc` | 310 | Mock-based callback chain tests (all modules) |
+| `test_clouds_sample_playback.cc` | 28 | Clouds sample bank access tests |
 | `test_sound_production.cc` | 9 | Real Plaits engine sound production |
-
-### Oscillator Source (Unchanged)
-
-| File | Block Size | Description |
-|---|---|---|
-| `macro-oscillator2.cc` | 24 | Plaits engine (12 oscillators) |
-| `modal-strike.cc` | 32 | Elements resonator (3 variants) |
 
 ### Documentation
 
-| File | Status |
-|---|---|
-| `DRUMLOGUE_PORT.md` | Updated |
-| `DRUMLOGUE_VERIFICATION.md` | Updated |
-| `TODO_DRUMLOGUE_PORT.md` | Updated (this file) |
+| File | Description |
+|------|-------------|
+| `DRUMLOGUE_PORT.md` | Main documentation — design, user guide, parameter reference |
+| `DRUMLOGUE_VERIFICATION.md` | Verification report of all fixes |
+| `PORTING_GUIDE.md` | How to add new oscillator modules |
+| `FEASIBILITY_STUDY.md` | Analysis of Rings, Clouds, Mussola feasibility |
+| `TODO_DRUMLOGUE_PORT.md` | This file — project status |
 
-### Legacy (Removed)
-
-| File | Notes |
-|---|---|
-| `manifest_drumlogue_*.json` (14) | **Removed** — drumlogue uses embedded `unit_header_t` in ELF |
-| `userosc.h` (root) | Deleted — was shadowing SDK |
-
-## Stage 9: Future Module Ports
-
-See `FEASIBILITY_STUDY.md` for detailed analysis. Summary:
-
-| Module | Feasibility | Effort | Priority |
-|--------|-------------|--------|----------|
-| **Rings** (resonator) | High | 1-2 weeks | Next port |
-| **Clouds** (granular) | Medium | 2-3 weeks | After Rings |
-| **Plaits Speech** | High | 3-5 days | Quick variant add |
-| MUSS3640 Vocal Synth | Low | 4-6 weeks | Not recommended |
-
-See `PORTING_GUIDE.md` for step-by-step instructions on adding new modules.
+---
 
 ## Benchmarking
 
@@ -244,13 +201,13 @@ Host-side render benchmark (`make bench`):
 | Frames/block | 64 |
 | Time/block (host x86) | ~2 us |
 | Real-time ratio (host) | ~700x |
-| Estimated CPU% (Cortex-A7 @1GHz) | ~1% |
+| Estimated CPU% (Cortex-A7 @1GHz) | ~1% (Plaits VA only) |
 
-Note: Host numbers are for Plaits VirtualAnalog only. Elements and future
-modules (Rings, Clouds) will be heavier. Measure on actual hardware for
-accurate Cortex-A7 figures.
+Heavier modules (Elements 64-mode, Clouds spectral, Rings sympathetic string) will
+use more CPU. Measure on actual hardware for accurate figures.
 
 ---
-**Last Updated**: 2026-03-02
+
+**Last Updated**: 2026-03-11
 **Branch**: claude/prologue-to-drumlogue-port-OZPcA
-**Status**: Stages 1-8 complete. 128 tests passing (58+61+9). Feasibility study for Rings/Clouds/Vocal done. Porting guide written. Benchmark infrastructure added.
+**Status**: Project concluded. 347 tests passing. 19 oscillator variants ready.
