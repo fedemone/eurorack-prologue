@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 #ifdef __ARM_NEON
 #include <arm_neon.h>
@@ -54,6 +55,11 @@ static struct {
   uint8_t  note;       /* last MIDI note from unit_note_on */
   uint8_t  velocity;
   uint8_t  base_note;  /* user param: note for gate trigger (default 60) */
+
+  /* Internal LFO1 (shape LFO) — on prologue this comes from host hardware;
+   * on drumlogue we generate it internally so users can control the rate. */
+  float    lfo1_phase;  /* 0..1 phase accumulator */
+  float    lfo1_rate;   /* 0-100 from user param (percent) */
 
   /* Stored parameter values (drumlogue int32 range) */
   int32_t  param_values[UNIT_MAX_PARAM_COUNT];
@@ -94,6 +100,8 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   s_state.note              = 60;  /* middle C */
   s_state.velocity          = 0;
   s_state.base_note         = 60;  /* default base note for gate trigger */
+  s_state.lfo1_phase        = 0.0f;
+  s_state.lfo1_rate         = 0.0f;
 
   memset(s_state.param_values, 0, sizeof(s_state.param_values));
 
@@ -120,9 +128,11 @@ __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
 
-  s_state.note      = 60;
-  s_state.velocity  = 0;
-  s_state.base_note = 60;
+  s_state.note       = 60;
+  s_state.velocity   = 0;
+  s_state.base_note  = 60;
+  s_state.lfo1_phase = 0.0f;
+  s_state.lfo1_rate  = 0.0f;
   osc_adapter_reset();
 }
 
@@ -188,6 +198,24 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   if (!s_state.initialized || (s_state.flags & k_flag_suspended)) {
     clear_output(out, frames);
     return;
+  }
+
+  /* Advance internal LFO1 and feed shape_lfo to the adapter.
+   * Frequency range matches LFO2: param/600 per block of 24 samples at 48kHz,
+   * giving 0-3.3 Hz at 0-100%.  Here we compute per render call. */
+  if (s_state.lfo1_rate > 0.0f) {
+    static const float TWO_PI = 2.0f * 3.1415926535f;
+
+    // Match LFO2 frequency scaling: param/600 per 24-sample block.
+    const float param_val = s_state.lfo1_rate * 0.01f;
+    const float phase_inc = (param_val / 600.0f) * ((float)frames / 24.0f);
+
+    s_state.lfo1_phase += phase_inc;
+    if (s_state.lfo1_phase >= 1.0f) {
+      s_state.lfo1_phase -= (float)(int)s_state.lfo1_phase;
+    }
+    const float lfo_val = cosf(s_state.lfo1_phase * TWO_PI);
+    osc_adapter_set_shape_lfo(lfo_val);
   }
 
   /*
@@ -348,11 +376,12 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 4  -> id2        (0-100 percent)
  *   id 5  -> id3        (LFO target strings)
  *   id 6  -> custom 11  (LFO1 shape strings)
- *   id 7  -> id4        (LFO2 rate 0-100)
- *   id 8  -> id5        (LFO2 depth 0-100)
- *   id 9  -> id6        (LFO2 target strings)
- *   id 10 -> custom 12  (LFO2 shape strings)
- *   id 11 -> custom 13  (Gate mode strings)
+ *   id 7  -> lfo1_rate  (0-100, stored in wrapper for internal LFO1)
+ *   id 8  -> id4        (LFO2 rate 0-100)
+ *   id 9  -> id5        (LFO2 depth 0-100)
+ *   id 10 -> id6        (LFO2 target strings)
+ *   id 11 -> custom 12  (LFO2 shape strings)
+ *   id 12 -> custom 13  (Gate mode strings)
  *
  * Elements (modal-strike.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
@@ -365,10 +394,11 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 7  -> id5        (0-100 percent)   [Brightness]
  *   id 8  -> id6        (LFO target strings 0-8)
  *   id 9  -> custom 11  (LFO1 shape strings)
- *   id 10 -> custom 8   (LFO2 rate 0-100)
- *   id 11 -> custom 9   (LFO2 depth 0-100)
- *   id 12 -> custom 10  (LFO2 target strings 0-6)
- *   id 13 -> custom 12  (LFO2 shape strings)
+ *   id 10 -> lfo1_rate  (0-100, stored in wrapper for internal LFO1)
+ *   id 11 -> custom 8   (LFO2 rate 0-100)
+ *   id 12 -> custom 9   (LFO2 depth 0-100)
+ *   id 13 -> custom 10  (LFO2 target strings 0-6)
+ *   id 14 -> custom 12  (LFO2 shape strings)
  * ======================================================================== */
 
 __unit_callback
@@ -600,19 +630,22 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = (user_osc_param_id_t)11;
       osc_value = (uint16_t)value;
       break;
-    case 10: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
+    case 10: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
+      s_state.lfo1_rate = (float)value;
+      return;
+    case 11: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
       osc_id    = (user_osc_param_id_t)8;
       osc_value = (uint16_t)value;
       break;
-    case 11: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
+    case 12: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
       osc_id    = (user_osc_param_id_t)9;
       osc_value = (uint16_t)value;
       break;
-    case 12: /* LFO2 Target: strings enum 0-6 (custom OSC_PARAM index 10) */
+    case 13: /* LFO2 Target: strings enum 0-6 (custom OSC_PARAM index 10) */
       osc_id    = (user_osc_param_id_t)10;
       osc_value = (uint16_t)value;
       break;
-    case 13: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
+    case 14: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
       osc_id    = (user_osc_param_id_t)12;
       osc_value = (uint16_t)value;
       break;
@@ -649,20 +682,27 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = (user_osc_param_id_t)11;
       osc_value = (uint16_t)value;
       break;
-    case 7: /* LFO2 Rate: 0-100 percent */
+    case 7: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
+      s_state.lfo1_rate = (float)value;
+      return;
+    case 8: /* LFO2 Rate: 0-100 percent */
       osc_id    = k_user_osc_param_id4;
       osc_value = (uint16_t)value;
       break;
-    case 8: /* LFO2 Depth: 0-100 percent */
+    case 9: /* LFO2 Depth: 0-100 percent */
       osc_id    = k_user_osc_param_id5;
       osc_value = (uint16_t)value;
       break;
-    case 9: /* LFO2 Target: strings enum value */
+    case 10: /* LFO2 Target: strings enum value */
       osc_id    = k_user_osc_param_id6;
       osc_value = (uint16_t)value;
       break;
-    case 10: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
+    case 11: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
       osc_id    = (user_osc_param_id_t)12;
+      osc_value = (uint16_t)value;
+      break;
+    case 12: /* Gate Mode: strings enum (custom OSC_PARAM index 13) */
+      osc_id    = (user_osc_param_id_t)13;
       osc_value = (uint16_t)value;
       break;
     default:
@@ -805,11 +845,11 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
         return s_elements_lfo_target_names[value];
       break;
     case 9: /* LFO1 Shape */
-    case 13: /* LFO2 Shape */
+    case 14: /* LFO2 Shape */
       if (value >= 0 && value < NUM_LFO_SHAPES)
         return s_lfo_shape_names[value];
       break;
-    case 12: /* LFO2 Target */
+    case 13: /* LFO2 Target */
       if (value >= 0 && value < NUM_ELEMENTS_LFO2_TARGETS)
         return s_elements_lfo2_target_names[value];
       break;
@@ -817,14 +857,23 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
 #else
   switch (id) {
     case 5: /* LFO Target */
-    case 9: /* LFO2 Target (same target list) */
+    case 10: /* LFO2 Target (same target list) */
       if (value >= 0 && value < NUM_PLAITS_LFO_TARGETS)
         return s_plaits_lfo_target_names[value];
       break;
     case 6: /* LFO1 Shape */
-    case 10: /* LFO2 Shape */
+    case 11: /* LFO2 Shape */
       if (value >= 0 && value < NUM_LFO_SHAPES)
         return s_lfo_shape_names[value];
+      break;
+    case 12: /* Gate Mode */
+      {
+        static const char * const s_gate_mode_names[] = {
+          "Trigger", "Sustain", "Contin."
+        };
+        if (value >= 0 && value <= 2)
+          return s_gate_mode_names[value];
+      }
       break;
   }
 #endif

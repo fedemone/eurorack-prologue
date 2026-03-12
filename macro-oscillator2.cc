@@ -166,7 +166,7 @@ void update_parameters() {
 
 #if defined(OSC_STRING)
 #define USE_LIMITER
-//float out_gain = 0.5f, aux_gain = 0.5f;
+#define STRING_PRE_GAIN 1.8f
 #include "plaits/dsp/engine/string_engine.h"
 plaits::StringEngine engine;
 void update_parameters() {
@@ -303,6 +303,13 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
   enveloped = false;
   engine.Render(parameters, out, aux, plaits::kMaxBlockSize, &enveloped);
+
+#if defined(STRING_PRE_GAIN)
+  for (size_t i = 0; i < plaits::kMaxBlockSize; ++i) {
+    out[i] *= STRING_PRE_GAIN;
+    aux[i] *= STRING_PRE_GAIN;
+  }
+#endif
 
 #if !defined(OSC_STRING) && !defined(OSC_MODAL)
   if (!enveloped) {
