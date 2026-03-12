@@ -305,7 +305,7 @@ Oscillator source files (UNCHANGED)
 
 1. Clone with submodules:
    ```bash
-   git clone --recursive https://github.com/fedemone/eurorack-prologue.git
+   git checkout main
    cd eurorack-prologue
    git checkout claude/prologue-to-drumlogue-port-OZPcA
    ```
