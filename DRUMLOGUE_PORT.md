@@ -91,7 +91,7 @@ metallic tones.
 | `modal_strike_24_nolimit.drmlgunit` | Strike24 | 24 | No | Full resonance, raw dynamics (can clip) |
 | `elements_full.drmlgunit` | ElementsFull | 64 | Yes | Maximum resonance detail, extended exciter range |
 
-**Parameters (14 per unit):**
+**Parameters (15 per unit):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -105,10 +105,11 @@ metallic tones.
 | 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
 | 8 | LFO Target | Which parameter the shape LFO modulates |
 | 9 | LFO1 Shape | Waveform of the shape LFO |
-| 10 | LFO2 Rate | Second LFO speed (0-100%) |
-| 11 | LFO2 Depth | Second LFO amount (0-100%) |
-| 12 | LFO2 Target | Which parameter LFO2 modulates |
-| 13 | LFO2 Shape | Waveform of LFO2 |
+| 10 | LFO1 Rate | Shape LFO speed (0-100%) |
+| 11 | LFO2 Rate | Second LFO speed (0-100%) |
+| 12 | LFO2 Depth | Second LFO amount (0-100%) |
+| 13 | LFO2 Target | Which parameter LFO2 modulates |
+| 14 | LFO2 Shape | Waveform of LFO2 |
 
 **LFO Target values**: 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
 
