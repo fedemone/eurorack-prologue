@@ -51,7 +51,7 @@ exposes one engine with full parameter control.
 | `mo2_wte.drmlgunit` | Wavetable E | Wavetable bank E. |
 | `mo2_wtf.drmlgunit` | Wavetable F | Wavetable bank F. |
 
-**Parameters (12 per unit):**
+**Parameters (13 per unit):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -62,11 +62,12 @@ exposes one engine with full parameter control.
 | 4 | Param 2 | Engine-specific parameter (0-100%) |
 | 5 | LFO Target | Which parameter the shape LFO modulates |
 | 6 | LFO1 Shape | Waveform of the shape LFO |
-| 7 | LFO2 Rate | Second LFO speed (0-100%) |
-| 8 | LFO2 Depth | Second LFO amount (0-100%) |
-| 9 | LFO2 Target | Which parameter LFO2 modulates |
-| 10 | LFO2 Shape | Waveform of LFO2 |
-| 11 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
+| 7 | LFO1 Rate | Shape LFO speed (0-100%) |
+| 8 | LFO2 Rate | Second LFO speed (0-100%) |
+| 9 | LFO2 Depth | Second LFO amount (0-100%) |
+| 10 | LFO2 Target | Which parameter LFO2 modulates |
+| 11 | LFO2 Shape | Waveform of LFO2 |
+| 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
 
 **LFO Target values**: 0=Shape, 1=ShiftShape, 2=Param1, 3=Param2, 4=Pitch, 5=Amplitude, 6=LFO2Freq, 7=LFO2Depth
 
