@@ -2,7 +2,7 @@
 
 This document records the final state of the drumlogue port project.
 
-**Status**: All planned development stages complete. 347 tests passing. 19 oscillator
+**Status**: All planned development stages complete. 349 tests passing. 19 oscillator
 variants ported and building. Project concluded 2026-03-11.
 
 ---
@@ -67,14 +67,14 @@ variants ported and building. Project concluded 2026-03-11.
 
 | Suite | Command | Tests |
 |-------|---------|-------|
-| Plaits callbacks | `make test` | 61 |
-| Elements callbacks | `make test-elements` | 64 |
+| Plaits callbacks | `make test` | 62 |
+| Elements callbacks | `make test-elements` | 65 |
 | Rings callbacks | `make test-rings` | 58 |
 | Clouds callbacks | `make test-clouds` | 66 |
 | Clouds sample playback | `make test-clouds-sample` | 28 |
 | Mussola callbacks | `make test-mussola` | 61 |
 | Sound production | `make test-sound` | 9 |
-| **Total** | `make test-all` | **347** |
+| **Total** | `make test-all` | **349** |
 
 All tests run on the host compiler (x86) with no ARM toolchain required.
 
@@ -210,4 +210,4 @@ use more CPU. Measure on actual hardware for accurate figures.
 
 **Last Updated**: 2026-03-11
 **Branch**: claude/prologue-to-drumlogue-port-OZPcA
-**Status**: Project concluded. 347 tests passing. 19 oscillator variants ready.
+**Status**: Project concluded. 349 tests passing. 19 oscillator variants ready.
