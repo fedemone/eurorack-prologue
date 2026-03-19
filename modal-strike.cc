@@ -73,6 +73,10 @@ PerformanceState performance_state_ = {
 
 float shape_lfo;
 
+/* Parameter storage - declared here so LFO2 helper functions below can access it */
+uint16_t p_values[6] = {0};
+float shape = 0, shiftshape = 0;
+
 #ifdef ELEMENTS_LFO2
 stmlib::CosineOscillator lfo;
 float lfo2 = 0;
@@ -361,9 +365,6 @@ void OSC_NOTEOFF(const user_osc_param_t * const params)
 {
   performance_state_.gate = false;
 }
-
-uint16_t p_values[6] = {0};
-float shape = 0, shiftshape = 0;
 
 void OSC_PARAM(uint16_t index, uint16_t value)
 {

@@ -43,6 +43,7 @@ static float in_buffer_[kMaxBlockSize];
 static float out_buffer_[kMaxBlockSize];
 static float aux_buffer_[kMaxBlockSize];
 
+static bool gate_ = false;
 static bool previous_gate_ = false;
 
 /* User-facing parameter storage */
@@ -109,9 +110,8 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
     performance_state_.chord = kNumChords - 1;
 
   /* Gate / strum detection */
-  bool gate = performance_state_.gate;
-  performance_state_.strum = (gate && !previous_gate_);
-  previous_gate_ = gate;
+  performance_state_.strum = (gate_ && !previous_gate_);
+  previous_gate_ = gate_;
 
   /* Clear input (internal exciter mode) */
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
@@ -122,36 +122,30 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
       in_buffer_, out_buffer_, aux_buffer_,
       kMaxBlockSize);
 
-  /* Convert stereo float output to interleaved Q31 */
+  /* Mix stereo (out + aux) to mono Q31.
+   * The adapter expects exactly kMaxBlockSize mono Q31 samples. */
 #ifdef __ARM_NEON
   {
+    const float32x4_t vhalf = vdupq_n_f32(0.5f);
     const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
     const float32x4_t vmin = vdupq_n_f32(-1.0f);
     const float32x4_t vmax = vdupq_n_f32(1.0f);
     size_t i = 0;
     for (; i + 4 <= kMaxBlockSize; i += 4) {
-      /* out -> L, aux -> R */
       float32x4_t l = vld1q_f32(out_buffer_ + i);
       float32x4_t r = vld1q_f32(aux_buffer_ + i);
-      l = vmaxq_f32(vminq_f32(l, vmax), vmin);
-      r = vmaxq_f32(vminq_f32(r, vmax), vmin);
-      int32x4_t ql = vcvtq_s32_f32(vmulq_f32(l, vscale));
-      int32x4_t qr = vcvtq_s32_f32(vmulq_f32(r, vscale));
-      /* Interleave: [L0,R0,L1,R1,L2,R2,L3,R3] */
-      int32x4x2_t stereo;
-      stereo.val[0] = ql;
-      stereo.val[1] = qr;
-      vst2q_s32(yn + i * 2, stereo);
+      float32x4_t m = vmulq_f32(vaddq_f32(l, r), vhalf);
+      m = vmaxq_f32(vminq_f32(m, vmax), vmin);
+      int32x4_t q = vcvtq_s32_f32(vmulq_f32(m, vscale));
+      vst1q_s32(yn + i, q);
     }
     for (; i < kMaxBlockSize; ++i) {
-      yn[i * 2]     = f32_to_q31(out_buffer_[i]);
-      yn[i * 2 + 1] = f32_to_q31(aux_buffer_[i]);
+      yn[i] = f32_to_q31((out_buffer_[i] + aux_buffer_[i]) * 0.5f);
     }
   }
 #else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
-    yn[i * 2]     = f32_to_q31(out_buffer_[i]);
-    yn[i * 2 + 1] = f32_to_q31(aux_buffer_[i]);
+    yn[i] = f32_to_q31((out_buffer_[i] + aux_buffer_[i]) * 0.5f);
   }
 #endif
 }
@@ -159,13 +153,13 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 void OSC_NOTEON(const user_osc_param_t *const params)
 {
   (void)params;
-  performance_state_.gate = true;
+  gate_ = true;
 }
 
 void OSC_NOTEOFF(const user_osc_param_t *const params)
 {
   (void)params;
-  performance_state_.gate = false;
+  gate_ = false;
 }
 
 void OSC_PARAM(uint16_t index, uint16_t value)
