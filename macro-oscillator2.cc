@@ -9,7 +9,7 @@
 #include "plaits/dsp/dsp.h"
 #include "plaits/dsp/engine/engine.h"
 
-uint16_t p_values[6] = {0};
+uint16_t p_values[k_num_user_osc_param_id] = {0};
 float shape = 0, shiftshape = 0, shape_lfo = 0, lfo2 = 0, mix = 0;
 bool gate = false, previous_gate = false;
 static float amp = 0.0f;

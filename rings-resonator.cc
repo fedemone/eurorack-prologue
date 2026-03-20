@@ -47,7 +47,7 @@ static bool gate_ = false;
 static bool previous_gate_ = false;
 
 /* User-facing parameter storage */
-uint16_t p_values[6] = {0};
+uint16_t p_values[k_num_user_osc_param_id] = {0};
 float shape = 0, shiftshape = 0;
 float shape_lfo = 0;
 

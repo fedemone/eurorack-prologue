@@ -74,7 +74,7 @@ PerformanceState performance_state_ = {
 float shape_lfo;
 
 /* Parameter storage - declared here so LFO2 helper functions below can access it */
-static uint16_t p_values[6] = {0};
+static uint16_t p_values[k_num_user_osc_param_id] = {0};
 static float shape = 0, shiftshape = 0;
 
 #ifdef ELEMENTS_LFO2
