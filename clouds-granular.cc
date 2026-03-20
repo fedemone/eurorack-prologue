@@ -68,7 +68,7 @@ static float osc_frequency_ = 440.0f;
 static bool osc_active_ = false;
 
 /* User-facing parameter storage */
-static uint16_t p_values[6] = {0};
+static uint16_t p_values[k_num_user_osc_param_id] = {0};
 static float shape = 0, shiftshape = 0;
 static float shape_lfo = 0;
 
@@ -313,34 +313,33 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   /* Process through Clouds granular engine */
   processor_.Process(input, output, kMaxBlockSize);
 
-  /* Convert stereo int16 output to interleaved Q31 */
+  /* Mix stereo (L + R) to mono Q31.
+   * The adapter expects exactly kMaxBlockSize mono Q31 samples. */
 #ifdef __ARM_NEON
   {
     size_t i = 0;
     for (; i + 4 <= kMaxBlockSize; i += 4) {
-      /* Load 4 pairs of int16 L/R values */
       int16_t lvals[4] = {output[i].l, output[i + 1].l,
                           output[i + 2].l, output[i + 3].l};
       int16_t rvals[4] = {output[i].r, output[i + 1].r,
                           output[i + 2].r, output[i + 3].r};
-      /* int16 -> int32 (sign-extend) then shift left 16 bits for Q31 */
-      int32x4_t ql = vshlq_n_s32(vmovl_s16(vld1_s16(lvals)), 16);
-      int32x4_t qr = vshlq_n_s32(vmovl_s16(vld1_s16(rvals)), 16);
-      /* Interleave [L0,R0,L1,R1,L2,R2,L3,R3] */
-      int32x4x2_t stereo;
-      stereo.val[0] = ql;
-      stereo.val[1] = qr;
-      vst2q_s32(yn + i * 2, stereo);
+    /* Load 4 stereo samples and de-interleave into L and R registers */
+      const int16x4x2_t stereo = vld2_s16(reinterpret_cast<const int16_t*>(&output[i]));
+
+      /* int16 -> int32, average L+R, then shift left 16 for Q31 */
+      const int32x4_t ql = vmovl_s16(stereo.val[0]);
+      const int32x4_t qr = vmovl_s16(stereo.val[1]);
+      int32x4_t mono = vhaddq_s32(ql, qr);
+      mono = vshlq_n_s32(mono, 16);
+      vst1q_s32(yn + i, mono);
     }
     for (; i < kMaxBlockSize; ++i) {
-      yn[i * 2] = ((int32_t)output[i].l) << 16;
-      yn[i * 2 + 1] = ((int32_t)output[i].r) << 16;
+      yn[i] = ((int32_t)((output[i].l + output[i].r) / 2)) << 16;
     }
   }
 #else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
-    yn[i * 2] = ((int32_t)output[i].l) << 16;
-    yn[i * 2 + 1] = ((int32_t)output[i].r) << 16;
+    yn[i] = ((int32_t)((output[i].l + output[i].r) / 2)) << 16;
   }
 #endif
 }

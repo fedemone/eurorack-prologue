@@ -241,9 +241,9 @@ TEST(unit_header_num_params) {
 #elif defined(RINGS_RESONATOR)
   ASSERT_EQ(8U, unit_header.num_params);
 #elif defined(ELEMENTS_RESONATOR_MODES)
-  ASSERT_EQ(14U, unit_header.num_params);
+  ASSERT_EQ(15U, unit_header.num_params);
 #else
-  ASSERT_EQ(12U, unit_header.num_params);
+  ASSERT_EQ(13U, unit_header.num_params);
 #endif
 }
 
@@ -301,10 +301,11 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Brightness"));
   ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO Target"));
   ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO1 Shape"));
-  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Rate"));
-  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Depth"));
-  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "LFO2 Target"));
-  ASSERT_EQ(0, strcmp(unit_header.params[13].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[13].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[14].name, "LFO2 Shape"));
 #else
   /* Plaits layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
@@ -314,10 +315,12 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Param 2"));
   ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO Target"));
   ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO1 Shape"));
-  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO2 Rate"));
-  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Depth"));
-  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Target"));
-  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "Gate Mode"));
 #endif
 }
 
@@ -377,8 +380,9 @@ TEST(unit_header_param_types) {
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[10].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[11].type);
-  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[12].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[12].type);
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[13].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[14].type);
 #else
   /* Plaits layout */
   ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
@@ -390,8 +394,10 @@ TEST(unit_header_param_types) {
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[6].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
   ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[8].type);
-  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[9].type);
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[11].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[12].type);
 #endif
 }
 
@@ -409,11 +415,11 @@ TEST(unit_header_unused_params_are_none) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(ELEMENTS_RESONATOR_MODES)
-  for (int i = 14; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 15; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #else
-  for (int i = 12; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 13; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #endif
@@ -707,11 +713,22 @@ TEST(wrapper_param_lfo1_shape) {
   teardown_unit();
 }
 
+TEST(wrapper_param_lfo1_rate) {
+  init_unit();
+
+  /* LFO1 Rate: id 7 in Plaits layout -> stored in wrapper (not forwarded) */
+  int before = g_mock.param_count;
+  unit_set_param_value(7, 50);
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+
+  teardown_unit();
+}
+
 TEST(wrapper_param_id4_rate) {
   init_unit();
 
-  /* LFO2 Rate: id 7 in Plaits layout -> osc id4 */
-  unit_set_param_value(7, 42);
+  /* LFO2 Rate: id 8 in Plaits layout -> osc id4 */
+  unit_set_param_value(8, 42);
   ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
   ASSERT_EQ(42, g_mock.last_param_value);
 
@@ -721,8 +738,8 @@ TEST(wrapper_param_id4_rate) {
 TEST(wrapper_param_id5_depth) {
   init_unit();
 
-  /* LFO2 Depth: id 8 in Plaits layout -> osc id5 */
-  unit_set_param_value(8, 80);
+  /* LFO2 Depth: id 9 in Plaits layout -> osc id5 */
+  unit_set_param_value(9, 80);
   ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
   ASSERT_EQ(80, g_mock.last_param_value);
 
@@ -732,8 +749,8 @@ TEST(wrapper_param_id5_depth) {
 TEST(wrapper_param_id6_lfo2_target) {
   init_unit();
 
-  /* LFO2 Target: id 9 in Plaits layout -> osc id6 strings */
-  unit_set_param_value(9, 5);
+  /* LFO2 Target: id 10 in Plaits layout -> osc id6 strings */
+  unit_set_param_value(10, 5);
   ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
   ASSERT_EQ(5, g_mock.last_param_value);
 
@@ -743,8 +760,8 @@ TEST(wrapper_param_id6_lfo2_target) {
 TEST(wrapper_param_lfo2_shape) {
   init_unit();
 
-  /* LFO2 Shape: id 10 -> custom OSC_PARAM index 12 */
-  unit_set_param_value(10, 4);
+  /* LFO2 Shape: id 11 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(11, 4);
   ASSERT_EQ(12, g_mock.last_param_index);
   ASSERT_EQ(4, g_mock.last_param_value);
 
@@ -763,9 +780,9 @@ TEST(wrapper_param_out_of_range_ignored) {
 #elif defined(RINGS_RESONATOR)
   unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
 #elif defined(ELEMENTS_RESONATOR_MODES)
-  unit_set_param_value(14, 50);  /* id 14 -> default case, should return */
+  unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
 #else
-  unit_set_param_value(11, 50);  /* id 11 -> default case, should return */
+  unit_set_param_value(13, 50);  /* id 13 -> default case, should return */
 #endif
   ASSERT_EQ(before, g_mock.param_count);
   unit_set_param_value(24, 50);  /* id >= MAX -> guard */
@@ -878,10 +895,19 @@ TEST(elements_param_lfo1_shape) {
   teardown_unit();
 }
 
+TEST(elements_param_lfo1_rate) {
+  init_unit();
+  /* LFO1 Rate: id 10 -> stored in wrapper (not forwarded) */
+  int before = g_mock.param_count;
+  unit_set_param_value(10, 50);
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+  teardown_unit();
+}
+
 TEST(elements_param_lfo2_rate) {
   init_unit();
-  /* LFO2 Rate: id 10 -> custom OSC index 8 */
-  unit_set_param_value(10, 42);
+  /* LFO2 Rate: id 11 -> custom OSC index 8 */
+  unit_set_param_value(11, 42);
   ASSERT_EQ(8, g_mock.last_param_index);
   ASSERT_EQ(42, g_mock.last_param_value);
   teardown_unit();
@@ -889,8 +915,8 @@ TEST(elements_param_lfo2_rate) {
 
 TEST(elements_param_lfo2_depth) {
   init_unit();
-  /* LFO2 Depth: id 11 -> custom OSC index 9 */
-  unit_set_param_value(11, 80);
+  /* LFO2 Depth: id 12 -> custom OSC index 9 */
+  unit_set_param_value(12, 80);
   ASSERT_EQ(9, g_mock.last_param_index);
   ASSERT_EQ(80, g_mock.last_param_value);
   teardown_unit();
@@ -898,8 +924,8 @@ TEST(elements_param_lfo2_depth) {
 
 TEST(elements_param_lfo2_target) {
   init_unit();
-  /* LFO2 Target: id 12 -> custom OSC index 10 */
-  unit_set_param_value(12, 3);
+  /* LFO2 Target: id 13 -> custom OSC index 10 */
+  unit_set_param_value(13, 3);
   ASSERT_EQ(10, g_mock.last_param_index);
   ASSERT_EQ(3, g_mock.last_param_value);
   teardown_unit();
@@ -907,8 +933,8 @@ TEST(elements_param_lfo2_target) {
 
 TEST(elements_param_lfo2_shape) {
   init_unit();
-  /* LFO2 Shape: id 13 -> custom OSC index 12 */
-  unit_set_param_value(13, 4);
+  /* LFO2 Shape: id 14 -> custom OSC index 12 */
+  unit_set_param_value(14, 4);
   ASSERT_EQ(12, g_mock.last_param_index);
   ASSERT_EQ(4, g_mock.last_param_value);
   teardown_unit();
@@ -1663,33 +1689,33 @@ TEST(param_str_value_lfo_shape_strings) {
   /* Non-string params return nullptr */
   ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
 #elif defined(ELEMENTS_RESONATOR_MODES)
-  /* Elements: LFO1 Shape at id 9, LFO2 Shape at id 13 */
+  /* Elements: LFO1 Shape at id 9, LFO2 Shape at id 14 */
   ASSERT_TRUE(unit_get_param_str_value(9, 0) != nullptr);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Cosine"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "Triangle"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 4), "Fat Sine"));
   ASSERT_TRUE(unit_get_param_str_value(9, 5) == nullptr); /* out of range */
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 2), "Ramp Up"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(14, 2), "Ramp Up"));
   /* LFO Target strings */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 0), "Position"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 4), "Timbre"));
   /* LFO2 Target strings */
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(12, 0), "Position"));
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(12, 6), "Bright."));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 0), "Position"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 6), "Bright."));
 #else
-  /* Plaits: LFO1 Shape at id 6, LFO2 Shape at id 10 */
+  /* Plaits: LFO1 Shape at id 6, LFO2 Shape at id 11 */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 0), "Cosine"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 1), "Triangle"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "Ramp Down"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 4), "Fat Sine"));
   ASSERT_TRUE(unit_get_param_str_value(6, 5) == nullptr); /* out of range */
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 2), "Ramp Up"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 2), "Ramp Up"));
   /* LFO Target strings */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Shape"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 4), "Pitch"));
   /* LFO2 Target strings (same list) */
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Shape"));
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 7), "LFO2 Dep"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 0), "Shape"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 7), "LFO2 Dep"));
 #endif
   teardown_unit();
 }
@@ -1812,6 +1838,7 @@ int main(void) {
   run_test_elements_param_brightness();
   run_test_elements_param_lfo_target();
   run_test_elements_param_lfo1_shape();
+  run_test_elements_param_lfo1_rate();
   run_test_elements_param_lfo2_rate();
   run_test_elements_param_lfo2_depth();
   run_test_elements_param_lfo2_target();
@@ -1824,6 +1851,7 @@ int main(void) {
   run_test_wrapper_param_id2_percent();
   run_test_wrapper_param_id3_lfo_target();
   run_test_wrapper_param_lfo1_shape();
+  run_test_wrapper_param_lfo1_rate();
   run_test_wrapper_param_id4_rate();
   run_test_wrapper_param_id5_depth();
   run_test_wrapper_param_id6_lfo2_target();
