@@ -74,8 +74,8 @@ PerformanceState performance_state_ = {
 float shape_lfo;
 
 /* Parameter storage - declared here so LFO2 helper functions below can access it */
-uint16_t p_values[6] = {0};
-float shape = 0, shiftshape = 0;
+static uint16_t p_values[6] = {0};
+static float shape = 0, shiftshape = 0;
 
 #ifdef ELEMENTS_LFO2
 stmlib::CosineOscillator lfo;

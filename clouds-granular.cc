@@ -323,10 +323,13 @@ void OSC_CYCLE(const user_osc_param_t *const params,
                           output[i + 2].l, output[i + 3].l};
       int16_t rvals[4] = {output[i].r, output[i + 1].r,
                           output[i + 2].r, output[i + 3].r};
+    /* Load 4 stereo samples and de-interleave into L and R registers */
+      const int16x4x2_t stereo = vld2_s16(reinterpret_cast<const int16_t*>(&output[i]));
+
       /* int16 -> int32, average L+R, then shift left 16 for Q31 */
-      int32x4_t ql = vmovl_s16(vld1_s16(lvals));
-      int32x4_t qr = vmovl_s16(vld1_s16(rvals));
-      int32x4_t mono = vshrq_n_s32(vaddq_s32(ql, qr), 1);
+      const int32x4_t ql = vmovl_s16(stereo.val[0]);
+      const int32x4_t qr = vmovl_s16(stereo.val[1]);
+      int32x4_t mono = vhaddq_s32(ql, qr);
       mono = vshlq_n_s32(mono, 16);
       vst1q_s32(yn + i, mono);
     }
