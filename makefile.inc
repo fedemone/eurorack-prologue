@@ -122,21 +122,24 @@ endif
 # Common compiler flags
 CFLAGS = $(MCUFLAGS) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
 CFLAGS += -Wall -Wextra
-CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -std=c11
 CFLAGS += $(OSC_DDEFS)
 
 CXXFLAGS = $(MCUFLAGS) $(ARCH_FLAGS) $(OPT_FLAGS) $(PLATFORM_FLAGS) $(FPIC)
 CXXFLAGS += -Wall -Wextra
-CXXFLAGS += -ffunction-sections -fdata-sections
 CXXFLAGS += -fno-exceptions -fno-rtti
 CXXFLAGS += -std=c++11
 CXXFLAGS += $(OSC_DDEFS)
 
-# Add NEON flags for drumlogue
 ifeq ($(PLATFORM),drumlogue)
+    # Drumlogue: match SDK flags — no -ffunction-sections/-fdata-sections,
+    # add -fno-threadsafe-statics to avoid __cxa_guard_* dependencies
     CFLAGS += $(NEON_FLAGS)
-    CXXFLAGS += $(NEON_FLAGS)
+    CXXFLAGS += $(NEON_FLAGS) -fno-threadsafe-statics
+else
+    # Other platforms: enable section-level GC (used with --gc-sections)
+    CFLAGS += -ffunction-sections -fdata-sections
+    CXXFLAGS += -ffunction-sections -fdata-sections
 endif
 
 # Add include directories
@@ -145,13 +148,14 @@ CXXFLAGS += $(UINCDIR)
 
 # Linker flags
 LDFLAGS = $(MCUFLAGS) $(ARCH_FLAGS)
-LDFLAGS += -Wl,--gc-sections
 
 ifeq ($(PLATFORM),drumlogue)
+    # Drumlogue: match SDK link flags — no --gc-sections, no -z now/relro,
+    # no --as-needed.  These cause dlopen failures on the hardware.
     LDFLAGS += $(SHARED_FLAGS)
-    LDFLAGS += -Wl,--as-needed -Wl,-z,relro -Wl,-z,now
-    LDLIBS = -lm -lpthread
+    LDLIBS = -lm -lc
 else
+    LDFLAGS += -Wl,--gc-sections
     # Use logue SDK linker script
     LDSCRIPT = $(SDK_PLATFORM_DIR)/ld/userosc.ld
     LDFLAGS += -specs=nano.specs -specs=nosys.specs
@@ -290,8 +294,9 @@ endif
 $(TARGET_PKG): $(BUILD_DIR)/$(TARGET_BIN)
 	$(call print_package,$@)
 ifeq ($(PLATFORM),drumlogue)
-	# Drumlogue: Copy shared library directly
+	# Drumlogue: Copy shared library, strip debug symbols (matches SDK)
 	$(Q)cp $(BUILD_DIR)/$(TARGET_BIN) $@
+	$(Q)$(PREFIX)strip $@
 else
 	# Other platforms: Create ZIP with manifest and binary
 	$(Q)cp $(BUILD_DIR)/$(PROJECT).bin $(PROJECT).bin

@@ -15,7 +15,7 @@ UCXXSRC = clouds-granular.cc \
 ifeq ($(PLATFORM),drumlogue)
     UCSRC = header.c
     UCXXSRC += drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc
-    OSC_DDEFS += -DOSC_NATIVE_BLOCK_SIZE=32
+    OSC_DDEFS += -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32
 endif
 
 include makefile.inc

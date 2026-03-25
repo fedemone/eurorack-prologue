@@ -17,7 +17,7 @@ UCXXSRC = rings-resonator.cc \
 ifeq ($(PLATFORM),drumlogue)
     UCSRC = header.c
     UCXXSRC += drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc
-    OSC_DDEFS += -DOSC_NATIVE_BLOCK_SIZE=24
+    OSC_DDEFS += -DOSC_NATIVE_BLOCK_SIZE=24 -DBLOCKSIZE=24
 endif
 
 include makefile.inc
