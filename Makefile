@@ -1,3 +1,18 @@
+INCLUDES = -Ilogue-sdk/platform/drumlogue/common \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/drivers \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp/engine \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/fx \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/ui \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/pot_controller \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/pot_controller \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/drivers \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/dsp/engine \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/fx \
+		   -Ilogue-sdk/platform/drumlogue/eurorack/plaits/ui
 TOPTARGETS := all clean
 
 OSCILLATORS := $(wildcard *mk)
@@ -14,8 +29,15 @@ $(OSCILLATORS):
 	@PLATFORM=nts-1 VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+	@rm -fR .dep ./build
+	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-mussola bench
+drumlogue: $(OSCILLATORS) package_drumlogue
+$(OSCILLATORS):
+	@rm -fR .dep ./build
+	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
+
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-mussola bench
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
