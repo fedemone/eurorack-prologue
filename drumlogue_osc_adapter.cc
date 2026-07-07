@@ -37,7 +37,7 @@ static struct {
 #define OSC_NATIVE_BLOCK_SIZE 24
 #endif
 
-static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
+static alignas(16) float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
 static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
@@ -48,8 +48,8 @@ static uint32_t s_render_avail = 0; /* samples available */
 static_assert(OSC_NATIVE_BLOCK_SIZE <= 24,
               "OSC_NATIVE_BLOCK_SIZE exceeds Mussola internal buffer size");
 extern "C" void mussola_get_last_stereo(const float **left, const float **right);
-static float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
-static float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];
+static alignas(16) float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
+static alignas(16) float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];
 #endif
 
 /* ---- Q31 / Float Helpers ---- */
@@ -230,7 +230,7 @@ static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
  * Render one native-sized block from OSC_CYCLE into the static buffer.
  */
 static void render_one_block(void) {
-  int32_t q31_buf[OSC_NATIVE_BLOCK_SIZE];
+  alignas(16) int32_t q31_buf[OSC_NATIVE_BLOCK_SIZE];
 
   OSC_CYCLE(&s_adapter.params, q31_buf, OSC_NATIVE_BLOCK_SIZE);
 

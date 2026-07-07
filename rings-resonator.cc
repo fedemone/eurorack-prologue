@@ -39,9 +39,9 @@ static uint16_t reverb_buffer_[32768];
 static rings::Patch patch_;
 static rings::PerformanceState performance_state_;
 
-static float in_buffer_[kMaxBlockSize];
-static float out_buffer_[kMaxBlockSize];
-static float aux_buffer_[kMaxBlockSize];
+static alignas(16) float in_buffer_[kMaxBlockSize];
+static alignas(16) float out_buffer_[kMaxBlockSize];
+static alignas(16) float aux_buffer_[kMaxBlockSize];
 
 static bool gate_ = false;
 static bool previous_gate_ = false;

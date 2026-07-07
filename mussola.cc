@@ -93,7 +93,7 @@ static float gender_ = 0.0f;       /* -1.0 to +1.0 (0 = neutral) */
  * 8KB per engine × 4 engines = 32KB total.
  */
 static const size_t kEngineBufferSize = 8192;
-static uint8_t engine_buffers_[kMaxVoices][kEngineBufferSize];
+static alignas(16) uint8_t engine_buffers_[kMaxVoices][kEngineBufferSize];
 
 /* Stereo output buffers filled by OSC_CYCLE, read by adapter */
 static float s_stereo_left_[plaits::kMaxBlockSize] __attribute__((aligned(16)));

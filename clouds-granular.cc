@@ -57,8 +57,8 @@ using namespace clouds;
  */
 static const size_t kLargeBufferSize = 118784;
 static const size_t kSmallBufferSize = 65536;
-static uint8_t large_buffer_[kLargeBufferSize];
-static uint8_t small_buffer_[kSmallBufferSize];
+static alignas(16) uint8_t large_buffer_[kLargeBufferSize];
+static alignas(16) uint8_t small_buffer_[kSmallBufferSize];
 
 static GranularProcessor processor_;
 

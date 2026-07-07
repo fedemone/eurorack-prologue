@@ -203,7 +203,7 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   /* Advance internal LFO1 and feed shape_lfo to the adapter.
    * Frequency range matches LFO2: param/600 per block of 24 samples at 48kHz,
    * giving 0-3.3 Hz at 0-100%.  Here we compute per render call. */
-  if (s_state.lfo1_rate > 0.0f) {
+   if (s_state.lfo1_rate > 0.0f) {
     static const float TWO_PI = 2.0f * 3.1415926535f;
 
     // Match LFO2 frequency scaling: param/600 per 24-sample block.
@@ -216,6 +216,8 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     }
     const float lfo_val = cosf(s_state.lfo1_phase * TWO_PI);
     osc_adapter_set_shape_lfo(lfo_val);
+  } else {
+    osc_adapter_set_shape_lfo(0.0f);
   }
 
   /*
@@ -228,7 +230,8 @@ void unit_render(const float *in, float *out, uint32_t frames) {
 
 #if defined(MUSSOLA_VOCAL)
   /* Mussola: use stereo render path for true stereo spread */
-  float left[64], right[64];
+  alignas(16) float left[64];
+  alignas(16) float right[64];
   while (remaining > 0) {
     uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
 
@@ -260,7 +263,7 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   }
 #else
   /* Other modules: mono render duplicated to stereo */
-  float mono[64];
+  alignas(16) float mono[64];
   while (remaining > 0) {
     uint32_t n = (remaining < chunk_size) ? remaining : chunk_size;
 
