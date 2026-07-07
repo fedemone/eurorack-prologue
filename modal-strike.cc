@@ -5,6 +5,14 @@
 #include "elements/dsp/part.h"
 #include "elements/resources.h"
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
+#ifdef ELEMENTS_LFO2
+#include "stmlib/dsp/cosine_oscillator.h"
+#endif
+
 using namespace elements;
 
 inline float get_shape();
@@ -27,11 +35,11 @@ float exciter_level_ = 0.f;
 float strength_ = 0.f;
 float envelope_value_ = 0.f;
 
-float strike_buffer_[kMaxBlockSize];
+float strike_buffer_[kMaxBlockSize] __attribute__((aligned(16)));
 
-float bow_strength_buffer_[kMaxBlockSize];
+float bow_strength_buffer_[kMaxBlockSize] __attribute__((aligned(16)));
 
-float raw[kMaxBlockSize];
+float raw[kMaxBlockSize] __attribute__((aligned(16)));
 float center[kMaxBlockSize+2] = {.0f};
 
 Patch patch_ = {
@@ -65,6 +73,69 @@ PerformanceState performance_state_ = {
 
 float shape_lfo;
 
+/* Parameter storage - declared here so LFO2 helper functions below can access it */
+static uint16_t p_values[k_num_user_osc_param_id] = {0};
+static float shape = 0, shiftshape = 0;
+
+#ifdef ELEMENTS_LFO2
+stmlib::CosineOscillator lfo;
+float lfo2 = 0;
+static float lfo2_phase = 0.0f;
+
+/* Custom param indices for LFO2 (beyond standard user_osc_param_id_t range).
+ * Passed via OSC_PARAM by the drumlogue wrapper. */
+uint16_t lfo2_rate_value = 0;
+uint16_t lfo2_depth_value = 0;
+uint16_t lfo2_target_value = 0;
+static uint16_t lfo1_shape_value = 0;
+static uint16_t lfo2_shape_value = 0;
+
+/* LFO waveshape transfer function for LFO1 (shape LFO modulation). */
+static inline float apply_lfo1_shape(float x) {
+  switch (lfo1_shape_value) {
+    default:
+    case 0: return x;
+    case 1: { float ax = x < 0.f ? -x : x;
+              float s = ax * (2.0f - ax);
+              return x < 0.f ? -s : s; }
+    case 2: return x < 0.f ? -(x * x) : (x * x);
+    case 3: { if (x > 0.f) { float s = 1.0f - x; return 1.0f - s * s; }
+              if (x < 0.f) { float s = 1.0f + x; return -(1.0f - s * s); }
+              return 0.f; }
+    case 4: return clipminusone_plusonef(x * (1.5f - 0.5f * x * x));
+  }
+}
+
+enum LfoTarget {
+  LfoTargetPosition,
+  LfoTargetGeometry,
+  LfoTargetStrength,
+  LfoTargetMallet,
+  LfoTargetTimbre,
+  LfoTargetDamping,
+  LfoTargetBrightness,
+  LfoTargetLfo2Frequency,
+  LfoTargetLfo2Depth
+};
+
+inline float get_lfo2_frequency() {
+  return clip01f((lfo2_rate_value * 0.01f) +
+    (p_values[k_user_osc_param_id6] == LfoTargetLfo2Frequency ? shape_lfo : 0.0f) +
+    (lfo2_target_value == LfoTargetLfo2Frequency ? lfo2 : 0.0f));
+}
+
+inline float get_lfo2_depth() {
+  return clip01f((lfo2_depth_value * 0.01f) +
+    (p_values[k_user_osc_param_id6] == LfoTargetLfo2Depth ? shape_lfo : 0.0f) +
+    (lfo2_target_value == LfoTargetLfo2Depth ? lfo2 : 0.0f));
+}
+
+inline float get_lfo_value(enum LfoTarget target) {
+  return (p_values[k_user_osc_param_id6] == target ? shape_lfo : 0.0f) +
+    (lfo2_target_value == target ? lfo2 : 0.0f);
+}
+#endif
+
 inline uint8_t GetGateFlags(bool gate_in) {
   uint8_t flags = 0;
   if (gate_in) {
@@ -91,7 +162,7 @@ void Seed(uint32_t* seed, size_t size) {
   x = static_cast<float>(signature & 7) / 8.0f;
   signature >>= 3;
   patch_.resonator_modulation_frequency = (0.4f + 0.8f * x) / elements::kSampleRate;
-  
+
   x = static_cast<float>(signature & 7) / 8.0f;
   signature >>= 3;
   patch_.resonator_modulation_offset = 0.05f + 0.1f * x;
@@ -116,9 +187,14 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   Seed(&random, 1);
   strike_.Init();
   resonator_.Init();
-  
+
 #if defined(USE_LIMITER)
   limiter_.Init();
+#endif
+
+#ifdef ELEMENTS_LFO2
+  lfo.InitApproximate(0);
+  lfo.Start();
 #endif
 }
 
@@ -146,6 +222,33 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 {
   shape_lfo = q31_to_f32(params->shape_lfo);
 
+#ifdef ELEMENTS_LFO2
+  shape_lfo = apply_lfo1_shape(shape_lfo);
+
+  /* Multi-shape LFO2 generation */
+  { float freq = get_lfo2_frequency() / 600.f;
+    float depth = get_lfo2_depth();
+    lfo2_phase += freq;
+    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+    lfo.InitApproximate(freq);
+    float cos_val = lfo.Next();
+    float raw_lfo;
+    switch (lfo2_shape_value) {
+      default:
+      case 0: raw_lfo = (cos_val - 0.5f) * 2.0f; break;
+      case 1: raw_lfo = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                             : (3.0f - 4.0f * lfo2_phase); break;
+      case 2: raw_lfo = 2.0f * lfo2_phase - 1.0f; break;
+      case 3: raw_lfo = 1.0f - 2.0f * lfo2_phase; break;
+      case 4: raw_lfo = (cos_val - 0.5f) * 2.0f;
+              raw_lfo = raw_lfo * (1.5f - 0.5f * raw_lfo * raw_lfo);
+              raw_lfo = (raw_lfo > 1.0f) ? 1.0f : ((raw_lfo < -1.0f) ? -1.0f : raw_lfo);
+              break;
+    }
+    lfo2 = raw_lfo * depth;
+  }
+#endif
+
   performance_state_.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
   int32_t pitch = static_cast<int32_t>((performance_state_.note + 41.0f) * 256.0f);
   if (pitch < 0) {
@@ -164,14 +267,21 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   patch_.resonator_brightness = get_brightness();
   patch_.resonator_geometry = get_shift_shape();
   patch_.resonator_position = get_shape();
-  
+
   uint8_t flags = GetGateFlags(performance_state_.gate);
 
   float strike_meta = patch_.exciter_strike_meta;
+#ifdef ELEMENTS_FULL
+  strike_.set_meta(
+      strike_meta,
+      EXCITER_MODEL_GRANULAR_SAMPLE_PLAYER,
+      EXCITER_MODEL_PARTICLES);
+#else
   strike_.set_meta(
       strike_meta <= 0.4f ? strike_meta * 0.625f : strike_meta * 1.25f - 0.25f,
       EXCITER_MODEL_MALLET,
       EXCITER_MODEL_PARTICLES);
+#endif
   strike_.set_timbre(patch_.exciter_strike_timbre);
   strike_.set_signature(patch_.exciter_signature);
   strike_.Process(flags, strike_buffer_, kMaxBlockSize);
@@ -189,16 +299,28 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 #endif
 
   // Sum all sources of excitation.
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vlevel = vdupq_n_f32(strike_level);
+    size_t i = 0;
+    for (; i + 4 <= kMaxBlockSize; i += 4) {
+      vst1q_f32(raw + i, vmulq_f32(vld1q_f32(strike_buffer_ + i), vlevel));
+    }
+    for (; i < kMaxBlockSize; ++i)
+      raw[i] = strike_buffer_[i] * strike_level;
+  }
+#else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
     raw[i] = strike_buffer_[i] * strike_level;
   }
+#endif
 
     // Some exciters can cause palm mutes on release.
   float damping = patch_.resonator_damping;
   damping -= strike_.damping() * strike_level * 0.125f;
   damping -= (1.0f - bow_strength_buffer_[0]) * \
       patch_.exciter_bow_level * 0.0625f;
-  
+
   if (damping <= 0.0f) {
     damping = 0.0f;
   }
@@ -234,14 +356,15 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 void OSC_NOTEON(const user_osc_param_t * const params)
 {
   performance_state_.gate = true;
+#ifdef ELEMENTS_LFO2
+  lfo.Start();
+  lfo2_phase = 0.0f;
+#endif
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
 {
   performance_state_.gate = false;
 }
-
-uint16_t p_values[6] = {0};
-float shape = 0, shiftshape = 0;
 
 void OSC_PARAM(uint16_t index, uint16_t value)
 {
@@ -264,11 +387,52 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     shiftshape = param_val_to_f32(value);
     break;
 
+#ifdef ELEMENTS_LFO2
+  case 8: /* LFO2 Rate (0-100) */
+    lfo2_rate_value = value;
+    break;
+  case 9: /* LFO2 Depth (0-100) */
+    lfo2_depth_value = value;
+    break;
+  case 10: /* LFO2 Target (enum) */
+    lfo2_target_value = value;
+    break;
+  case 11: /* LFO1 Shape (0-4) */
+    lfo1_shape_value = value;
+    break;
+  case 12: /* LFO2 Shape (0-4) */
+    lfo2_shape_value = value;
+    break;
+#endif
+
   default:
     break;
   }
 }
 
+#ifdef ELEMENTS_LFO2
+inline float get_shape() {
+  return clip01f(shape + get_lfo_value(LfoTargetPosition));
+}
+inline float get_shift_shape() {
+  return clip01f(shiftshape + get_lfo_value(LfoTargetGeometry));
+}
+inline float get_strength() {
+  return clip01f((p_values[k_user_osc_param_id1] * 0.01f) + get_lfo_value(LfoTargetStrength));
+}
+inline float get_mallet() {
+  return clip01f((p_values[k_user_osc_param_id2] * 0.01f) + get_lfo_value(LfoTargetMallet));
+}
+inline float get_timbre() {
+  return clip01f((p_values[k_user_osc_param_id3] * 0.01f) + get_lfo_value(LfoTargetTimbre));
+}
+inline float get_damping() {
+  return clip01f((p_values[k_user_osc_param_id4] * 0.01f) + get_lfo_value(LfoTargetDamping));
+}
+inline float get_brightness() {
+  return clip01f((p_values[k_user_osc_param_id5] * 0.01f) + get_lfo_value(LfoTargetBrightness));
+}
+#else
 inline float get_shape() {
   return clip01f(shape + (p_values[k_user_osc_param_id6] == 0 ? shape_lfo : 0.0f));
 }
@@ -290,3 +454,4 @@ inline float get_damping() {
 inline float get_brightness() {
   return clip01f((p_values[k_user_osc_param_id5] * 0.01f) + (p_values[k_user_osc_param_id6] == 6 ? shape_lfo : 0.0f));
 }
+#endif

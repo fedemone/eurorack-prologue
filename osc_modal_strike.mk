@@ -1,7 +1,7 @@
 OSCILLATOR = modal_strike
 PROJECT = $(OSCILLATOR)
 
-OSC_DDEFS = -DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER
+OSC_DDEFS = -DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER -DELEMENTS_LFO2
 
 UCXXSRC = modal-strike.cc \
 	eurorack/elements/dsp/exciter.cc \
@@ -13,5 +13,11 @@ UCXXSRC = modal-strike.cc \
 	eurorack/stmlib/dsp/units.cc \
 	eurorack/stmlib/utils/random.cc
 
+# Add drumlogue wrapper for drumlogue platform
+ifeq ($(PLATFORM),drumlogue)
+    UCSRC = header.c
+    UCXXSRC += drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc
+    OSC_DDEFS += -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32
+endif
 
 include makefile.inc

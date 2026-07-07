@@ -1,0 +1,1913 @@
+/*
+ * File: test_drumlogue_callbacks.cc
+ *
+ * Unit tests for the drumlogue port's callback chain:
+ *   Synth Module API (unit_*) -> adapter (osc_adapter_*) -> OSC API (OSC_*)
+ *
+ * Provides mock OSC_* implementations that record calls and produce
+ * deterministic output for verification.
+ *
+ * Build:
+ *   g++ -std=c++11 -DOSC_NATIVE_BLOCK_SIZE=24 -Idrumlogue -I. \
+ *       test_drumlogue_callbacks.cc drumlogue_osc_adapter.cc \
+ *       drumlogue_unit_wrapper.cc -o test_drumlogue_callbacks
+ *
+ * Run:
+ *   ./test_drumlogue_callbacks
+ */
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <cassert>
+
+/* Include the drumlogue headers */
+#include "userosc.h"
+#include "runtime.h"
+#include "unit.h"
+#include "drumlogue_osc_adapter.h"
+
+/* ===========================================================================
+ * Test Framework (minimal)
+ * ======================================================================== */
+
+static int g_tests_run = 0;
+static int g_tests_passed = 0;
+static int g_tests_failed = 0;
+
+#define TEST(name) \
+  static void test_##name(void); \
+  static void run_test_##name(void) { \
+    g_tests_run++; \
+    printf("  %-60s ", #name); \
+    fflush(stdout); \
+    test_##name(); \
+    g_tests_passed++; \
+    printf("PASS\n"); \
+  } \
+  static void test_##name(void)
+
+#define ASSERT_EQ(expected, actual) do { \
+    auto _e = (expected); auto _a = (actual); \
+    if (_e != _a) { \
+      printf("FAIL\n    %s:%d: expected %lld, got %lld\n", \
+             __FILE__, __LINE__, (long long)_e, (long long)_a); \
+      g_tests_failed++; g_tests_passed--; \
+      return; \
+    } \
+  } while(0)
+
+#define ASSERT_TRUE(cond) do { \
+    if (!(cond)) { \
+      printf("FAIL\n    %s:%d: condition false: %s\n", \
+             __FILE__, __LINE__, #cond); \
+      g_tests_failed++; g_tests_passed--; \
+      return; \
+    } \
+  } while(0)
+
+#define ASSERT_NEAR(expected, actual, tolerance) do { \
+    float _e = (expected); float _a = (actual); float _t = (tolerance); \
+    if (fabsf(_e - _a) > _t) { \
+      printf("FAIL\n    %s:%d: expected %.8f, got %.8f (tol %.8f)\n", \
+             __FILE__, __LINE__, _e, _a, _t); \
+      g_tests_failed++; g_tests_passed--; \
+      return; \
+    } \
+  } while(0)
+
+/* ===========================================================================
+ * Mock OSC API
+ *
+ * Records all calls so tests can verify the adapter/wrapper correctly
+ * translates between drumlogue and OSC APIs.
+ * ======================================================================== */
+
+struct MockOscState {
+  /* Init tracking */
+  int init_count;
+  uint32_t last_init_platform;
+  uint32_t last_init_api;
+
+  /* Cycle tracking */
+  int cycle_count;
+  const user_osc_param_t *last_cycle_params;
+  uint32_t last_cycle_frames;
+  /* Value to fill Q31 output with (allows tests to verify conversion) */
+  int32_t cycle_fill_value;
+
+  /* Note on/off tracking */
+  int noteon_count;
+  int noteoff_count;
+  uint16_t last_noteon_pitch;
+  int32_t last_noteon_shape_lfo;
+
+  /* Param tracking */
+  int param_count;
+  uint16_t last_param_index;
+  uint16_t last_param_value;
+  /* Full history (up to 64 calls) */
+  uint16_t param_history_index[64];
+  uint16_t param_history_value[64];
+  int param_history_count;
+};
+
+static MockOscState g_mock;
+
+static void mock_reset(void) {
+  memset(&g_mock, 0, sizeof(g_mock));
+  /* Default fill: 25% of full scale = 0x20000000 */
+  g_mock.cycle_fill_value = 0x20000000;
+}
+
+/* --- Mock implementations of OSC_* functions --- */
+
+extern "C" {
+
+void OSC_INIT(uint32_t platform, uint32_t api) {
+  g_mock.init_count++;
+  g_mock.last_init_platform = platform;
+  g_mock.last_init_api = api;
+}
+
+void OSC_CYCLE(const user_osc_param_t * const params,
+               int32_t *yn, const uint32_t frames) {
+  g_mock.cycle_count++;
+  g_mock.last_cycle_params = params;
+  g_mock.last_cycle_frames = frames;
+
+  /* Fill output with deterministic value */
+  for (uint32_t i = 0; i < frames; ++i) {
+    yn[i] = g_mock.cycle_fill_value;
+  }
+}
+
+void OSC_NOTEON(const user_osc_param_t * const params) {
+  g_mock.noteon_count++;
+  g_mock.last_noteon_pitch = params->pitch;
+  g_mock.last_noteon_shape_lfo = params->shape_lfo;
+}
+
+void OSC_NOTEOFF(const user_osc_param_t * const params) {
+  g_mock.noteoff_count++;
+  (void)params;
+}
+
+void OSC_PARAM(uint16_t index, uint16_t value) {
+  g_mock.param_count++;
+  g_mock.last_param_index = index;
+  g_mock.last_param_value = value;
+  if (g_mock.param_history_count < 64) {
+    g_mock.param_history_index[g_mock.param_history_count] = index;
+    g_mock.param_history_value[g_mock.param_history_count] = value;
+    g_mock.param_history_count++;
+  }
+}
+
+#if defined(MUSSOLA_VOCAL)
+/* Mock stereo accessor — adapter calls this after OSC_CYCLE */
+static float s_mock_stereo_l[64] = {0};
+static float s_mock_stereo_r[64] = {0};
+
+void mussola_get_last_stereo(const float **left, const float **right) {
+  /* Fill with deterministic stereo data derived from cycle_fill_value */
+  float mono = (float)g_mock.cycle_fill_value / 2147483648.0f;
+  for (int i = 0; i < 64; ++i) {
+    s_mock_stereo_l[i] = mono * 0.6f;  /* left slightly louder */
+    s_mock_stereo_r[i] = mono * 0.4f;  /* right slightly quieter */
+  }
+  *left = s_mock_stereo_l;
+  *right = s_mock_stereo_r;
+}
+#endif
+
+} /* extern "C" */
+
+/* ===========================================================================
+ * Helper: create a valid runtime descriptor
+ * ======================================================================== */
+
+static unit_runtime_desc_t make_valid_desc(void) {
+  unit_runtime_desc_t desc;
+  memset(&desc, 0, sizeof(desc));
+  desc.target = k_unit_target_drumlogue_synth;
+  desc.api = k_unit_api_2_0_0;
+  desc.samplerate = 48000;
+  desc.frames_per_buffer = 48;
+  desc.input_channels = 0;
+  desc.output_channels = 2;
+  desc.get_num_sample_banks = nullptr;
+  desc.get_num_samples_for_bank = nullptr;
+  desc.get_sample = nullptr;
+  return desc;
+}
+
+/* Helper: init unit to known good state */
+static void init_unit(void) {
+  mock_reset();
+  unit_runtime_desc_t desc = make_valid_desc();
+  unit_init(&desc);
+}
+
+/* Helper: teardown and reset */
+static void teardown_unit(void) {
+  unit_teardown();
+  mock_reset();
+}
+
+/* ===========================================================================
+ * Tests: unit_header
+ * ======================================================================== */
+
+TEST(unit_header_size) {
+  ASSERT_EQ(sizeof(unit_header_t), unit_header.header_size);
+}
+
+TEST(unit_header_target) {
+  ASSERT_EQ((uint16_t)(UNIT_TARGET_PLATFORM | k_unit_module_synth),
+            unit_header.target);
+}
+
+TEST(unit_header_api) {
+  ASSERT_EQ(UNIT_API_VERSION, unit_header.api);
+}
+
+TEST(unit_header_num_params) {
+#if defined(MUSSOLA_VOCAL)
+  ASSERT_EQ(16U, unit_header.num_params);
+#elif defined(CLOUDS_GRANULAR)
+  ASSERT_EQ(16U, unit_header.num_params);
+#elif defined(RINGS_RESONATOR)
+  ASSERT_EQ(8U, unit_header.num_params);
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  ASSERT_EQ(15U, unit_header.num_params);
+#else
+  ASSERT_EQ(13U, unit_header.num_params);
+#endif
+}
+
+TEST(unit_header_param_names) {
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Phoneme"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Timbre"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Harmonics"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Morph"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Speed"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Prosody"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Decay"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "Mix"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "Model"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "Gate Mode"));
+#elif defined(CLOUDS_GRANULAR)
+  /* Clouds layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Size"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Density"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Texture"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Pitch"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Feedback"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Dry/Wet"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "Reverb"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "Freeze"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "Mode"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "Quality"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "SampleBank"));
+  ASSERT_EQ(0, strcmp(unit_header.params[13].name, "SampleNum"));
+  ASSERT_EQ(0, strcmp(unit_header.params[14].name, "SmplStart"));
+  ASSERT_EQ(0, strcmp(unit_header.params[15].name, "SmplEnd"));
+#elif defined(RINGS_RESONATOR)
+  /* Rings layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Structure"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Brightness"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Damping"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Chord"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Model"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Polyphony"));
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  /* Elements layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Position"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "Geometry"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Strength"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Mallet"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Timbre"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Damping"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Brightness"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO1 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[13].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[14].name, "LFO2 Shape"));
+#else
+  /* Plaits layout */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "ShiftShape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Param 1"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Param 2"));
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO1 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "Gate Mode"));
+#endif
+}
+
+TEST(unit_header_param_types) {
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+#elif defined(CLOUDS_GRANULAR)
+  /* Clouds layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_none,      unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_drywet,    unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_onoff,     unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[11].type);
+  ASSERT_EQ(k_unit_param_type_none,      unit_header.params[12].type);
+  ASSERT_EQ(k_unit_param_type_none,      unit_header.params[13].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[14].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[15].type);
+#elif defined(RINGS_RESONATOR)
+  /* Rings layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[7].type);
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  /* Elements layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[11].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[12].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[13].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[14].type);
+#else
+  /* Plaits layout */
+  ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[1].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[2].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[3].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[4].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[5].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[6].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_percent,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[11].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[12].type);
+#endif
+}
+
+TEST(unit_header_unused_params_are_none) {
+#if defined(MUSSOLA_VOCAL)
+  for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#elif defined(CLOUDS_GRANULAR)
+  for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#elif defined(RINGS_RESONATOR)
+  for (int i = 8; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  for (int i = 15; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#else
+  for (int i = 13; i < UNIT_MAX_PARAM_COUNT; ++i) {
+    ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
+  }
+#endif
+}
+
+/* ===========================================================================
+ * Tests: unit_init validation
+ * ======================================================================== */
+
+TEST(unit_init_null_desc) {
+  mock_reset();
+  int8_t err = unit_init(nullptr);
+  ASSERT_EQ(k_unit_err_undef, err);
+  ASSERT_EQ(0, g_mock.init_count); /* should NOT call OSC_INIT */
+}
+
+TEST(unit_init_bad_target) {
+  mock_reset();
+  unit_runtime_desc_t desc = make_valid_desc();
+  desc.target = 0x0100; /* prologue target, not drumlogue */
+  int8_t err = unit_init(&desc);
+  ASSERT_EQ(k_unit_err_target, err);
+  ASSERT_EQ(0, g_mock.init_count);
+}
+
+TEST(unit_init_bad_api_version) {
+  mock_reset();
+  unit_runtime_desc_t desc = make_valid_desc();
+  desc.api = k_unit_api_1_0_0; /* too old */
+  int8_t err = unit_init(&desc);
+  ASSERT_EQ(k_unit_err_api_version, err);
+  ASSERT_EQ(0, g_mock.init_count);
+}
+
+TEST(unit_init_bad_samplerate) {
+  mock_reset();
+  unit_runtime_desc_t desc = make_valid_desc();
+  desc.samplerate = 44100;
+  int8_t err = unit_init(&desc);
+  ASSERT_EQ(k_unit_err_samplerate, err);
+  ASSERT_EQ(0, g_mock.init_count);
+}
+
+TEST(unit_init_success) {
+  mock_reset();
+  unit_runtime_desc_t desc = make_valid_desc();
+  int8_t err = unit_init(&desc);
+  ASSERT_EQ(k_unit_err_none, err);
+  ASSERT_EQ(1, g_mock.init_count);
+  ASSERT_EQ(desc.target, g_mock.last_init_platform);
+  ASSERT_EQ(desc.api, g_mock.last_init_api);
+  unit_teardown();
+}
+
+/* ===========================================================================
+ * Tests: Adapter note events
+ * ======================================================================== */
+
+TEST(adapter_note_on_pitch_encoding) {
+  init_unit();
+
+  /* Note on: MIDI note 69 (A4) */
+  osc_adapter_note_on(69, 100);
+  ASSERT_EQ(1, g_mock.noteon_count);
+
+  /* pitch = (note << 8) | frac. For note 69 with 0 pitch mod, frac=0 */
+  uint16_t expected_pitch = (69 << 8) | 0;
+  ASSERT_EQ(expected_pitch, g_mock.last_noteon_pitch);
+
+  teardown_unit();
+}
+
+TEST(adapter_note_on_with_pitch_bend) {
+  init_unit();
+
+  /* Apply +1 semitone pitch bend: 8192/2 = 4096 gives +1 semitone */
+  osc_adapter_pitch_bend(4096);
+
+  /* Now note on at C4 (60) */
+  osc_adapter_note_on(60, 100);
+
+  /* Expected: note=61, frac=0 (60 + 1.0 semitone = 61.0) */
+  uint16_t expected_pitch = (61 << 8) | 0;
+  ASSERT_EQ(expected_pitch, g_mock.last_noteon_pitch);
+
+  teardown_unit();
+}
+
+TEST(adapter_note_off_calls_osc) {
+  init_unit();
+  osc_adapter_note_off(60);
+  ASSERT_EQ(1, g_mock.noteoff_count);
+  teardown_unit();
+}
+
+TEST(adapter_not_initialized_guards) {
+  /* Without init, all adapter functions should be no-ops */
+  mock_reset();
+  /* Don't call init */
+  osc_adapter_note_on(60, 100);
+  osc_adapter_note_off(60);
+  osc_adapter_set_param(k_user_osc_param_shape, 512);
+  ASSERT_EQ(0, g_mock.noteon_count);
+  ASSERT_EQ(0, g_mock.noteoff_count);
+  ASSERT_EQ(0, g_mock.param_count);
+}
+
+/* ===========================================================================
+ * Tests: Wrapper note events
+ * ======================================================================== */
+
+TEST(wrapper_note_on_delegates) {
+  init_unit();
+  unit_note_on(72, 127);
+  ASSERT_EQ(1, g_mock.noteon_count);
+  /* pitch should encode note 72 */
+  ASSERT_EQ((uint16_t)(72 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(wrapper_note_off_delegates) {
+  init_unit();
+  unit_note_on(60, 100);
+  unit_note_off(60);
+  ASSERT_EQ(1, g_mock.noteoff_count);
+  teardown_unit();
+}
+
+TEST(wrapper_all_note_off) {
+  init_unit();
+  unit_note_on(72, 100);
+  g_mock.noteoff_count = 0;
+  unit_all_note_off();
+  ASSERT_EQ(1, g_mock.noteoff_count);
+  teardown_unit();
+}
+
+TEST(wrapper_gate_on_off) {
+  init_unit();
+  /* gate_on uses the stored note (default 60 from init) */
+  unit_gate_on(100);
+  ASSERT_EQ(1, g_mock.noteon_count);
+  unit_gate_off();
+  ASSERT_EQ(1, g_mock.noteoff_count);
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Pitch bend
+ * ======================================================================== */
+
+TEST(wrapper_pitch_bend_neutral) {
+  init_unit();
+  unit_note_on(60, 100);
+  g_mock.noteon_count = 0;
+
+  /* Neutral pitch bend = 0x2000 */
+  unit_pitch_bend(0x2000);
+
+  /* Re-trigger to see updated pitch (pitch bend updates the param struct) */
+  unit_note_on(60, 100);
+  ASSERT_EQ((uint16_t)(60 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(wrapper_pitch_bend_up) {
+  init_unit();
+
+  /* Full pitch bend up: 0x3FFF -> signed = 0x1FFF = 8191 */
+  /* 8191/8192 * 2 semitones ≈ 2.0 semitones */
+  unit_pitch_bend(0x3FFF);
+
+  unit_note_on(60, 100);
+  /* 60 + ~2.0 = ~62, frac ≈ 0 */
+  uint8_t note_part = (uint8_t)(g_mock.last_noteon_pitch >> 8);
+  ASSERT_TRUE(note_part == 61 || note_part == 62);
+  teardown_unit();
+}
+
+TEST(wrapper_pitch_bend_down) {
+  init_unit();
+
+  /* Full pitch bend down: 0x0000 -> signed = -8192 */
+  /* -8192/8192 * 2 = -2.0 semitones */
+  unit_pitch_bend(0x0000);
+
+  unit_note_on(60, 100);
+  /* 60 - 2.0 = 58.0 */
+  uint8_t note_part = (uint8_t)(g_mock.last_noteon_pitch >> 8);
+  ASSERT_EQ(58, note_part);
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Parameter mapping
+ * ======================================================================== */
+
+#if !defined(ELEMENTS_RESONATOR_MODES) && !defined(RINGS_RESONATOR) && !defined(CLOUDS_GRANULAR)
+
+TEST(wrapper_param_base_note) {
+  init_unit();
+
+  /* Base Note: id 0, stored locally, not forwarded to OSC_PARAM */
+  int before = g_mock.param_count;
+  unit_set_param_value(0, 69);   /* A4 */
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+
+  /* Verify gate_on uses the base note */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(69 << 8), g_mock.last_noteon_pitch);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_shape_scaling) {
+  init_unit();
+
+  /* Shape: drumlogue id 1, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(1, 100);  /* max */
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+
+  unit_set_param_value(1, 0);    /* min */
+  ASSERT_EQ(0, g_mock.last_param_value);
+
+  unit_set_param_value(1, 50);   /* mid */
+  /* (50 * 1023 + 50) / 100 = 512 (rounded) */
+  ASSERT_EQ(512, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_shiftshape_scaling) {
+  init_unit();
+
+  /* Shift-Shape: drumlogue id 2, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id1_bipolar) {
+  init_unit();
+
+  /* Param 1: drumlogue id 3, 0-100 -> OSC 0-200 (bipolar centered at 100) */
+  unit_set_param_value(3, 50);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(100, g_mock.last_param_value); /* 50 * 2 = 100 (center) */
+
+  unit_set_param_value(3, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+
+  unit_set_param_value(3, 100);
+  ASSERT_EQ(200, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id2_percent) {
+  init_unit();
+
+  /* Param 2: drumlogue id 4, 0-100 -> OSC 0-100 (direct) */
+  unit_set_param_value(4, 75);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id3_lfo_target) {
+  init_unit();
+
+  /* LFO Target: id 5 in Plaits layout -> osc id3 strings */
+  unit_set_param_value(5, 3);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_lfo1_shape) {
+  init_unit();
+
+  /* LFO1 Shape: id 6 -> custom OSC_PARAM index 11 */
+  unit_set_param_value(6, 2);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(2, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_lfo1_rate) {
+  init_unit();
+
+  /* LFO1 Rate: id 7 in Plaits layout -> stored in wrapper (not forwarded) */
+  int before = g_mock.param_count;
+  unit_set_param_value(7, 50);
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id4_rate) {
+  init_unit();
+
+  /* LFO2 Rate: id 8 in Plaits layout -> osc id4 */
+  unit_set_param_value(8, 42);
+  ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
+  ASSERT_EQ(42, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id5_depth) {
+  init_unit();
+
+  /* LFO2 Depth: id 9 in Plaits layout -> osc id5 */
+  unit_set_param_value(9, 80);
+  ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_id6_lfo2_target) {
+  init_unit();
+
+  /* LFO2 Target: id 10 in Plaits layout -> osc id6 strings */
+  unit_set_param_value(10, 5);
+  ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
+  ASSERT_EQ(5, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+TEST(wrapper_param_lfo2_shape) {
+  init_unit();
+
+  /* LFO2 Shape: id 11 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(11, 4);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+
+  teardown_unit();
+}
+
+#endif /* !ELEMENTS_RESONATOR_MODES && !RINGS_RESONATOR && !CLOUDS_GRANULAR */
+
+TEST(wrapper_param_out_of_range_ignored) {
+  init_unit();
+  int before = g_mock.param_count;
+#if defined(MUSSOLA_VOCAL)
+  unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
+#elif defined(CLOUDS_GRANULAR)
+  unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
+#elif defined(RINGS_RESONATOR)
+  unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
+#else
+  unit_set_param_value(13, 50);  /* id 13 -> default case, should return */
+#endif
+  ASSERT_EQ(before, g_mock.param_count);
+  unit_set_param_value(24, 50);  /* id >= MAX -> guard */
+  ASSERT_EQ(before, g_mock.param_count);
+  teardown_unit();
+}
+
+TEST(wrapper_get_param_value) {
+  init_unit();
+  unit_set_param_value(0, 42);
+  ASSERT_EQ(42, unit_get_param_value(0));
+  unit_set_param_value(3, 99);
+  ASSERT_EQ(99, unit_get_param_value(3));
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Elements parameter mapping (conditional)
+ * ======================================================================== */
+
+#if defined(ELEMENTS_RESONATOR_MODES)
+
+TEST(elements_param_base_note) {
+  init_unit();
+  /* Base Note: id 0, stored locally, not forwarded to OSC_PARAM */
+  int before = g_mock.param_count;
+  unit_set_param_value(0, 48);  /* C3 */
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+  /* Verify gate_on uses the base note */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(48 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(elements_param_position_scaling) {
+  init_unit();
+  /* Position: drumlogue id 1, 0-100 -> OSC 0-1023 (shape) */
+  unit_set_param_value(1, 100);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  unit_set_param_value(1, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_geometry_scaling) {
+  init_unit();
+  /* Geometry: drumlogue id 2, 0-100 -> OSC 0-1023 (shiftshape) */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_strength) {
+  init_unit();
+  /* Strength: drumlogue id 3, 0-100 -> id1 0-100 */
+  unit_set_param_value(3, 80);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_mallet) {
+  init_unit();
+  unit_set_param_value(4, 50);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_timbre) {
+  init_unit();
+  unit_set_param_value(5, 75);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_damping) {
+  init_unit();
+  unit_set_param_value(6, 25);
+  ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
+  ASSERT_EQ(25, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_brightness) {
+  init_unit();
+  unit_set_param_value(7, 60);
+  ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
+  ASSERT_EQ(60, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo_target) {
+  init_unit();
+  unit_set_param_value(8, 4);  /* Timbre */
+  ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo1_shape) {
+  init_unit();
+  /* LFO1 Shape: id 9 -> custom OSC index 11 */
+  unit_set_param_value(9, 3);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo1_rate) {
+  init_unit();
+  /* LFO1 Rate: id 10 -> stored in wrapper (not forwarded) */
+  int before = g_mock.param_count;
+  unit_set_param_value(10, 50);
+  ASSERT_EQ(before, g_mock.param_count); /* no OSC_PARAM call */
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_rate) {
+  init_unit();
+  /* LFO2 Rate: id 11 -> custom OSC index 8 */
+  unit_set_param_value(11, 42);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(42, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_depth) {
+  init_unit();
+  /* LFO2 Depth: id 12 -> custom OSC index 9 */
+  unit_set_param_value(12, 80);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_target) {
+  init_unit();
+  /* LFO2 Target: id 13 -> custom OSC index 10 */
+  unit_set_param_value(13, 3);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(elements_param_lfo2_shape) {
+  init_unit();
+  /* LFO2 Shape: id 14 -> custom OSC index 12 */
+  unit_set_param_value(14, 4);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* ELEMENTS_RESONATOR_MODES */
+
+/* ===========================================================================
+ * Tests: Rings parameter mapping (conditional)
+ * ======================================================================== */
+
+#if defined(RINGS_RESONATOR)
+
+TEST(rings_param_base_note) {
+  init_unit();
+  int before = g_mock.param_count;
+  unit_set_param_value(0, 48);
+  ASSERT_EQ(before, g_mock.param_count); /* not forwarded */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(48 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(rings_param_position_scaling) {
+  init_unit();
+  /* Position: id 1, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(1, 100);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  unit_set_param_value(1, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_structure_scaling) {
+  init_unit();
+  /* Structure: id 2, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_brightness) {
+  init_unit();
+  /* Brightness: id 3, 0-100 -> id1 percent */
+  unit_set_param_value(3, 75);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_damping) {
+  init_unit();
+  /* Damping: id 4, 0-100 -> id2 percent */
+  unit_set_param_value(4, 50);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_chord) {
+  init_unit();
+  /* Chord: id 5, 0-10 -> id3 */
+  unit_set_param_value(5, 7);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(7, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_model) {
+  init_unit();
+  /* Model: id 6 -> custom OSC_PARAM index 8 */
+  unit_set_param_value(6, 3);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_polyphony) {
+  init_unit();
+  /* Polyphony: id 7 -> custom OSC_PARAM index 9 */
+  unit_set_param_value(7, 4);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* RINGS_RESONATOR */
+
+/* ===========================================================================
+ * Tests: Clouds parameter mapping (conditional)
+ * ======================================================================== */
+
+#if defined(CLOUDS_GRANULAR)
+
+TEST(clouds_param_base_note) {
+  init_unit();
+  int before = g_mock.param_count;
+  unit_set_param_value(0, 48);
+  ASSERT_EQ(before, g_mock.param_count); /* not forwarded */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(48 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(clouds_param_position_scaling) {
+  init_unit();
+  /* Position: id 1, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(1, 100);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  unit_set_param_value(1, 0);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_size_scaling) {
+  init_unit();
+  /* Size: id 2, 0-100 -> OSC 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_density) {
+  init_unit();
+  /* Density: id 3, 0-100 -> id1 percent */
+  unit_set_param_value(3, 75);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_texture) {
+  init_unit();
+  /* Texture: id 4, 0-100 -> id2 percent */
+  unit_set_param_value(4, 50);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_pitch) {
+  init_unit();
+  /* Pitch: id 5, 0-48 centered at 24 -> id3 as signed int */
+  /* value=24 -> semitones=0 -> uint16_t(0) */
+  unit_set_param_value(5, 24);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(0, g_mock.last_param_value);
+  /* value=48 -> semitones=+24 -> uint16_t(24) */
+  unit_set_param_value(5, 48);
+  ASSERT_EQ(24, g_mock.last_param_value);
+  /* value=0 -> semitones=-24 -> uint16_t(0xFFE8) */
+  unit_set_param_value(5, 0);
+  ASSERT_EQ((uint16_t)(int16_t)(-24), g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_feedback) {
+  init_unit();
+  /* Feedback: id 6, 0-100 -> id4 percent */
+  unit_set_param_value(6, 80);
+  ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_drywet) {
+  init_unit();
+  /* Dry/Wet: id 7, 0-100 -> id5 percent */
+  unit_set_param_value(7, 100);
+  ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
+  ASSERT_EQ(100, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_reverb) {
+  init_unit();
+  /* Reverb: id 8, 0-100 -> id6 percent */
+  unit_set_param_value(8, 30);
+  ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
+  ASSERT_EQ(30, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_freeze) {
+  init_unit();
+  /* Freeze: id 9 -> custom OSC_PARAM index 8 */
+  unit_set_param_value(9, 1);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(1, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_mode) {
+  init_unit();
+  /* Mode: id 10 -> custom OSC_PARAM index 9 */
+  unit_set_param_value(10, 2);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(2, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_quality) {
+  init_unit();
+  /* Quality: id 11 -> custom OSC_PARAM index 10 */
+  unit_set_param_value(11, 3);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_sample_bank) {
+  init_unit();
+  /* SampleBank: id 12 -> custom OSC_PARAM index 11 */
+  unit_set_param_value(12, 5);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(5, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_sample_num) {
+  init_unit();
+  /* SampleNum: id 13 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(13, 3);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_smpl_start) {
+  init_unit();
+  /* SmplStart: id 14 -> custom OSC_PARAM index 13 */
+  unit_set_param_value(14, 250);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(250, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(clouds_param_smpl_end) {
+  init_unit();
+  /* SmplEnd: id 15 -> custom OSC_PARAM index 14 */
+  unit_set_param_value(15, 750);
+  ASSERT_EQ(14, g_mock.last_param_index);
+  ASSERT_EQ(750, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* CLOUDS_GRANULAR */
+
+/* ===========================================================================
+ * Tests: Mussola param mapping (MUSSOLA_VOCAL only)
+ * ======================================================================== */
+
+#if defined(MUSSOLA_VOCAL)
+
+TEST(mussola_param_base_note) {
+  init_unit();
+  unit_set_param_value(0, 48);
+  /* Base Note is stored in wrapper, not forwarded to OSC_PARAM */
+  teardown_unit();
+}
+
+TEST(mussola_param_phoneme_scaling) {
+  init_unit();
+  /* Phoneme: id 1 -> shape, 0-100 scaled to 0-1023 */
+  unit_set_param_value(1, 50);
+  ASSERT_EQ(k_user_osc_param_shape, g_mock.last_param_index);
+  /* 50*1023/100 + 50/100 = 511 + 0 = 512 (rounded) */
+  ASSERT_EQ(512, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_timbre_scaling) {
+  init_unit();
+  /* Timbre: id 2 -> shiftshape, 0-100 scaled to 0-1023 */
+  unit_set_param_value(2, 100);
+  ASSERT_EQ(k_user_osc_param_shiftshape, g_mock.last_param_index);
+  ASSERT_EQ(1023, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_harmonics) {
+  init_unit();
+  /* Harmonics: id 3 -> id1, 0-100 */
+  unit_set_param_value(3, 75);
+  ASSERT_EQ(k_user_osc_param_id1, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_morph) {
+  init_unit();
+  /* Morph: id 4 -> id2, 0-100 */
+  unit_set_param_value(4, 60);
+  ASSERT_EQ(k_user_osc_param_id2, g_mock.last_param_index);
+  ASSERT_EQ(60, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_speed) {
+  init_unit();
+  /* Speed: id 5 -> custom OSC_PARAM index 8 */
+  unit_set_param_value(5, 50);
+  ASSERT_EQ(8, g_mock.last_param_index);
+  ASSERT_EQ(50, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_prosody) {
+  init_unit();
+  /* Prosody: id 6 -> custom OSC_PARAM index 9 */
+  unit_set_param_value(6, 80);
+  ASSERT_EQ(9, g_mock.last_param_index);
+  ASSERT_EQ(80, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_decay) {
+  init_unit();
+  /* Decay: id 7 -> custom OSC_PARAM index 10 */
+  unit_set_param_value(7, 30);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(30, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_mix) {
+  init_unit();
+  /* Mix: id 8 -> custom OSC_PARAM index 11 */
+  unit_set_param_value(8, 100);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(100, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_model) {
+  init_unit();
+  /* Model: id 9 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(9, 2);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(2, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_gate_mode) {
+  init_unit();
+  /* Gate Mode: id 10 -> custom OSC_PARAM index 13 */
+  unit_set_param_value(10, 1);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(1, g_mock.last_param_value);
+  teardown_unit();
+}
+
+#endif /* MUSSOLA_VOCAL */
+
+/* ===========================================================================
+ * Tests: Shape LFO
+ * ======================================================================== */
+
+TEST(adapter_shape_lfo_conversion) {
+  init_unit();
+
+  osc_adapter_set_shape_lfo(0.5f);
+
+  /* Trigger a cycle to check shape_lfo in params */
+  float output[24];
+  osc_adapter_render(output, 24);
+
+  /* The Q31 value of shape_lfo should be ~0x40000000 for 0.5 */
+  /* We can't read the params struct directly (it's static),
+     but we can check that noteon captures the value */
+  osc_adapter_note_on(60, 100);
+  int32_t expected_q31 = (int32_t)(0.5f * (float)(1U << 31));
+  /* Allow some float rounding tolerance */
+  int32_t diff = g_mock.last_noteon_shape_lfo - expected_q31;
+  if (diff < 0) diff = -diff;
+  ASSERT_TRUE(diff < 256); /* within tiny Q31 margin */
+
+  teardown_unit();
+}
+
+TEST(wrapper_channel_pressure_to_shape_lfo) {
+  init_unit();
+
+  /* Channel pressure 127 -> shape LFO = 1.0 */
+  unit_channel_pressure(127);
+  osc_adapter_note_on(60, 100);
+  /* Q31 of 1.0 = ~0x7FFFFFFF, but float_to_q31 clips at 1.0 */
+  /* 127/127 = 1.0 -> shape_lfo Q31 should be near max */
+  ASSERT_TRUE(g_mock.last_noteon_shape_lfo > 0x70000000);
+
+  /* Channel pressure 0 -> shape LFO = 0.0 */
+  unit_channel_pressure(0);
+  osc_adapter_note_on(60, 100);
+  ASSERT_TRUE(g_mock.last_noteon_shape_lfo == 0);
+
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Audio rendering - Q31/float conversion
+ * ======================================================================== */
+
+TEST(render_q31_to_float_zero) {
+  init_unit();
+  g_mock.cycle_fill_value = 0; /* Q31 zero -> float 0.0 */
+
+  float output[24];
+  osc_adapter_render(output, 24);
+
+  for (int i = 0; i < 24; ++i) {
+    ASSERT_NEAR(0.0f, output[i], 1e-7f);
+  }
+  teardown_unit();
+}
+
+TEST(render_q31_to_float_positive) {
+  init_unit();
+  /* Q31: 0x40000000 = 0.5 * 2^31, so float = 0.5 * 2^31 / 2^31 = 0.5 */
+  g_mock.cycle_fill_value = 0x40000000;
+
+  float output[24];
+  osc_adapter_render(output, 24);
+
+  for (int i = 0; i < 24; ++i) {
+    ASSERT_NEAR(0.5f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+TEST(render_q31_to_float_negative) {
+  init_unit();
+  /* Q31: -0x40000000 = -0.5 * 2^31 -> float -0.5 */
+  g_mock.cycle_fill_value = -0x40000000;
+
+  float output[24];
+  osc_adapter_render(output, 24);
+
+  for (int i = 0; i < 24; ++i) {
+    ASSERT_NEAR(-0.5f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Buffered rendering across block boundaries
+ *
+ * Use BLOCK (= OSC_NATIVE_BLOCK_SIZE) to compute expected block counts.
+ * Plaits: BLOCK=24, Elements: BLOCK=32.
+ * ======================================================================== */
+
+#define BLOCK OSC_NATIVE_BLOCK_SIZE
+
+TEST(render_exact_block_size) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000; /* 0.25 */
+
+  float output[BLOCK];
+  osc_adapter_render(output, BLOCK);
+
+  ASSERT_EQ(1, g_mock.cycle_count); /* exactly one OSC_CYCLE call */
+  for (int i = 0; i < BLOCK; ++i) {
+    ASSERT_NEAR(0.25f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+TEST(render_less_than_block_size) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  float output[10];
+  osc_adapter_render(output, 10);
+
+  ASSERT_EQ(1, g_mock.cycle_count); /* one block rendered, 10 consumed */
+  for (int i = 0; i < 10; ++i) {
+    ASSERT_NEAR(0.25f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+TEST(render_more_than_block_size) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  float output[BLOCK * 2];
+  osc_adapter_render(output, BLOCK * 2);
+
+  ASSERT_EQ(2, g_mock.cycle_count); /* two OSC_CYCLE calls */
+  for (int i = 0; i < BLOCK * 2; ++i) {
+    ASSERT_NEAR(0.25f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+TEST(render_non_multiple_of_block_size) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  float output[BLOCK + 1]; /* 1 full block + 1 sample from next */
+  osc_adapter_render(output, BLOCK + 1);
+
+  ASSERT_EQ(2, g_mock.cycle_count);
+  for (int i = 0; i < BLOCK + 1; ++i) {
+    ASSERT_NEAR(0.25f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+TEST(render_single_sample) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  float output[1];
+  osc_adapter_render(output, 1);
+
+  ASSERT_EQ(1, g_mock.cycle_count);
+  ASSERT_NEAR(0.25f, output[0], 1e-4f);
+  teardown_unit();
+}
+
+TEST(render_accumulates_across_calls) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  /* First call: 10 samples. Renders 1 block, consumes 10 -> (BLOCK-10) buffered */
+  float output[10];
+  osc_adapter_render(output, 10);
+  ASSERT_EQ(1, g_mock.cycle_count);
+
+  /* Second call: 10 samples. Still buffered -> consumes 10 */
+  osc_adapter_render(output, 10);
+  ASSERT_EQ(1, g_mock.cycle_count); /* no new block needed */
+
+  /* Keep consuming until we need a new block */
+  int expected_blocks = 1;
+  int consumed = 20;
+  while (consumed + 10 <= BLOCK) {
+    osc_adapter_render(output, 10);
+    consumed += 10;
+    ASSERT_EQ(expected_blocks, g_mock.cycle_count);
+  }
+  /* Next call crosses block boundary -> new block rendered */
+  osc_adapter_render(output, 10);
+  expected_blocks = 2;
+  ASSERT_EQ(expected_blocks, g_mock.cycle_count);
+
+  teardown_unit();
+}
+
+TEST(render_large_request_96_frames) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x20000000;
+
+  float output[96];
+  osc_adapter_render(output, 96);
+
+  int expected_blocks = (96 + BLOCK - 1) / BLOCK;
+  ASSERT_EQ(expected_blocks, g_mock.cycle_count);
+  for (int i = 0; i < 96; ++i) {
+    ASSERT_NEAR(0.25f, output[i], 1e-4f);
+  }
+  teardown_unit();
+}
+
+#undef BLOCK
+
+/* ===========================================================================
+ * Tests: unit_render (stereo interleaving)
+ * ======================================================================== */
+
+TEST(unit_render_stereo_interleave) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x40000000; /* 0.5 */
+
+  /* unit_render outputs stereo interleaved: L R L R ... */
+  float stereo_out[48 * 2]; /* 48 frames * 2 channels */
+  memset(stereo_out, 0, sizeof(stereo_out));
+
+  unit_render(nullptr, stereo_out, 48);
+
+#if defined(MUSSOLA_VOCAL)
+  /* Mussola stereo path: mock returns L=mono*0.6, R=mono*0.4 */
+  for (int i = 0; i < 48; ++i) {
+    ASSERT_NEAR(0.3f, stereo_out[i * 2],     1e-4f); /* L = 0.5 * 0.6 */
+    ASSERT_NEAR(0.2f, stereo_out[i * 2 + 1], 1e-4f); /* R = 0.5 * 0.4 */
+  }
+#else
+  for (int i = 0; i < 48; ++i) {
+    ASSERT_NEAR(0.5f, stereo_out[i * 2],     1e-4f); /* L */
+    ASSERT_NEAR(0.5f, stereo_out[i * 2 + 1], 1e-4f); /* R (same as L) */
+  }
+#endif
+  teardown_unit();
+}
+
+TEST(unit_render_suspended_outputs_silence) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x40000000;
+
+  unit_suspend();
+
+  float stereo_out[24 * 2];
+  /* Fill with non-zero to verify it gets cleared */
+  for (int i = 0; i < 48; ++i) stereo_out[i] = 1.0f;
+
+  unit_render(nullptr, stereo_out, 24);
+
+  for (int i = 0; i < 48; ++i) {
+    ASSERT_NEAR(0.0f, stereo_out[i], 1e-7f);
+  }
+  ASSERT_EQ(0, g_mock.cycle_count); /* OSC_CYCLE should NOT be called */
+  teardown_unit();
+}
+
+TEST(unit_render_resume_after_suspend) {
+  init_unit();
+  g_mock.cycle_fill_value = 0x40000000;
+
+  unit_suspend();
+  unit_resume();
+
+  float stereo_out[24 * 2];
+  unit_render(nullptr, stereo_out, 24);
+
+  /* Should produce audio again after resume */
+  ASSERT_TRUE(g_mock.cycle_count > 0);
+#if defined(MUSSOLA_VOCAL)
+  ASSERT_NEAR(0.3f, stereo_out[0], 1e-4f); /* L = 0.5 * 0.6 */
+#else
+  ASSERT_NEAR(0.5f, stereo_out[0], 1e-4f);
+#endif
+  teardown_unit();
+}
+
+TEST(unit_render_not_initialized) {
+  /* Without init, unit_render should output silence */
+  mock_reset();
+  unit_teardown(); /* ensure not initialized */
+
+  float stereo_out[24 * 2];
+  for (int i = 0; i < 48; ++i) stereo_out[i] = 1.0f;
+
+  unit_render(nullptr, stereo_out, 24);
+
+  for (int i = 0; i < 48; ++i) {
+    ASSERT_NEAR(0.0f, stereo_out[i], 1e-7f);
+  }
+}
+
+/* ===========================================================================
+ * Tests: Lifecycle
+ * ======================================================================== */
+
+TEST(unit_teardown_prevents_further_calls) {
+  init_unit();
+  unit_teardown();
+
+  /* After teardown, note_on should be a no-op */
+  g_mock.noteon_count = 0;
+  unit_note_on(60, 100);
+  ASSERT_EQ(0, g_mock.noteon_count);
+}
+
+TEST(unit_reset_sends_note_off) {
+  init_unit();
+  unit_note_on(60, 100);
+  g_mock.noteoff_count = 0;
+  unit_reset();
+  ASSERT_EQ(1, g_mock.noteoff_count);
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Tempo
+ * ======================================================================== */
+
+TEST(wrapper_set_tempo_delegates) {
+  init_unit();
+  /* Just verify it doesn't crash; tempo is stored but not actively used */
+  unit_set_tempo(12000);
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Presets (stubs)
+ * ======================================================================== */
+
+TEST(preset_stubs) {
+  init_unit();
+  ASSERT_EQ(0, unit_get_preset_index());
+  ASSERT_TRUE(unit_get_preset_name(0) == nullptr);
+  unit_load_preset(0); /* no-op, should not crash */
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Param string/bmp (stubs)
+ * ======================================================================== */
+
+TEST(param_str_value_base_note_null) {
+  init_unit();
+  /* Base Note (id 0) has no string representation */
+  ASSERT_TRUE(unit_get_param_str_value(0, 60) == nullptr);
+  teardown_unit();
+}
+
+TEST(param_str_value_lfo_shape_strings) {
+  init_unit();
+  /* LFO shape strings should be returned for valid values */
+#if defined(CLOUDS_GRANULAR)
+  /* Clouds: Mode at id 10, Quality at id 11 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 0), "Granular"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 1), "Stretch"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 2), "Delay"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 3), "Spectral"));
+  ASSERT_TRUE(unit_get_param_str_value(10, 4) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 0), "StHi"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 1), "MoHi"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 2), "StLo"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 3), "MoLo"));
+  ASSERT_TRUE(unit_get_param_str_value(11, 4) == nullptr); /* out of range */
+  /* Non-string params return nullptr */
+  ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
+#elif defined(RINGS_RESONATOR)
+  /* Rings: Chord at id 5, Model at id 6, Polyphony at id 7 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Oct"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 10), "Maj"));
+  ASSERT_TRUE(unit_get_param_str_value(5, 11) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 0), "Modal"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "FM"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 5), "Str+Verb"));
+  ASSERT_TRUE(unit_get_param_str_value(6, 6) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(7, 1), "1"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(7, 4), "4"));
+  ASSERT_TRUE(unit_get_param_str_value(7, 0) == nullptr); /* out of range (min is 1) */
+  ASSERT_TRUE(unit_get_param_str_value(7, 5) == nullptr); /* out of range */
+#elif defined(MUSSOLA_VOCAL)
+  /* Mussola: Model at id 9, Gate Mode at id 10 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Naive"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "SAM"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 2), "LPC"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 3), "Blend"));
+  ASSERT_TRUE(unit_get_param_str_value(9, 4) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 0), "Trigger"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 1), "Sustain"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 2), "Contin."));
+  ASSERT_TRUE(unit_get_param_str_value(10, 3) == nullptr); /* out of range */
+  /* Non-string params return nullptr */
+  ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  /* Elements: LFO1 Shape at id 9, LFO2 Shape at id 14 */
+  ASSERT_TRUE(unit_get_param_str_value(9, 0) != nullptr);
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Cosine"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "Triangle"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 4), "Fat Sine"));
+  ASSERT_TRUE(unit_get_param_str_value(9, 5) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(14, 2), "Ramp Up"));
+  /* LFO Target strings */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 0), "Position"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 4), "Timbre"));
+  /* LFO2 Target strings */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 0), "Position"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 6), "Bright."));
+#else
+  /* Plaits: LFO1 Shape at id 6, LFO2 Shape at id 11 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 0), "Cosine"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 1), "Triangle"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "Ramp Down"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 4), "Fat Sine"));
+  ASSERT_TRUE(unit_get_param_str_value(6, 5) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 2), "Ramp Up"));
+  /* LFO Target strings */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Shape"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 4), "Pitch"));
+  /* LFO2 Target strings (same list) */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 0), "Shape"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 7), "LFO2 Dep"));
+#endif
+  teardown_unit();
+}
+
+TEST(param_bmp_value_returns_null) {
+  init_unit();
+  ASSERT_TRUE(unit_get_param_bmp_value(0, 50) == nullptr);
+  teardown_unit();
+}
+
+/* ===========================================================================
+ * Tests: Adapter render with null/uninitialized
+ * ======================================================================== */
+
+TEST(adapter_render_null_output_no_crash) {
+  init_unit();
+  /* Should not crash with null output */
+  osc_adapter_render(nullptr, 24);
+  teardown_unit();
+}
+
+TEST(adapter_render_uninitialized_outputs_silence) {
+  mock_reset();
+  /* Don't init adapter */
+  float output[24];
+  for (int i = 0; i < 24; ++i) output[i] = 1.0f;
+  osc_adapter_render(output, 24);
+  for (int i = 0; i < 24; ++i) {
+    ASSERT_NEAR(0.0f, output[i], 1e-7f);
+  }
+}
+
+/* ===========================================================================
+ * Main: Run all tests
+ * ======================================================================== */
+
+int main(void) {
+  printf("\n=== Drumlogue Callback Unit Tests ===\n\n");
+
+  printf("Unit Header:\n");
+  run_test_unit_header_size();
+  run_test_unit_header_target();
+  run_test_unit_header_api();
+  run_test_unit_header_num_params();
+  run_test_unit_header_param_names();
+  run_test_unit_header_param_types();
+  run_test_unit_header_unused_params_are_none();
+
+  printf("\nunit_init Validation:\n");
+  run_test_unit_init_null_desc();
+  run_test_unit_init_bad_target();
+  run_test_unit_init_bad_api_version();
+  run_test_unit_init_bad_samplerate();
+  run_test_unit_init_success();
+
+  printf("\nAdapter Note Events:\n");
+  run_test_adapter_note_on_pitch_encoding();
+  run_test_adapter_note_on_with_pitch_bend();
+  run_test_adapter_note_off_calls_osc();
+  run_test_adapter_not_initialized_guards();
+
+  printf("\nWrapper Note Events:\n");
+  run_test_wrapper_note_on_delegates();
+  run_test_wrapper_note_off_delegates();
+  run_test_wrapper_all_note_off();
+  run_test_wrapper_gate_on_off();
+
+  printf("\nPitch Bend:\n");
+  run_test_wrapper_pitch_bend_neutral();
+  run_test_wrapper_pitch_bend_up();
+  run_test_wrapper_pitch_bend_down();
+
+  printf("\nParameter Mapping:\n");
+#if defined(MUSSOLA_VOCAL)
+  run_test_mussola_param_base_note();
+  run_test_mussola_param_phoneme_scaling();
+  run_test_mussola_param_timbre_scaling();
+  run_test_mussola_param_harmonics();
+  run_test_mussola_param_morph();
+  run_test_mussola_param_speed();
+  run_test_mussola_param_prosody();
+  run_test_mussola_param_decay();
+  run_test_mussola_param_mix();
+  run_test_mussola_param_model();
+  run_test_mussola_param_gate_mode();
+#elif defined(CLOUDS_GRANULAR)
+  run_test_clouds_param_base_note();
+  run_test_clouds_param_position_scaling();
+  run_test_clouds_param_size_scaling();
+  run_test_clouds_param_density();
+  run_test_clouds_param_texture();
+  run_test_clouds_param_pitch();
+  run_test_clouds_param_feedback();
+  run_test_clouds_param_drywet();
+  run_test_clouds_param_reverb();
+  run_test_clouds_param_freeze();
+  run_test_clouds_param_mode();
+  run_test_clouds_param_quality();
+  run_test_clouds_param_sample_bank();
+  run_test_clouds_param_sample_num();
+  run_test_clouds_param_smpl_start();
+  run_test_clouds_param_smpl_end();
+#elif defined(RINGS_RESONATOR)
+  run_test_rings_param_base_note();
+  run_test_rings_param_position_scaling();
+  run_test_rings_param_structure_scaling();
+  run_test_rings_param_brightness();
+  run_test_rings_param_damping();
+  run_test_rings_param_chord();
+  run_test_rings_param_model();
+  run_test_rings_param_polyphony();
+#elif defined(ELEMENTS_RESONATOR_MODES)
+  run_test_elements_param_base_note();
+  run_test_elements_param_position_scaling();
+  run_test_elements_param_geometry_scaling();
+  run_test_elements_param_strength();
+  run_test_elements_param_mallet();
+  run_test_elements_param_timbre();
+  run_test_elements_param_damping();
+  run_test_elements_param_brightness();
+  run_test_elements_param_lfo_target();
+  run_test_elements_param_lfo1_shape();
+  run_test_elements_param_lfo1_rate();
+  run_test_elements_param_lfo2_rate();
+  run_test_elements_param_lfo2_depth();
+  run_test_elements_param_lfo2_target();
+  run_test_elements_param_lfo2_shape();
+#else
+  run_test_wrapper_param_base_note();
+  run_test_wrapper_param_shape_scaling();
+  run_test_wrapper_param_shiftshape_scaling();
+  run_test_wrapper_param_id1_bipolar();
+  run_test_wrapper_param_id2_percent();
+  run_test_wrapper_param_id3_lfo_target();
+  run_test_wrapper_param_lfo1_shape();
+  run_test_wrapper_param_lfo1_rate();
+  run_test_wrapper_param_id4_rate();
+  run_test_wrapper_param_id5_depth();
+  run_test_wrapper_param_id6_lfo2_target();
+  run_test_wrapper_param_lfo2_shape();
+#endif
+  run_test_wrapper_param_out_of_range_ignored();
+  run_test_wrapper_get_param_value();
+
+  printf("\nShape LFO:\n");
+  run_test_adapter_shape_lfo_conversion();
+  run_test_wrapper_channel_pressure_to_shape_lfo();
+
+  printf("\nQ31/Float Conversion:\n");
+  run_test_render_q31_to_float_zero();
+  run_test_render_q31_to_float_positive();
+  run_test_render_q31_to_float_negative();
+
+  printf("\nBuffered Rendering:\n");
+  run_test_render_exact_block_size();
+  run_test_render_less_than_block_size();
+  run_test_render_more_than_block_size();
+  run_test_render_non_multiple_of_block_size();
+  run_test_render_single_sample();
+  run_test_render_accumulates_across_calls();
+  run_test_render_large_request_96_frames();
+
+  printf("\nStereo Rendering (unit_render):\n");
+  run_test_unit_render_stereo_interleave();
+  run_test_unit_render_suspended_outputs_silence();
+  run_test_unit_render_resume_after_suspend();
+  run_test_unit_render_not_initialized();
+
+  printf("\nLifecycle:\n");
+  run_test_unit_teardown_prevents_further_calls();
+  run_test_unit_reset_sends_note_off();
+
+  printf("\nTempo:\n");
+  run_test_wrapper_set_tempo_delegates();
+
+  printf("\nPresets (stubs):\n");
+  run_test_preset_stubs();
+
+  printf("\nParam Display:\n");
+  run_test_param_str_value_base_note_null();
+  run_test_param_str_value_lfo_shape_strings();
+  run_test_param_bmp_value_returns_null();
+
+  printf("\nAdapter Edge Cases:\n");
+  run_test_adapter_render_null_output_no_crash();
+  run_test_adapter_render_uninitialized_outputs_silence();
+
+  printf("\n=== Results: %d/%d passed",
+         g_tests_passed, g_tests_run);
+  if (g_tests_failed > 0)
+    printf(", %d FAILED", g_tests_failed);
+  printf(" ===\n\n");
+
+  return g_tests_failed > 0 ? 1 : 0;
+}

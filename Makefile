@@ -26,7 +26,9 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=minilogue-xd VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
-	@PLATFORM=nutekt-digital VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+	@PLATFORM=nts-1 VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
+	@rm -fR .dep ./build
+	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ $(MAKECMDGOALS)
 
@@ -35,7 +37,93 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-mussola bench
+
+CXX = g++
+COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
+COMMON_TEST_SRC = drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc header.c
+# Host-side unit tests (no ARM toolchain required)
+# Usage: make test [BLOCK_SIZE=24]
+BLOCK_SIZE ?= 24
+test:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
+# Sound production test: links REAL Plaits VirtualAnalogEngine
+# Verifies end-to-end audio production through the full wrapper chain
+# Usage: make test-sound
+test-sound:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DBLOCKSIZE=$(BLOCK_SIZE) -DOSC_VA \
+	    -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Ieurorack \
+	    test_sound_production.cc $(COMMON_TEST_SRC) \
+	    macro-oscillator2.cc \
+	    eurorack/plaits/dsp/engine/virtual_analog_engine.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    -o test_sound_production -lm
+	./test_sound_production
+
+
+# Elements callback tests: same tests compiled with Elements defines
+# Usage: make test-elements
+test-elements:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=32 \
+	    -DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2 \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
+# Rings callback tests: same tests compiled with Rings defines
+# Usage: make test-rings
+test-rings:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) \
+	    -DRINGS_RESONATOR \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks_rings -lm
+	./test_drumlogue_callbacks_rings
+
+# Clouds callback tests: same tests compiled with Clouds defines
+# Usage: make test-clouds
+test-clouds:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=32 \
+	    -DCLOUDS_GRANULAR \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks -lm
+	./test_drumlogue_callbacks
+
+# Clouds sample playback logic tests (standalone, no SDK dependencies)
+# Usage: make test-clouds-sample
+test-clouds-sample:
+	$(CXX) -std=c++11 -Wall -Wextra \
+	    test_clouds_sample_playback.cc \
+	    -o test_clouds_sample_playback -lm
+	./test_clouds_sample_playback
+
+# Mussola callback tests: same tests compiled with Mussola defines
+# Usage: make test-mussola
+test-mussola:
+	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=24 \
+	    -DMUSSOLA_VOCAL \
+	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
+	    -o test_drumlogue_callbacks_mussola -lm
+	./test_drumlogue_callbacks_mussola
+
+# Run all tests
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-mussola test-sound
+
+# Benchmark: measure host-side render throughput for VirtualAnalog engine
+# Reports frames/sec, us/frame, and real-time ratio
+# Usage: make bench
+bench:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DBLOCKSIZE=$(BLOCK_SIZE) -DOSC_VA \
+	    -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) -Ieurorack \
+	    bench_render.cc $(COMMON_TEST_SRC) \
+	    macro-oscillator2.cc \
+	    eurorack/plaits/dsp/engine/virtual_analog_engine.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    -o bench_render -lm
+	./bench_render
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
@@ -67,6 +155,7 @@ package_nutekt-digital:
 	@mkdir ${NUTEKT_DIGITAL_PACKAGE}
 	@cp -a *.ntkdigunit ${NUTEKT_DIGITAL_PACKAGE}/
 	@cp -a credits.txt ${NUTEKT_DIGITAL_PACKAGE}/
+	@zip -rq9m ${NUTEKT_DIGITAL_PACKAGE}.zip ${NUTEKT_DIGITAL_PACKAGE}/
 
 package_drumlogue:
 	@echo Packaging to ./${DRUMLOGUE_PACKAGE}.zip
@@ -76,4 +165,3 @@ package_drumlogue:
 	@cp -a *.drmlgunit ${DRUMLOGUE_PACKAGE}/
 	@cp -a credits.txt ${DRUMLOGUE_PACKAGE}/
 	@zip -rq9m ${DRUMLOGUE_PACKAGE}.zip ${DRUMLOGUE_PACKAGE}/
-	@zip -rq9m ${NUTEKT_DIGITAL_PACKAGE}.zip ${NUTEKT_DIGITAL_PACKAGE}/
