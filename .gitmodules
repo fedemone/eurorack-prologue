@@ -3,4 +3,4 @@
 	url = https://github.com/peterall/eurorack.git
 [submodule "logue-sdk"]
 	path = logue-sdk
-	url = https://github.com/korginc/logue-sdk.git
+	url = https://github.com/fedemone/logue-sdk.git

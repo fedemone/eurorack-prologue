@@ -283,7 +283,7 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 2 | LPC | Linear Predictive Coding — natural-sounding speech fragments |
 | 3 | Blend | Crossfade between all three models |
 
-**Parameters (16):**
+**Parameters (19):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -303,12 +303,44 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 13 | Spread | Stereo spread of unison voices (0-100%) |
 | 14 | Gender | Formant shift — bass (0) to soprano (100), neutral at 50 |
 | 15 | Attack | Envelope attack time (0-100%) |
+| 16 | Style | Vocal style (0-4, see table below) |
+| 17 | Key Mode | Phoneme selection mode (0-5, see table below) |
+| 18 | Gliss | Glissando time for pitch and phoneme passage (0-100%) |
+
+**The 5 vocal styles (Style):**
+
+| # | Style | Character |
+|---|-------|-----------|
+| 0 | Male | Dark formants, subtle vibrato |
+| 1 | Female | Raised formants, medium vibrato |
+| 2 | Child | High formants, +1 octave, fast vibrato |
+| 3 | Robot | Pitch quantized to semitones, no vibrato, defaults to the SAM model when Model=Blend |
+| 4 | Alien | Slow deep pitch wobble + slow formant sweep |
+
+The Style formant character is added on top of the Gender parameter.
+
+**The 6 key modes (Key Mode):**
+
+| # | Mode | Behavior |
+|---|------|----------|
+| 0 | Normal | Phoneme knob selects the phoneme (previous behavior) |
+| 1 | Syllable | Phoneme knob selects one of 8 simple syllables (Ka Te Mi Ko Tu La No Su) — each note plays a consonant→vowel transition |
+| 2 | KeyVow A | Each key is assigned one of the 5 vowels (A E I O U), chromatic assignment |
+| 3 | KeyVow B | As A but transposed assignment (different vowel on the same key) |
+| 4 | KeySyl C | Each key is assigned one of the 8 syllables, chromatic assignment |
+| 5 | KeySyl D | As C but transposed assignment |
+
+**Glissando (Gliss):** smooths the passage between phonemes (and pitch)
+with a glide time from instant (0%) to about half a second (100%). In the
+Syllable/KeySyl modes it also stretches the consonant→vowel transition.
 
 **Sound design tips:**
 - Sweep Phoneme slowly for vowel animation ("aah" to "eee" to "ooh")
 - Model 1 (SAM) at low Phoneme values produces classic robot voice
 - Voices=4 with Detune=30-50 and Spread=80 creates a wide stereo choir
 - Gender shifts the formant spectrum — low values = bass voice, high = soprano
+- Style=Robot + Key Mode=KeyVow A turns a melody line into robotic vowel speech
+- Key Mode=KeySyl C + Gliss=40 gives chant-like syllabic singing across the keyboard
 
 Base Note
 ----

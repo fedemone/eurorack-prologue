@@ -79,6 +79,14 @@
  *    id 8:  Mix         (0-100%)     -> custom OSC_PARAM index 11
  *    id 9:  Model       (strings)    -> custom OSC_PARAM index 12
  *    id 10: Gate Mode   (strings)    -> custom OSC_PARAM index 13
+ *    id 11: Voices      (strings)    -> custom OSC_PARAM index 14
+ *    id 12: Detune      (0-100%)     -> custom OSC_PARAM index 15
+ *    id 13: Spread      (0-100%)     -> custom OSC_PARAM index 16
+ *    id 14: Gender      (0-100%)     -> custom OSC_PARAM index 17
+ *    id 15: Attack      (0-100%)     -> custom OSC_PARAM index 18
+ *    id 16: Style       (strings)    -> custom OSC_PARAM index 19
+ *    id 17: Key Mode    (strings)    -> custom OSC_PARAM index 20
+ *    id 18: Gliss       (0-100%)     -> custom OSC_PARAM index 21
  *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
@@ -185,11 +193,12 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Mussola vocal synth (mussola.cc)
      *
-     * 16 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
+     * 19 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
      *            Speed, Prosody, Decay, Mix, Model, Gate Mode,
-     *            Voices, Detune, Spread, Gender, Attack
+     *            Voices, Detune, Spread, Gender, Attack,
+     *            Style, Key Mode, Gliss
      * ================================================================ */
-    .num_params = 16,
+    .num_params = 19,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note) */
@@ -231,10 +240,15 @@ const __unit_header unit_header_t unit_header = {
         /* id 15: Attack (envelope attack time) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Attack"}},
 
+        // Page 5
+        /* id 16: Style (vocal style: Male/Female/Child/Robot/Alien) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Style"}},
+        /* id 17: Key Mode (Normal / Syllable / 4 key-assign variants) */
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Key Mode"}},
+        /* id 18: Gliss (glissando time for pitch and phoneme passage) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Gliss"}},
+
         // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

@@ -169,6 +169,7 @@ static inline void clear_output(float *out, uint32_t frames) {
  * Copy mono buffer to interleaved stereo (L=R).
  * NEON path uses vst2q_f32 to interleave 4 samples at a time.
  */
+#if !defined(MUSSOLA_VOCAL)
 static void mono_to_stereo(const float *mono, float *stereo, uint32_t count) {
 #ifdef __ARM_NEON
   uint32_t i = 0;
@@ -190,6 +191,7 @@ static void mono_to_stereo(const float *mono, float *stereo, uint32_t count) {
   }
 #endif
 }
+#endif /* !MUSSOLA_VOCAL */
 
 __unit_callback
 void unit_render(const float *in, float *out, uint32_t frames) {
@@ -428,6 +430,9 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     k_mussola_param_spread    = 16,
     k_mussola_param_gender    = 17,
     k_mussola_param_attack    = 18,
+    k_mussola_param_style     = 19,
+    k_mussola_param_key_mode  = 20,
+    k_mussola_param_gliss     = 21,
   };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
@@ -446,6 +451,9 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * id 13: Spread      -> k_mussola_param_spread (0-100)
    * id 14: Gender      -> k_mussola_param_gender (0-100)
    * id 15: Attack      -> k_mussola_param_attack (0-100)
+   * id 16: Style       -> k_mussola_param_style (0-4)
+   * id 17: Key Mode    -> k_mussola_param_key_mode (0-5)
+   * id 18: Gliss       -> k_mussola_param_gliss (0-100)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -467,7 +475,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    /* Cases 5-15 all map to custom OSC_PARAM index = drumlogue_id + 3 */
+    /* Cases 5-18 all map to custom OSC_PARAM index = drumlogue_id + 3 */
     case 5:  /* Speed */
     case 6:  /* Prosody */
     case 7:  /* Decay */
@@ -479,6 +487,9 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     case 13: /* Spread */
     case 14: /* Gender */
     case 15: /* Attack */
+    case 16: /* Style */
+    case 17: /* Key Mode */
+    case 18: /* Gliss */
       osc_id    = (user_osc_param_id_t)(id + 3);
       osc_value = (uint16_t)value;
       break;
@@ -745,6 +756,16 @@ static const char * const s_mussola_voices_names[] = {
 };
 #define NUM_MUSSOLA_VOICES 4
 
+static const char * const s_mussola_style_names[] = {
+  "Male", "Female", "Child", "Robot", "Alien"
+};
+#define NUM_MUSSOLA_STYLES 5
+
+static const char * const s_mussola_keymode_names[] = {
+  "Normal", "Syllable", "KeyVow A", "KeyVow B", "KeySyl C", "KeySyl D"
+};
+#define NUM_MUSSOLA_KEYMODES 6
+
 #elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
 static const char * const s_clouds_mode_names[] = {
@@ -813,6 +834,14 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 11: /* Voices */
       if (value >= 1 && value <= NUM_MUSSOLA_VOICES)
         return s_mussola_voices_names[value - 1];
+      break;
+    case 16: /* Style */
+      if (value >= 0 && value < NUM_MUSSOLA_STYLES)
+        return s_mussola_style_names[value];
+      break;
+    case 17: /* Key Mode */
+      if (value >= 0 && value < NUM_MUSSOLA_KEYMODES)
+        return s_mussola_keymode_names[value];
       break;
   }
 #elif defined(CLOUDS_GRANULAR)

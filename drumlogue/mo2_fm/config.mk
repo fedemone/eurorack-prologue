@@ -50,6 +50,9 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/units.cc
 UINCDIR  = $(PROJROOT)/drumlogue
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
 # Libraries

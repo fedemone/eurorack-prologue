@@ -235,7 +235,7 @@ TEST(unit_header_api) {
 
 TEST(unit_header_num_params) {
 #if defined(MUSSOLA_VOCAL)
-  ASSERT_EQ(16U, unit_header.num_params);
+  ASSERT_EQ(19U, unit_header.num_params);
 #elif defined(CLOUDS_GRANULAR)
   ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
@@ -403,7 +403,7 @@ TEST(unit_header_param_types) {
 
 TEST(unit_header_unused_params_are_none) {
 #if defined(MUSSOLA_VOCAL)
-  for (int i = 16; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 19; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(CLOUDS_GRANULAR)
@@ -774,7 +774,7 @@ TEST(wrapper_param_out_of_range_ignored) {
   init_unit();
   int before = g_mock.param_count;
 #if defined(MUSSOLA_VOCAL)
-  unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
+  unit_set_param_value(19, 50);  /* id 19 -> default case, should return */
 #elif defined(CLOUDS_GRANULAR)
   unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
@@ -1291,6 +1291,33 @@ TEST(mussola_param_gate_mode) {
   teardown_unit();
 }
 
+TEST(mussola_param_style) {
+  init_unit();
+  /* Style: id 16 -> custom OSC_PARAM index 19 */
+  unit_set_param_value(16, 4);
+  ASSERT_EQ(19, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_key_mode) {
+  init_unit();
+  /* Key Mode: id 17 -> custom OSC_PARAM index 20 */
+  unit_set_param_value(17, 5);
+  ASSERT_EQ(20, g_mock.last_param_index);
+  ASSERT_EQ(5, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(mussola_param_gliss) {
+  init_unit();
+  /* Gliss: id 18 -> custom OSC_PARAM index 21 */
+  unit_set_param_value(18, 75);
+  ASSERT_EQ(21, g_mock.last_param_index);
+  ASSERT_EQ(75, g_mock.last_param_value);
+  teardown_unit();
+}
+
 #endif /* MUSSOLA_VOCAL */
 
 /* ===========================================================================
@@ -1686,6 +1713,21 @@ TEST(param_str_value_lfo_shape_strings) {
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 1), "Sustain"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 2), "Contin."));
   ASSERT_TRUE(unit_get_param_str_value(10, 3) == nullptr); /* out of range */
+  /* Style at id 16 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 0), "Male"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 1), "Female"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 2), "Child"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 3), "Robot"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 4), "Alien"));
+  ASSERT_TRUE(unit_get_param_str_value(16, 5) == nullptr); /* out of range */
+  /* Key Mode at id 17 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 0), "Normal"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 1), "Syllable"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 2), "KeyVow A"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 3), "KeyVow B"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 4), "KeySyl C"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 5), "KeySyl D"));
+  ASSERT_TRUE(unit_get_param_str_value(17, 6) == nullptr); /* out of range */
   /* Non-string params return nullptr */
   ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -1801,6 +1843,9 @@ int main(void) {
   run_test_mussola_param_mix();
   run_test_mussola_param_model();
   run_test_mussola_param_gate_mode();
+  run_test_mussola_param_style();
+  run_test_mussola_param_key_mode();
+  run_test_mussola_param_gliss();
 #elif defined(CLOUDS_GRANULAR)
   run_test_clouds_param_base_note();
   run_test_clouds_param_position_scaling();

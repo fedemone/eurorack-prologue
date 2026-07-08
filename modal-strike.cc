@@ -272,9 +272,13 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
   float strike_meta = patch_.exciter_strike_meta;
 #ifdef ELEMENTS_FULL
+  /* The sample-player exciter models are not present in this eurorack
+   * fork (removed from the ExciterModel enum), so the widest available
+   * strike span is MALLET..PARTICLES, with the meta control kept linear
+   * (no range compression as in the reduced build below). */
   strike_.set_meta(
       strike_meta,
-      EXCITER_MODEL_GRANULAR_SAMPLE_PLAYER,
+      EXCITER_MODEL_MALLET,
       EXCITER_MODEL_PARTICLES);
 #else
   strike_.set_meta(

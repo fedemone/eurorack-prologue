@@ -35,8 +35,12 @@ CXXSRC += $(PROJROOT)/clouds-granular.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/granular_processor.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/correlator.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/mu_law.cc
+CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/phase_vocoder.cc
+CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/frame_transformation.cc
+CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/stft.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/resources.cc
 CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/units.cc
+CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/atan.cc
 CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 
 ##############################################################################
@@ -53,6 +57,9 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 UINCDIR  = $(PROJROOT)/drumlogue
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
 # Libraries
@@ -67,6 +74,6 @@ ULIBS += -lc
 # Defines
 #
 
-UDEFS  = -DCLOUDS_GRANULAR
+UDEFS  = -DCLOUDS_GRANULAR -DSTM32F401xC -DSTM32F401xx
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=32
 UDEFS += -DBLOCKSIZE=32

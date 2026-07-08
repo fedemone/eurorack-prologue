@@ -50,6 +50,9 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/units.cc
 UINCDIR  = $(PROJROOT)/drumlogue
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
 # Libraries
@@ -64,6 +67,6 @@ ULIBS += -lc
 # Defines
 #
 
-UDEFS  = -DOSC_WTD -DOSCILLATOR_TYPE=wt_d
+UDEFS  = -DOSC_WTD -DOSCILLATOR_TYPE=wtd
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=24
 UDEFS += -DBLOCKSIZE=24

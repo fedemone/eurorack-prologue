@@ -7,3 +7,4 @@ eurorack/plaits/dsp/speech/lpc_speech_synth_phonemes.cc
 eurorack/plaits/dsp/speech/lpc_speech_synth_words.cc
 eurorack/plaits/resources.cc
 eurorack/stmlib/dsp/units.cc
+eurorack/stmlib/utils/random.cc
