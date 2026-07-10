@@ -94,6 +94,7 @@ struct MockOscState {
   int cycle_count;
   const user_osc_param_t *last_cycle_params;
   uint32_t last_cycle_frames;
+  uint16_t last_cycle_pitch;
   /* Value to fill Q31 output with (allows tests to verify conversion) */
   int32_t cycle_fill_value;
 
@@ -136,6 +137,7 @@ void OSC_CYCLE(const user_osc_param_t * const params,
   g_mock.cycle_count++;
   g_mock.last_cycle_params = params;
   g_mock.last_cycle_frames = frames;
+  g_mock.last_cycle_pitch = params->pitch;
 
   /* Fill output with deterministic value */
   for (uint32_t i = 0; i < frames; ++i) {
@@ -537,6 +539,33 @@ TEST(wrapper_note_on_delegates) {
   ASSERT_EQ(1, g_mock.noteon_count);
   /* pitch should encode note 72 */
   ASSERT_EQ((uint16_t)(72 << 8), g_mock.last_noteon_pitch);
+  teardown_unit();
+}
+
+TEST(wrapper_base_note_live_repitch_gate) {
+  init_unit();
+  /* Gate-driven note sounds at base note (60) */
+  unit_gate_on(100);
+  ASSERT_EQ((uint16_t)(60 << 8), g_mock.last_noteon_pitch);
+  int noteons = g_mock.noteon_count;
+  /* Changing Base Note while a gate note sounds must re-pitch live
+   * (audible in Continuous gate mode) without retriggering */
+  unit_set_param_value(0, 72);
+  float out[24 * 2];
+  unit_render(nullptr, out, 24);
+  ASSERT_EQ((uint16_t)(72 << 8), g_mock.last_cycle_pitch);
+  ASSERT_EQ(noteons, g_mock.noteon_count); /* no retrigger */
+  teardown_unit();
+}
+
+TEST(wrapper_base_note_keeps_midi_pitch) {
+  init_unit();
+  /* MIDI note takes priority: changing Base Note must NOT re-pitch */
+  unit_note_on(65, 100);
+  unit_set_param_value(0, 72);
+  float out[24 * 2];
+  unit_render(nullptr, out, 24);
+  ASSERT_EQ((uint16_t)(65 << 8), g_mock.last_cycle_pitch);
   teardown_unit();
 }
 
@@ -1821,6 +1850,8 @@ int main(void) {
 
   printf("\nWrapper Note Events:\n");
   run_test_wrapper_note_on_delegates();
+  run_test_wrapper_base_note_live_repitch_gate();
+  run_test_wrapper_base_note_keeps_midi_pitch();
   run_test_wrapper_note_off_delegates();
   run_test_wrapper_all_note_off();
   run_test_wrapper_gate_on_off();

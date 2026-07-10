@@ -55,6 +55,7 @@ static struct {
   uint8_t  note;       /* last MIDI note from unit_note_on */
   uint8_t  velocity;
   uint8_t  base_note;  /* user param: note for gate trigger (default 60) */
+  bool     note_from_midi; /* true if the sounding pitch came from unit_note_on */
 
   /* Internal LFO1 (shape LFO) — on prologue this comes from host hardware;
    * on drumlogue we generate it internally so users can control the rate. */
@@ -100,6 +101,7 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   s_state.note              = 60;  /* middle C */
   s_state.velocity          = 0;
   s_state.base_note         = 60;  /* default base note for gate trigger */
+  s_state.note_from_midi    = false;
   s_state.lfo1_phase        = 0.0f;
   s_state.lfo1_rate         = 0.0f;
 
@@ -128,11 +130,12 @@ __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
 
-  s_state.note       = 60;
-  s_state.velocity   = 0;
-  s_state.base_note  = 60;
-  s_state.lfo1_phase = 0.0f;
-  s_state.lfo1_rate  = 0.0f;
+  s_state.note           = 60;
+  s_state.velocity       = 0;
+  s_state.base_note      = 60;
+  s_state.note_from_midi = false;
+  s_state.lfo1_phase     = 0.0f;
+  s_state.lfo1_rate      = 0.0f;
   osc_adapter_reset();
 }
 
@@ -285,8 +288,9 @@ void unit_render(const float *in, float *out, uint32_t frames) {
 __unit_callback
 void unit_note_on(uint8_t note, uint8_t velocity) {
   if (!s_state.initialized) return;
-  s_state.note     = note;
-  s_state.velocity = velocity;
+  s_state.note           = note;
+  s_state.velocity       = velocity;
+  s_state.note_from_midi = true;
   osc_adapter_note_on(note, velocity);
 }
 
@@ -306,7 +310,8 @@ void unit_all_note_off(void) {
 __unit_callback
 void unit_gate_on(uint8_t velocity) {
   if (!s_state.initialized) return;
-  s_state.velocity = velocity;
+  s_state.velocity       = velocity;
+  s_state.note_from_midi = false;
   osc_adapter_note_on(s_state.base_note, velocity);
 }
 
@@ -406,6 +411,15 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 14 -> custom 12  (LFO2 shape strings)
  * ======================================================================== */
 
+/* Store a Base Note change and, when the sounding pitch is gate-driven
+ * (trigger pad or continuous mode - i.e. not a MIDI note), re-pitch the
+ * oscillator immediately so the change is audible without retriggering. */
+static void set_base_note(int32_t value) {
+  s_state.base_note = (uint8_t)(value & 0x7F);
+  if (!s_state.note_from_midi)
+    osc_adapter_set_note(s_state.base_note);
+}
+
 __unit_callback
 void unit_set_param_value(uint8_t id, int32_t value) {
   if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return;
@@ -457,7 +471,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Phoneme: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -500,7 +514,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Clouds param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -569,7 +583,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Rings param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -606,7 +620,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Elements param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -670,7 +684,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Plaits param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;

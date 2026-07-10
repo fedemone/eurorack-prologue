@@ -143,6 +143,16 @@ void osc_adapter_note_off(uint8_t note) {
   OSC_NOTEOFF(&s_adapter.params);
 }
 
+void osc_adapter_set_note(uint8_t note) {
+  if (!s_adapter.initialized) return;
+
+  /* Re-pitch without retriggering: the oscillator reads params.pitch on
+   * every OSC_CYCLE, so this takes effect immediately (used when the
+   * Base Note parameter changes while a gate-driven / continuous-mode
+   * note is sounding). */
+  s_adapter.params.pitch = note_to_osc_pitch(note, s_adapter.pitch_mod);
+}
+
 /* ---- Pitch ---- */
 
 void osc_adapter_pitch_bend(int16_t bend) {

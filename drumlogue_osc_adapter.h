@@ -46,6 +46,9 @@ void osc_adapter_note_on(uint8_t note, uint8_t velocity);
 /** Trigger note off: calls OSC_NOTEOFF */
 void osc_adapter_note_off(uint8_t note);
 
+/** Update the sounding pitch without retriggering (Base Note changes) */
+void osc_adapter_set_note(uint8_t note);
+
 /* ---- Pitch ---- */
 
 /** Apply pitch bend (signed, in 8192ths of 2 semitones) */

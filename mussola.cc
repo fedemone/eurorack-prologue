@@ -111,6 +111,18 @@ static float vibrato_phase_ = 0.0f;
 static float formant_lfo_phase_ = 0.0f;
 
 /*
+ * Per-voice harmonics, updated round-robin (one voice per block).
+ * Harmonics crossing an LPC word-bank boundary triggers a synchronous
+ * bitstream decode of the whole bank inside the render callback; with
+ * unison, all voices would otherwise decode in the SAME block and blow
+ * the real-time budget (observed as a crash on hardware when sweeping
+ * Harmonics). Staggering spreads the decodes across blocks (0.5ms per
+ * voice of extra latency on a harmonics change - inaudible).
+ */
+static float voice_harmonics_[kMaxVoices] = {0.0f, 0.0f, 0.0f, 0.0f};
+static uint32_t block_counter_ = 0;
+
+/*
  * Per-style settings. Gender offset shifts the formant spectrum
  * (added to the user Gender parameter), pitch offset transposes,
  * vibrato adds pitch modulation, and Robot additionally quantizes
@@ -214,6 +226,34 @@ extern "C" void mussola_get_last_stereo(const float **left, const float **right)
 }
 
 /* ======================================================================
+ * Engine lifecycle / output watchdog
+ * ==================================================================== */
+
+/* (Re-)initialize one voice's engine over its static arena. Also used by
+ * the render watchdog to self-heal a voice whose filter state latched
+ * NaN/inf (the LPC lattice state is not clamped upstream). */
+static void reset_engine(uint16_t v) {
+  stmlib::BufferAllocator allocator;
+  allocator.Init(engine_buffers_[v], kEngineBufferSize);
+  engines_[v].Init(&allocator);
+  engines_[v].set_prosody_amount(prosody_);
+  engines_[v].set_speed(speed_);
+}
+
+/* True if the block contains NaN, inf, or runaway samples (|x| > 8).
+ * Bit-level test: all of those have (bits & 0x7FFFFFFF) > 0x41000000
+ * (8.0f). Works under -ffast-math, where isnan()/isfinite() may be
+ * compiled away. */
+static inline bool block_invalid(const float *x, uint32_t n) {
+  for (uint32_t i = 0; i < n; ++i) {
+    uint32_t b;
+    memcpy(&b, &x[i], sizeof(b));
+    if ((b & 0x7FFFFFFFu) > 0x41000000u) return true;
+  }
+  return false;
+}
+
+/* ======================================================================
  * OSC API Implementation
  * ==================================================================== */
 
@@ -223,11 +263,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   (void)api;
 
   for (uint16_t v = 0; v < kMaxVoices; ++v) {
-    stmlib::BufferAllocator allocator;
-    allocator.Init(engine_buffers_[v], kEngineBufferSize);
-    engines_[v].Init(&allocator);
-    engines_[v].set_prosody_amount(0.0f);
-    engines_[v].set_speed(1.0f);
+    reset_engine(v);
   }
 
   parameters_.trigger = plaits::TRIGGER_UNPATCHED;
@@ -387,16 +423,31 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   /* Harmonics controls model blend (0-1)
    * Model select overrides: force harmonics into the sub-range for that model */
   if (model_select_ < 3) {
-    /* Force: 0=Naive(0.0), 1=SAM(0.17), 2=LPC(0.5) */
-    static const float model_harmonics[] = {0.0f, 0.17f, 0.5f};
+    /* Force: 0=Naive(0.0), 1=SAM(0.166), 2=LPC(0.5).
+     * SAM sits at group 0.996 (just below 1.0): the engine then renders
+     * Naive+SAM with the blend at ~100% SAM - audibly pure SAM, but it
+     * avoids the much more expensive LPC controller, whose internal
+     * clock rate scales with formant shift (Gender). At the previous
+     * 0.17 (group 1.02), Gender=100% with 4 voices tripled the LPC call
+     * rate and overran the render deadline on hardware. */
+    static const float model_harmonics[] = {0.0f, 0.166f, 0.5f};
     parameters_.harmonics = model_harmonics[model_select_];
   } else if (style.quantize_pitch) {
     /* Robot style with Model=Blend: default to the SAM (robotic) model */
-    parameters_.harmonics = 0.17f;
+    parameters_.harmonics = 0.166f;
   } else {
     /* Blend mode: Param 1 (id3) controls harmonics, scaled 0-100 -> 0.0-1.0 */
     parameters_.harmonics = clip01f(p_values_[k_user_osc_param_id1] * 0.01f);
   }
+
+  /* Stagger harmonics across voices: at most one voice picks up a new
+   * value per block, so word-bank decodes never pile up in one block. */
+  if (num_voices_ == 1) {
+    voice_harmonics_[0] = parameters_.harmonics;
+  } else {
+    voice_harmonics_[block_counter_ % num_voices_] = parameters_.harmonics;
+  }
+  ++block_counter_;
 
   parameters_.accent = 0.8f;
 
@@ -425,6 +476,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   for (uint16_t v = 0; v < num_voices_; ++v) {
     plaits::EngineParameters vp = parameters_;
+    vp.harmonics = voice_harmonics_[v];
 
     /* Per-voice detune */
     vp.note += detune_semitones * kVoiceDetune[vi][v];
@@ -438,6 +490,15 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     bool venveloped = false;
     engines_[v].Render(vp, vout, vaux, nframes, &venveloped);
     if (venveloped) any_enveloped = true;
+
+    /* Watchdog: if this voice's filter state blew up (NaN/inf/runaway
+     * latches permanently in the LPC lattice), drop the block and
+     * reinitialize the engine - it recovers on the next block instead
+     * of going silent forever. */
+    if (block_invalid(vout, nframes) || block_invalid(vaux, nframes)) {
+      reset_engine(v);
+      continue;
+    }
 
     /* Mix out/aux per voice, accumulate into L/R */
     const float gl = gain_l[v], gr = gain_r[v];
