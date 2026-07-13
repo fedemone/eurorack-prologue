@@ -283,31 +283,47 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 2 | LPC | Linear Predictive Coding — natural-sounding speech fragments |
 | 3 | Blend | Crossfade between all three models |
 
-**Parameters (19):**
+**Parameters (24):**
 
 | # | Name | Description |
 |---|------|-------------|
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Phoneme | Vowel / phoneme selection (0-100%) |
+| 1 | Phoneme | Vowel / phoneme selection; word selection in the LPC word region (0-100%) |
 | 2 | Timbre | Vocal register / formant shift (0-100%) |
-| 3 | Harmonics | Harmonic richness / model blend (0-100%) |
+| 3 | Harmonics | Model blend and LPC word-bank selection (0-100%) |
 | 4 | Morph | Morph within current model (0-100%) |
-| 5 | Speed | LPC playback speed, 50=normal (0-100%) |
-| 6 | Prosody | Prosody replay amount (0-100%) |
-| 7 | Decay | Envelope decay time (0-100%) |
+| 5 | Speed | LPC word playback speed (50=normal) and Staccato burst rate |
+| 6 | Prosody | Pitch-contour replay amount for LPC words (0-100%) |
+| 7 | Decay | Envelope decay AND release time, 5ms-5s (0-100%) |
 | 8 | Mix | Main/auxiliary output crossfade (0-100%) |
 | 9 | Model | Synthesis model (0-3, see table above) |
-| 10 | Gate Mode | Trigger/Sustain/Continuous |
+| 10 | Gate Mode | Trigger / Sustain / Continuous / Staccato |
 | 11 | Voices | Unison voice count (1-4) |
 | 12 | Detune | Unison detune amount (0-100%) |
 | 13 | Spread | Stereo spread of unison voices (0-100%) |
 | 14 | Gender | Formant shift — bass (0) to soprano (100), neutral at 50 |
-| 15 | Attack | Envelope attack time (0-100%) |
-| 16 | Style | Vocal style (0-4, see table below) |
+| 15 | Attack | Envelope attack time, 1ms-2s (0-100%) |
+| 16 | Style | Vocal style (0-5, see table below) |
 | 17 | Key Mode | Phoneme selection mode (0-5, see table below) |
 | 18 | Gliss | Glissando time for pitch and phoneme passage (0-100%) |
+| 19 | Sustain | Envelope sustain level (0-100%) |
+| 20 | LFO Shape | None / Sine / Square / Saw |
+| 21 | LFO Dest | Modulation destination (see below) |
+| 22 | LFO Rate | 0.05 Hz to 20 Hz, exponential (0-100%) |
+| 23 | LFO Depth | Modulation depth (0-100%) |
 
-**The 5 vocal styles (Style):**
+**Envelope (ADSR):** Attack, Decay, Sustain and Gliss-free Release form a
+full ADSR — the release always reuses the Decay time. Gate Mode changes
+how the envelope is driven:
+
+| # | Gate Mode | Behavior |
+|---|-----------|----------|
+| 0 | Trigger | One-shot attack-decay: the note falls to silence at the Decay rate even while the pad is held |
+| 1 | Sustain | Full ADSR: decay to the Sustain level while held, release (= Decay time) on note-off |
+| 2 | Continuous | Drone: always on. In the LPC word region the Phoneme knob scrubs through the word bank as an evolving vocal drone |
+| 3 | Staccato | Free-running bursts of gates (1.5-13.5 Hz, rate set by the Speed knob) — each burst retriggers the engine, the envelope and the current word/syllable |
+
+**The 6 vocal styles (Style):**
 
 | # | Style | Character |
 |---|-------|-----------|
@@ -315,9 +331,13 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 1 | Female | Raised formants, medium vibrato |
 | 2 | Child | High formants, +1 octave, fast vibrato |
 | 3 | Robot | Pitch quantized to semitones, no vibrato, defaults to the SAM model when Model=Blend |
-| 4 | Alien | Slow deep pitch wobble + slow formant sweep |
+| 4 | Alien | Phonemes snapped to unusual off-vowel positions, pitch quantized to an inharmonic Bohlen-Pierce step grid, unison voices stacked at inharmonic intervals, plus soft-clip distortion and a slow-swept phaser |
+| 5 | Religious | Parallel organum: unison voices stacked at octave/fifth/sub-octave drone, slow gentle chant vibrato, vowels biased into the open a/o/e chant range, built-in legato (minimum glissando) and a very slow formant drift |
 
 The Style formant character is added on top of the Gender parameter.
+For Religious organum, raise Voices: 2 voices = octaves, 3 = adds the
+fifth, 4 = adds a sub-octave drone. Alien does the same with inharmonic
+intervals.
 
 **The 6 key modes (Key Mode):**
 
@@ -330,6 +350,37 @@ The Style formant character is added on top of the Gender parameter.
 | 4 | KeySyl C | Each key is assigned one of the 8 syllables, chromatic assignment |
 | 5 | KeySyl D | As C but transposed assignment |
 
+Key modes 2-5 follow the key both on fresh triggers and on legato /
+Base-Note changes while a note is sounding.
+
+**LPC word banks (Italian / liturgical):** in Blend mode, Harmonics above
+~38% selects one of 5 word banks and the Phoneme knob selects the word;
+each trigger sings it. The banks are Madama Butterfly fragments and
+liturgical phrases, synthesized as LPC10 bitstreams by
+`tools/generate_lpc_words.py`:
+
+| Bank | Words |
+|------|-------|
+| 1 | "un bel dì", "bello" |
+| 2 | "giunto il tempo", "così" |
+| 3 | "fan", "tutto" |
+| 4 | "kyrie", "eleison", "kyrie eleison" |
+| 5 | "oṃ", "maṇi", "padme", "hūṃ", "oṃ maṇi padme hūṃ" |
+
+Speed changes the word tempo, Prosody replays each phrase's pitch
+contour (rising "così", falling mantra endings), and Gender/Timbre
+shift the singer's formants.
+
+**The assignable LFO:** LFO Dest offers 15 destinations — Pitch, Phoneme,
+Timbre, Harmonics, Morph, Speed, Prosody, Decay, Mix, Detune, Spread,
+Gender, Attack, Sustain and Gliss. Pitch modulation spans ±1 octave at
+full depth; all other destinations are modulated in their natural 0-100%
+range. Structural switches (Model, Voices, Style, Gate Mode, Key Mode)
+are not modulatable by design: they retrigger engines or word-bank
+decodes. In forced-model mode the Harmonics destination is inactive
+(the value is pinned to keep the engine on its cheap path) — use
+Model=Blend to modulate Harmonics.
+
 **Glissando (Gliss):** smooths the passage between phonemes (and pitch)
 with a glide time from instant (0%) to about half a second (100%). In the
 Syllable/KeySyl modes it also stretches the consonant→vowel transition.
@@ -341,6 +392,10 @@ Syllable/KeySyl modes it also stretches the consonant→vowel transition.
 - Gender shifts the formant spectrum — low values = bass voice, high = soprano
 - Style=Robot + Key Mode=KeyVow A turns a melody line into robotic vowel speech
 - Key Mode=KeySyl C + Gliss=40 gives chant-like syllabic singing across the keyboard
+- Style=Religious + Voices=4 + Gate=Sustain + long Attack/Decay = gregorian choir pad
+- Blend + Harmonics=75 + Gate=Staccato + Speed=30 chants "kyrie eleison" in rhythm
+- Gate=Continuous + Blend + Harmonics>40: slowly turn Phoneme to scrub through an opera phrase as a drone
+- LFO Sine → Gender at low rate adds a slow male/female morph to any patch
 
 Base Note
 ----

@@ -1,10 +1,9 @@
 eurorack/plaits/dsp/engine/speech_engine.cc
 eurorack/plaits/dsp/speech/naive_speech_synth.cc
-eurorack/plaits/dsp/speech/sam_speech_synth.cc
-eurorack/plaits/dsp/speech/lpc_speech_synth.cc
-eurorack/plaits/dsp/speech/lpc_speech_synth_controller.cc
-eurorack/plaits/dsp/speech/lpc_speech_synth_phonemes.cc
-eurorack/plaits/dsp/speech/lpc_speech_synth_words.cc
+plaits_patches/sam_speech_synth_patched.cc
+plaits_patches/lpc_speech_synth_patched.cc
+plaits_patches/lpc_speech_synth_controller_patched.cc
+mussola_words.cc
 eurorack/plaits/resources.cc
 eurorack/stmlib/dsp/units.cc
 eurorack/stmlib/utils/random.cc

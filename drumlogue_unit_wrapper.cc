@@ -447,6 +447,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     k_mussola_param_style     = 19,
     k_mussola_param_key_mode  = 20,
     k_mussola_param_gliss     = 21,
+    k_mussola_param_sustain   = 22,
+    k_mussola_param_lfo_shape = 23,
+    k_mussola_param_lfo_dest  = 24,
+    k_mussola_param_lfo_rate  = 25,
+    k_mussola_param_lfo_depth = 26,
   };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
@@ -465,9 +470,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * id 13: Spread      -> k_mussola_param_spread (0-100)
    * id 14: Gender      -> k_mussola_param_gender (0-100)
    * id 15: Attack      -> k_mussola_param_attack (0-100)
-   * id 16: Style       -> k_mussola_param_style (0-4)
+   * id 16: Style       -> k_mussola_param_style (0-5)
    * id 17: Key Mode    -> k_mussola_param_key_mode (0-5)
    * id 18: Gliss       -> k_mussola_param_gliss (0-100)
+   * id 19: Sustain     -> k_mussola_param_sustain (0-100)
+   * id 20: LFO Shape   -> k_mussola_param_lfo_shape (0-3)
+   * id 21: LFO Dest    -> k_mussola_param_lfo_dest (0-14)
+   * id 22: LFO Rate    -> k_mussola_param_lfo_rate (0-100)
+   * id 23: LFO Depth   -> k_mussola_param_lfo_depth (0-100)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
@@ -489,7 +499,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    /* Cases 5-18 all map to custom OSC_PARAM index = drumlogue_id + 3 */
+    /* Cases 5-23 all map to custom OSC_PARAM index = drumlogue_id + 3 */
     case 5:  /* Speed */
     case 6:  /* Prosody */
     case 7:  /* Decay */
@@ -504,6 +514,11 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     case 16: /* Style */
     case 17: /* Key Mode */
     case 18: /* Gliss */
+    case 19: /* Sustain */
+    case 20: /* LFO Shape */
+    case 21: /* LFO Dest */
+    case 22: /* LFO Rate */
+    case 23: /* LFO Depth */
       osc_id    = (user_osc_param_id_t)(id + 3);
       osc_value = (uint16_t)value;
       break;
@@ -761,9 +776,9 @@ static const char * const s_mussola_model_names[] = {
 #define NUM_MUSSOLA_MODELS 4
 
 static const char * const s_mussola_gate_names[] = {
-  "Trigger", "Sustain", "Contin."
+  "Trigger", "Sustain", "Contin.", "Staccato"
 };
-#define NUM_MUSSOLA_GATES 3
+#define NUM_MUSSOLA_GATES 4
 
 static const char * const s_mussola_voices_names[] = {
   "1", "2", "3", "4"
@@ -771,14 +786,27 @@ static const char * const s_mussola_voices_names[] = {
 #define NUM_MUSSOLA_VOICES 4
 
 static const char * const s_mussola_style_names[] = {
-  "Male", "Female", "Child", "Robot", "Alien"
+  "Male", "Female", "Child", "Robot", "Alien", "Religi."
 };
-#define NUM_MUSSOLA_STYLES 5
+#define NUM_MUSSOLA_STYLES 6
 
 static const char * const s_mussola_keymode_names[] = {
   "Normal", "Syllable", "KeyVow A", "KeyVow B", "KeySyl C", "KeySyl D"
 };
 #define NUM_MUSSOLA_KEYMODES 6
+
+static const char * const s_mussola_lfo_shape_names[] = {
+  "None", "Sine", "Square", "Saw"
+};
+#define NUM_MUSSOLA_LFO_SHAPES 4
+
+/* Order must match the k_lfo_dest_* enum in mussola.cc */
+static const char * const s_mussola_lfo_dest_names[] = {
+  "Pitch", "Phoneme", "Timbre", "Harmonic", "Morph",
+  "Speed", "Prosody", "Decay", "Mix", "Detune",
+  "Spread", "Gender", "Attack", "Sustain", "Gliss"
+};
+#define NUM_MUSSOLA_LFO_DESTS 15
 
 #elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
@@ -856,6 +884,14 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 17: /* Key Mode */
       if (value >= 0 && value < NUM_MUSSOLA_KEYMODES)
         return s_mussola_keymode_names[value];
+      break;
+    case 20: /* LFO Shape */
+      if (value >= 0 && value < NUM_MUSSOLA_LFO_SHAPES)
+        return s_mussola_lfo_shape_names[value];
+      break;
+    case 21: /* LFO Dest */
+      if (value >= 0 && value < NUM_MUSSOLA_LFO_DESTS)
+        return s_mussola_lfo_dest_names[value];
       break;
   }
 #elif defined(CLOUDS_GRANULAR)

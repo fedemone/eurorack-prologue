@@ -74,16 +74,36 @@ and `generate_sdk_projects.sh`.
 All 19 drumlogue units now cross-compile (armv7-a + NEON VFPv4) with
 clean dynamic symbol tables, and all 352 host-side tests pass.
 
+## Upstream speech-synth defects — now fixed via `plaits_patches/`
+
+The Mussola build no longer compiles the upstream `sam_speech_synth.cc`,
+`lpc_speech_synth.cc`, `lpc_speech_synth_controller.cc` and
+`lpc_speech_synth_phonemes.cc`; it compiles patched copies from
+`plaits_patches/` instead (see the README there for details). The
+submodule itself stays untouched — only `.cc` files are replaced, so no
+include-path shadowing is involved. Fixed defects:
+
+* **Mid-word region-crossing OOB read (hardware SIGSEGV root cause).**
+  When Harmonics drops from the LPC word-bank region into the phoneme
+  region while a word is playing, `LPCSpeechSynthController::Render`
+  keeps `playback_frame_` pointing deep into the word bank but swaps
+  `frames` to the 16-entry phoneme table — reading kilobytes past it.
+  Reproduced under ASan with the exact reported hardware recipe
+  (Model=Blend, 4 voices, Phoneme 83%, Timbre 100%, Harmonics sweep).
+  Harmless on MMU-less STM32 (Plaits proper), a segfault on the
+  drumlogue's Linux/MMU. Patched to fall back to scan mode.
+* `sam_speech_synth.cc` (`InterpolatePhonemeData`) and the LPC
+  consonant trigger read **one element past** their phoneme tables when
+  the last consonant is selected (interpolated with fraction 0, so
+  inaudible, but UB). Patched with a clamp / a padded 16-entry table.
+* `lpc_speech_synth.cc` could index `lut_lpc_excitation_pulse` with a
+  **negative** index right after `Init()`. Patched with a clamp.
+* `LPCSpeechSynthWordBank::LoadNextWord/Load` trusted the bank
+  bitstream blindly and could write past the 1024-frame arena /
+  32-entry word-boundary table. Patched with bounds.
+
 ## Known issues, not fixed here (upstream submodule)
 
-* `plaits/dsp/speech/sam_speech_synth.cc` (`InterpolatePhonemeData`) and
-  `lpc_speech_synth_controller.cc` (consonant trigger:
-  `last_playback_frame_ = playback_frame_ + 1`) read **one element past**
-  their phoneme tables when the last consonant is selected. The
-  out-of-bounds value is interpolated with fraction 0.0, so the audible
-  result is correct, but it is UB and shows up under ASan. Fixing it
-  requires patching the `eurorack` submodule
-  (`peterall/eurorack`), which is pinned read-only from this repo.
 * `macro-oscillator2.cc` `OSC_CYCLE` ignores the `frames` argument and
   always renders `plaits::kMaxBlockSize` (24) samples. Safe on
   drumlogue (the adapter always asks for exactly 24) and matches the
@@ -128,14 +148,57 @@ Remaining opportunities (none critical at current CPU budgets):
 
 ## Mussola feature additions (this branch)
 
-* **Style** (param 16): Male / Female / Child / Robot / Alien —
-  per-style formant offset (stacked with Gender), pitch offset,
-  vibrato; Robot quantizes pitch to semitones and defaults to the SAM
-  model in Blend mode; Alien adds a slow formant-sweep LFO.
+* **Style** (param 16): Male / Female / Child / Robot / Alien /
+  Religious — per-style formant offset (stacked with Gender), pitch
+  offset, vibrato; Robot quantizes pitch to semitones and defaults to
+  the SAM model in Blend mode. Alien snaps phonemes to off-vowel morph
+  positions, quantizes pitch to a Bohlen-Pierce step grid (13 equal
+  divisions of the tritave), stacks unison voices at inharmonic
+  intervals and post-processes with a soft-clip waveshaper plus a
+  slow-swept two-stage allpass phaser. Religious stacks voices in
+  parallel organum (octave / fifth / sub-octave drone), adds slow
+  chant vibrato, compresses vowels into the open a/o/e range and
+  enforces a minimum glissando.
 * **Key Mode** (param 17): Normal / Syllable (8 consonant→vowel
   syllables selected by the Phoneme knob) / 4 key-assign variants
   (vowel-per-key A/B, syllable-per-key C/D, each with a transposed
-  assignment table).
+  assignment table). Key modes re-latch on legato/Base-Note changes,
+  not just on fresh gates (a note change without a new gate previously
+  kept the old vowel/syllable).
 * **Gliss** (param 18): one-pole glissando (0 → ~0.5 s) applied to both
   pitch and phoneme morph; also stretches the consonant→vowel
   transition in the syllable modes.
+* **ADSR envelope** (params 7/15/19): exponential attack 1 ms–2 s and
+  decay/release 5 ms–5 s (the previous linear alpha mapping topped out
+  around 42 ms, which is why the Decay knob audibly did nothing and
+  notes ended abruptly), new Sustain level param; Trigger mode is a
+  one-shot AD, Sustain mode a full ADSR with release = Decay time.
+  The envelope now also applies in the LPC word region, where the
+  engine's own prosody envelope previously left note-off unhandled
+  (the word's last frame droned forever).
+* **Staccato gate mode** (param 10 value 3): free-running gate bursts
+  at 1.5–13.5 Hz (rate from the Speed knob, 60% duty); each burst
+  retriggers the engine, the envelope and the current word/syllable.
+* **Assignable LFO** (params 20–23): None/Sine/Square/Saw, 15
+  destinations (all continuous params, plus Pitch at ±12 st full
+  depth), exponential 0.05–20 Hz rate, depth. Evaluated once per
+  24-sample block. Structural switches (Model, Voices, Style, Gate
+  Mode, Key Mode) are deliberately not modulatable.
+* **Italian/liturgical LPC word banks** (`mussola_words.cc`, generated
+  by `tools/generate_lpc_words.py`): replaces the Plaits TI-ROM banks
+  with Madama Butterfly fragments ("un bel dì", "bello", "giunto il
+  tempo", "così", "fan", "tutto") and liturgical phrases ("kyrie
+  eleison", "oṃ maṇi padme hūṃ"). Phrases are formant-synthesized,
+  converted to reflection coefficients via a step-down recursion,
+  quantized to the TMS5100-style codebooks and packed as LPC10
+  bitstreams. The generator round-trips every bank through a literal
+  Python port of the Plaits decoder, checks lattice stability and
+  formant placement, and appends a silence frame per word (the LPC
+  controller holds the last frame forever after a word ends). Total
+  bank data is 957 bytes vs ~11 KB upstream, cutting the worst-case
+  synchronous bank decode inside the render callback by ~10× — a
+  large real-time-margin win for Harmonics sweeps with 4 voices.
+* **Continuous gate mode** now runs the engine with
+  `TRIGGER_UNPATCHED`, so in the word region the Phoneme knob scrubs
+  through the word bank as an evolving drone (Plaits scan mode)
+  instead of the word playing once and freezing on its last frame.
