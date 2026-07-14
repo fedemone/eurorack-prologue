@@ -55,6 +55,7 @@ static struct {
   uint8_t  note;       /* last MIDI note from unit_note_on */
   uint8_t  velocity;
   uint8_t  base_note;  /* user param: note for gate trigger (default 60) */
+  bool     note_from_midi; /* true if the sounding pitch came from unit_note_on */
 
   /* Internal LFO1 (shape LFO) — on prologue this comes from host hardware;
    * on drumlogue we generate it internally so users can control the rate. */
@@ -100,6 +101,7 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   s_state.note              = 60;  /* middle C */
   s_state.velocity          = 0;
   s_state.base_note         = 60;  /* default base note for gate trigger */
+  s_state.note_from_midi    = false;
   s_state.lfo1_phase        = 0.0f;
   s_state.lfo1_rate         = 0.0f;
 
@@ -128,11 +130,12 @@ __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
 
-  s_state.note       = 60;
-  s_state.velocity   = 0;
-  s_state.base_note  = 60;
-  s_state.lfo1_phase = 0.0f;
-  s_state.lfo1_rate  = 0.0f;
+  s_state.note           = 60;
+  s_state.velocity       = 0;
+  s_state.base_note      = 60;
+  s_state.note_from_midi = false;
+  s_state.lfo1_phase     = 0.0f;
+  s_state.lfo1_rate      = 0.0f;
   osc_adapter_reset();
 }
 
@@ -169,6 +172,7 @@ static inline void clear_output(float *out, uint32_t frames) {
  * Copy mono buffer to interleaved stereo (L=R).
  * NEON path uses vst2q_f32 to interleave 4 samples at a time.
  */
+#if !defined(MUSSOLA_VOCAL)
 static void mono_to_stereo(const float *mono, float *stereo, uint32_t count) {
 #ifdef __ARM_NEON
   uint32_t i = 0;
@@ -190,6 +194,7 @@ static void mono_to_stereo(const float *mono, float *stereo, uint32_t count) {
   }
 #endif
 }
+#endif /* !MUSSOLA_VOCAL */
 
 __unit_callback
 void unit_render(const float *in, float *out, uint32_t frames) {
@@ -283,8 +288,9 @@ void unit_render(const float *in, float *out, uint32_t frames) {
 __unit_callback
 void unit_note_on(uint8_t note, uint8_t velocity) {
   if (!s_state.initialized) return;
-  s_state.note     = note;
-  s_state.velocity = velocity;
+  s_state.note           = note;
+  s_state.velocity       = velocity;
+  s_state.note_from_midi = true;
   osc_adapter_note_on(note, velocity);
 }
 
@@ -304,7 +310,8 @@ void unit_all_note_off(void) {
 __unit_callback
 void unit_gate_on(uint8_t velocity) {
   if (!s_state.initialized) return;
-  s_state.velocity = velocity;
+  s_state.velocity       = velocity;
+  s_state.note_from_midi = false;
   osc_adapter_note_on(s_state.base_note, velocity);
 }
 
@@ -404,6 +411,15 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 14 -> custom 12  (LFO2 shape strings)
  * ======================================================================== */
 
+/* Store a Base Note change and, when the sounding pitch is gate-driven
+ * (trigger pad or continuous mode - i.e. not a MIDI note), re-pitch the
+ * oscillator immediately so the change is audible without retriggering. */
+static void set_base_note(int32_t value) {
+  s_state.base_note = (uint8_t)(value & 0x7F);
+  if (!s_state.note_from_midi)
+    osc_adapter_set_note(s_state.base_note);
+}
+
 __unit_callback
 void unit_set_param_value(uint8_t id, int32_t value) {
   if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return;
@@ -428,6 +444,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     k_mussola_param_spread    = 16,
     k_mussola_param_gender    = 17,
     k_mussola_param_attack    = 18,
+    k_mussola_param_style     = 19,
+    k_mussola_param_key_mode  = 20,
+    k_mussola_param_gliss     = 21,
+    k_mussola_param_sustain   = 22,
+    k_mussola_param_lfo_shape = 23,
+    k_mussola_param_lfo_dest  = 24,
+    k_mussola_param_lfo_rate  = 25,
+    k_mussola_param_lfo_depth = 26,
   };
   /* ---- Mussola param mapping ----
    * id 0:  Base Note   -> stored in wrapper
@@ -446,10 +470,18 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * id 13: Spread      -> k_mussola_param_spread (0-100)
    * id 14: Gender      -> k_mussola_param_gender (0-100)
    * id 15: Attack      -> k_mussola_param_attack (0-100)
+   * id 16: Style       -> k_mussola_param_style (0-5)
+   * id 17: Key Mode    -> k_mussola_param_key_mode (0-5)
+   * id 18: Gliss       -> k_mussola_param_gliss (0-100)
+   * id 19: Sustain     -> k_mussola_param_sustain (0-100)
+   * id 20: LFO Shape   -> k_mussola_param_lfo_shape (0-3)
+   * id 21: LFO Dest    -> k_mussola_param_lfo_dest (0-14)
+   * id 22: LFO Rate    -> k_mussola_param_lfo_rate (0-100)
+   * id 23: LFO Depth   -> k_mussola_param_lfo_depth (0-100)
    */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Phoneme: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -467,7 +499,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = k_user_osc_param_id2;
       osc_value = (uint16_t)value;
       break;
-    /* Cases 5-15 all map to custom OSC_PARAM index = drumlogue_id + 3 */
+    /* Cases 5-23 all map to custom OSC_PARAM index = drumlogue_id + 3 */
     case 5:  /* Speed */
     case 6:  /* Prosody */
     case 7:  /* Decay */
@@ -479,6 +511,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
     case 13: /* Spread */
     case 14: /* Gender */
     case 15: /* Attack */
+    case 16: /* Style */
+    case 17: /* Key Mode */
+    case 18: /* Gliss */
+    case 19: /* Sustain */
+    case 20: /* LFO Shape */
+    case 21: /* LFO Dest */
+    case 22: /* LFO Rate */
+    case 23: /* LFO Depth */
       osc_id    = (user_osc_param_id_t)(id + 3);
       osc_value = (uint16_t)value;
       break;
@@ -489,7 +529,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Clouds param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -558,7 +598,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Rings param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -595,7 +635,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Elements param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Position: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -659,7 +699,7 @@ void unit_set_param_value(uint8_t id, int32_t value) {
   /* ---- Plaits param mapping ---- */
   switch (id) {
     case 0: /* Base Note: MIDI note 0-127 */
-      s_state.base_note = (uint8_t)(value & 0x7F);
+      set_base_note(value);
       return;
     case 1: /* Shape: 0-100 -> 10-bit (0-1023) */
       osc_id    = k_user_osc_param_shape;
@@ -736,14 +776,37 @@ static const char * const s_mussola_model_names[] = {
 #define NUM_MUSSOLA_MODELS 4
 
 static const char * const s_mussola_gate_names[] = {
-  "Trigger", "Sustain", "Contin."
+  "Trigger", "Sustain", "Contin.", "Staccato"
 };
-#define NUM_MUSSOLA_GATES 3
+#define NUM_MUSSOLA_GATES 4
 
 static const char * const s_mussola_voices_names[] = {
   "1", "2", "3", "4"
 };
 #define NUM_MUSSOLA_VOICES 4
+
+static const char * const s_mussola_style_names[] = {
+  "Male", "Female", "Child", "Robot", "Alien", "Religi."
+};
+#define NUM_MUSSOLA_STYLES 6
+
+static const char * const s_mussola_keymode_names[] = {
+  "Normal", "Syllable", "KeyVow A", "KeyVow B", "KeySyl C", "KeySyl D"
+};
+#define NUM_MUSSOLA_KEYMODES 6
+
+static const char * const s_mussola_lfo_shape_names[] = {
+  "None", "Sine", "Square", "Saw"
+};
+#define NUM_MUSSOLA_LFO_SHAPES 4
+
+/* Order must match the k_lfo_dest_* enum in mussola.cc */
+static const char * const s_mussola_lfo_dest_names[] = {
+  "Pitch", "Phoneme", "Timbre", "Harmonic", "Morph",
+  "Speed", "Prosody", "Decay", "Mix", "Detune",
+  "Spread", "Gender", "Attack", "Sustain", "Gliss"
+};
+#define NUM_MUSSOLA_LFO_DESTS 15
 
 #elif defined(CLOUDS_GRANULAR)
 /* ---- Clouds mode and quality names ---- */
@@ -813,6 +876,22 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 11: /* Voices */
       if (value >= 1 && value <= NUM_MUSSOLA_VOICES)
         return s_mussola_voices_names[value - 1];
+      break;
+    case 16: /* Style */
+      if (value >= 0 && value < NUM_MUSSOLA_STYLES)
+        return s_mussola_style_names[value];
+      break;
+    case 17: /* Key Mode */
+      if (value >= 0 && value < NUM_MUSSOLA_KEYMODES)
+        return s_mussola_keymode_names[value];
+      break;
+    case 20: /* LFO Shape */
+      if (value >= 0 && value < NUM_MUSSOLA_LFO_SHAPES)
+        return s_mussola_lfo_shape_names[value];
+      break;
+    case 21: /* LFO Dest */
+      if (value >= 0 && value < NUM_MUSSOLA_LFO_DESTS)
+        return s_mussola_lfo_dest_names[value];
       break;
   }
 #elif defined(CLOUDS_GRANULAR)

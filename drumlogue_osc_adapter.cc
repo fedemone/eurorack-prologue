@@ -37,7 +37,7 @@ static struct {
 #define OSC_NATIVE_BLOCK_SIZE 24
 #endif
 
-static alignas(16) float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
+alignas(16) static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
 static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
@@ -48,8 +48,8 @@ static uint32_t s_render_avail = 0; /* samples available */
 static_assert(OSC_NATIVE_BLOCK_SIZE <= 24,
               "OSC_NATIVE_BLOCK_SIZE exceeds Mussola internal buffer size");
 extern "C" void mussola_get_last_stereo(const float **left, const float **right);
-static alignas(16) float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
-static alignas(16) float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];
+alignas(16) static float s_render_buf_l[OSC_NATIVE_BLOCK_SIZE];
+alignas(16) static float s_render_buf_r[OSC_NATIVE_BLOCK_SIZE];
 #endif
 
 /* ---- Q31 / Float Helpers ---- */
@@ -141,6 +141,16 @@ void osc_adapter_note_off(uint8_t note) {
   (void)note;
 
   OSC_NOTEOFF(&s_adapter.params);
+}
+
+void osc_adapter_set_note(uint8_t note) {
+  if (!s_adapter.initialized) return;
+
+  /* Re-pitch without retriggering: the oscillator reads params.pitch on
+   * every OSC_CYCLE, so this takes effect immediately (used when the
+   * Base Note parameter changes while a gate-driven / continuous-mode
+   * note is sounding). */
+  s_adapter.params.pitch = note_to_osc_pitch(note, s_adapter.pitch_mod);
 }
 
 /* ---- Pitch ---- */

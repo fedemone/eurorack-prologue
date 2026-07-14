@@ -120,6 +120,9 @@ CONFIGEOF
 UINCDIR  = \$(PROJROOT)/drumlogue
 UINCDIR += \$(PROJROOT)/eurorack
 UINCDIR += \$(PROJROOT)
+UINCDIR += \$(PROJROOT)/eurorack/stmlib/third_party/STM
+UINCDIR += \$(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
+UINCDIR += \$(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
 # Libraries
@@ -188,7 +191,7 @@ for variant in a b c d e f; do
     create_project "mo2_wt${variant}" "mo2_wt${variant}" \
         "macro-oscillator2.cc" \
         "eurorack/plaits/dsp/engine/wavetable_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-        "-DOSC_WT${upper} -DOSCILLATOR_TYPE=wt_${variant}" 24
+        "-DOSC_WT${upper} -DOSCILLATOR_TYPE=wt${variant}" 24
 done
 
 ##############################################################################
@@ -253,12 +256,12 @@ create_project "rings" "rings" \
 # Clouds-based oscillator (clouds-granular.cc, block size 32)
 ##############################################################################
 
-CLOUDS_SOURCES="eurorack/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc"
+CLOUDS_SOURCES="eurorack/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/dsp/pvoc/phase_vocoder.cc eurorack/clouds/dsp/pvoc/frame_transformation.cc eurorack/clouds/dsp/pvoc/stft.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/dsp/atan.cc eurorack/stmlib/utils/random.cc"
 
 create_project "clouds" "clouds" \
     "clouds-granular.cc" \
     "$CLOUDS_SOURCES" \
-    "-DCLOUDS_GRANULAR" 32
+    "-DCLOUDS_GRANULAR -DSTM32F401xC -DSTM32F401xx" 32
 
 ##############################################################################
 # Mussola vocal synth (mussola.cc, block size 24)

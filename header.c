@@ -79,6 +79,19 @@
  *    id 8:  Mix         (0-100%)     -> custom OSC_PARAM index 11
  *    id 9:  Model       (strings)    -> custom OSC_PARAM index 12
  *    id 10: Gate Mode   (strings)    -> custom OSC_PARAM index 13
+ *    id 11: Voices      (strings)    -> custom OSC_PARAM index 14
+ *    id 12: Detune      (0-100%)     -> custom OSC_PARAM index 15
+ *    id 13: Spread      (0-100%)     -> custom OSC_PARAM index 16
+ *    id 14: Gender      (0-100%)     -> custom OSC_PARAM index 17
+ *    id 15: Attack      (0-100%)     -> custom OSC_PARAM index 18
+ *    id 16: Style       (strings)    -> custom OSC_PARAM index 19
+ *    id 17: Key Mode    (strings)    -> custom OSC_PARAM index 20
+ *    id 18: Gliss       (0-100%)     -> custom OSC_PARAM index 21
+ *    id 19: Sustain     (0-100%)     -> custom OSC_PARAM index 22
+ *    id 20: LFO Shape   (strings)    -> custom OSC_PARAM index 23
+ *    id 21: LFO Dest    (strings)    -> custom OSC_PARAM index 24
+ *    id 22: LFO Rate    (0-100%)     -> custom OSC_PARAM index 25
+ *    id 23: LFO Depth   (0-100%)     -> custom OSC_PARAM index 26
  *
  *  Reference: logue-sdk/platform/drumlogue/dummy-synth/header.c
  *
@@ -185,11 +198,13 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Mussola vocal synth (mussola.cc)
      *
-     * 16 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
+     * 24 params: Base Note, Phoneme, Timbre, Harmonics, Morph,
      *            Speed, Prosody, Decay, Mix, Model, Gate Mode,
-     *            Voices, Detune, Spread, Gender, Attack
+     *            Voices, Detune, Spread, Gender, Attack,
+     *            Style, Key Mode, Gliss, Sustain,
+     *            LFO Shape, LFO Dest, LFO Rate, LFO Depth
      * ================================================================ */
-    .num_params = 16,
+    .num_params = 24,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note) */
@@ -216,8 +231,8 @@ const __unit_header unit_header_t unit_header = {
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Mix"}},
         /* id 9: Model (0=Naive, 1=SAM, 2=LPC, 3=Blend) */
         {0, 3, 0, 3, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
-        /* id 10: Gate Mode (Trigger/Sustain/Continuous) */
-        {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+        /* id 10: Gate Mode (Trigger/Sustain/Continuous/Staccato) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
         /* id 11: Voices (1-4 unison voice count) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Voices"}},
 
@@ -231,15 +246,25 @@ const __unit_header unit_header_t unit_header = {
         /* id 15: Attack (envelope attack time) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Attack"}},
 
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        // Page 5
+        /* id 16: Style (Male/Female/Child/Robot/Alien/Religious) */
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Style"}},
+        /* id 17: Key Mode (Normal / Syllable / 4 key-assign variants) */
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Key Mode"}},
+        /* id 18: Gliss (glissando time for pitch and phoneme passage) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Gliss"}},
+        /* id 19: Sustain (envelope sustain level) */
+        {0, 100, 0, 100, k_unit_param_type_percent, 0, 0, 0, {"Sustain"}},
+
+        // Page 6
+        /* id 20: LFO Shape (None/Sine/Square/Saw) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Shape"}},
+        /* id 21: LFO Dest (modulation destination) */
+        {0, 14, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Dest"}},
+        /* id 22: LFO Rate (0.05 Hz .. 20 Hz, exponential) */
+        {0, 100, 0, 30, k_unit_param_type_percent, 0, 0, 0, {"LFO Rate"}},
+        /* id 23: LFO Depth (modulation depth) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO Depth"}},
     }
 
 #elif defined(CLOUDS_GRANULAR)

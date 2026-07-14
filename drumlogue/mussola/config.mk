@@ -34,13 +34,13 @@ CXXSRC += $(PROJROOT)/drumlogue_osc_adapter.cc
 CXXSRC += $(PROJROOT)/mussola.cc
 CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/engine/speech_engine.cc
 CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/naive_speech_synth.cc
-CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/sam_speech_synth.cc
-CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/lpc_speech_synth.cc
-CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/lpc_speech_synth_controller.cc
-CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/lpc_speech_synth_phonemes.cc
-CXXSRC += $(PROJROOT)/eurorack/plaits/dsp/speech/lpc_speech_synth_words.cc
+CXXSRC += $(PROJROOT)/plaits_patches/sam_speech_synth_patched.cc
+CXXSRC += $(PROJROOT)/plaits_patches/lpc_speech_synth_patched.cc
+CXXSRC += $(PROJROOT)/plaits_patches/lpc_speech_synth_controller_patched.cc
+CXXSRC += $(PROJROOT)/mussola_words.cc
 CXXSRC += $(PROJROOT)/eurorack/plaits/resources.cc
 CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/units.cc
+CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 
 ##############################################################################
 # Include paths
@@ -56,6 +56,9 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/dsp/units.cc
 UINCDIR  = $(PROJROOT)/drumlogue
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
+UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
 # Libraries
