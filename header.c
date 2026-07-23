@@ -332,10 +332,10 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Rings oscillators (rings-resonator.cc)
      *
-     * 8 params: Base Note, Position, Structure, Brightness, Damping,
-     *           Chord, Model, Polyphony
+     * 12 params: Base Note, Position, Structure, Brightness, Damping,
+     *            Chord, Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct
      * ================================================================ */
-    .num_params = 8,
+    .num_params = 12,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -359,11 +359,19 @@ const __unit_header unit_header_t unit_header = {
         /* id 7: Polyphony (number of voices 1-4) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Polyphony"}},
 
+        // Page 3
+        /* id 8: Arp (Off + 8 patterns: Up/Down/Up-Dn/Dn-Up + 4 pause vars).
+         * Rings is monophonic here, so the arp steps the selected note
+         * source (Chord tones or octaves) and re-strums the resonator. */
+        {0, 8, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Arp"}},
+        /* id 9: Arp Src (0 = Chord tones, 1 = Octaves of the root) */
+        {0, 1, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Arp Src"}},
+        /* id 10: Arp Rate (tempo-synced step: 1/4..1/32, incl. triplets) */
+        {0, 5, 3, 3, k_unit_param_type_strings, 0, 0, 0, {"Arp Rate"}},
+        /* id 11: Arp Oct (span the sequence across 1-4 octaves) */
+        {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Arp Oct"}},
+
         // Pages 3-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

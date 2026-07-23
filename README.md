@@ -194,7 +194,7 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
 | 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
 
-**Parameters (8):**
+**Parameters (12):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -206,13 +206,34 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-10) |
 | 6 | Model | Resonator type (0-5, see table above; default 4 = Sympathetic Quantized) |
 | 7 | Polyphony | Number of voices (1-4) |
+| 8 | Arp | Arpeggiator pattern: Off, Up, Down, Up-Dn, Dn-Up, Up-P-Dn, Up-Dn-P, Dn-P-Up, Dn-Up-P |
+| 9 | Arp Src | Arp note source: Chord (steps the selected Chord's tones) or Octaves (steps octaves of the root) |
+| 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
+| 11 | Arp Oct | Octave span of the sequence (1-4) |
+
+**Arpeggiator:** Rings sounds one held note at a time, so the built-in arpeggiator
+builds a sequence of pitches and re-strums the resonator step-by-step, synced to the
+drumlogue's tempo. The `Arp Src` knob picks what the sequence is built from — the tones
+of the currently-selected `Chord` (so the Chord knob is musically useful on *every*
+model, not just Sympathetic Quantized) or plain octaves of the root. `Arp Oct` spreads
+the sequence across up to four octaves. The `-P-` patterns insert a silent rest step,
+letting the resonance ring through the gap. Set `Arp` to `Off` for normal single-note
+playing. (Tempo comes from the host clock; if a platform never reports a tempo the arp
+runs at 120 BPM.)
+
+**Output level:** The mono mixdown applies +3 dB of make-up gain overall, plus a further
++6 dB for the two sympathetic-string models (Sympathetic String and Sympathetic
+Quantized), which are inherently quieter than the Modal/String/FM/Reverb models — so the
+default patch sits at a comparable level to the others. Peaks are still clamped, so the
+extra gain can't clip the output.
 
 **Sound design tips:**
 - The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
+- Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
 - Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord only affects Model 4 (Sympathetic Quantized); in Model 1 (Sympathetic String) the string voicing is swept continuously by the Structure knob instead
+- Chord only affects Model 4 (Sympathetic Quantized) *as a resonator voicing*; the arpeggiator, however, uses the Chord selection on any model to build its note sequence
 
 For more information please read the excellent [Mutable Instruments Rings documentation](https://mutable-instruments.net/modules/rings/manual/).
 

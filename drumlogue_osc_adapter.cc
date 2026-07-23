@@ -183,12 +183,24 @@ void osc_adapter_set_shape_lfo(float lfo_value) {
 
 /* ---- Tempo ---- */
 
+/* Reserved OSC_PARAM index for forwarding host tempo to the oscillator.
+ * Must match kTempoParamIndex in rings-resonator.cc.  Kept high so it never
+ * collides with a real per-oscillator parameter index; oscillators that
+ * don't consume it simply ignore the unknown index. */
+#define OSC_ADAPTER_TEMPO_PARAM 63
+
 void osc_adapter_set_tempo(uint32_t tempo) {
   if (!s_adapter.initialized) return;
 
   s_adapter.tempo = tempo;
-  /* OSC modules don't have a direct tempo API;
-     stored for potential future LFO sync use. */
+
+  /* Forward the current tempo as an integer BPM so tempo-synced features
+   * (e.g. the Rings arpeggiator) can follow the host clock.  drumlogue
+   * passes tempo as a Q16 fixed-point BPM (bpm = tempo / 65536). */
+  uint32_t bpm = tempo >> 16;
+  if (bpm == 0)   bpm = 120;   /* fall back to a musical default */
+  if (bpm > 480)  bpm = 480;
+  OSC_PARAM(OSC_ADAPTER_TEMPO_PARAM, (uint16_t)bpm);
 }
 
 /* ---- Audio Rendering (Buffered) ---- */
