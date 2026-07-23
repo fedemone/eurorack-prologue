@@ -287,6 +287,46 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 
 For more information please read the excellent [Mutable Instruments Clouds documentation](https://mutable-instruments.net/modules/clouds/manual/).
 
+CloudsFX (Clouds as an insert effect)
+----
+*Granular delay/texture effect (drumlogue only)*
+
+The synth `clouds` above has to invent an input — an internal sawtooth or a
+loaded sample — because a drumlogue **synth** unit's render callback ignores
+audio input. `CloudsFX` is the same Clouds engine built as a **delfx** unit
+instead, so it granulates the **incoming FX-bus audio**: route any drumlogue
+part through it and the grains, stretches, delays and spectral freezes are
+made from *that* signal. Because the input is now real, Freeze, Feedback,
+Dry/Wet and the Looping-Delay / Stretch modes all become genuinely useful.
+
+It is a **drumlogue-only** unit (delfx units don't exist on the
+prologue-class platforms) and is built via the SDK project `clouds_fx`
+(`./build_drumlogue.sh clouds_fx`).
+
+**Parameters (11):** identical to the Clouds synth, minus everything that
+fed an internal source — no **Base Note**, and no **SampleBank / SampleNum /
+SmplStart / SmplEnd**:
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Position | Where in the buffer to read grains (0-100%) |
+| 1 | Size | Grain length / buffer region (0-100%) |
+| 2 | Density | Extra grain rate / overlap on top of the base grain stream (0-100%) |
+| 3 | Texture | Grain window shape / filtering (0-100%) |
+| 4 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
+| 5 | Feedback | Amount of output fed back into input (0-100%) |
+| 6 | Dry/Wet | Mix between the dry input and the processed output (0-100%, default 50%) |
+| 7 | Reverb | Built-in reverb amount (0-100%) |
+| 8 | Freeze | Freeze the audio buffer (on/off) |
+| 9 | Mode | Playback mode (0-3: Granular / Stretch / Delay / Spectral) |
+| 10 | Quality | Audio quality / stereo mode (0-3) |
+
+**Sound design tips:**
+- Mode 2 (Looping Delay) + Feedback = a pitch-shiftable, freezable delay on the incoming audio
+- Mode 1 (Stretch) + Freeze on = infinite sustain of whatever was playing when you froze
+- Dry/Wet defaults to 50% (an insert-FX default); turn it fully wet for pure granular textures
+- Input/output levels are conservative and clip-safe; on hardware you can trim with the drumlogue's own FX send/return
+
 Mussola (Vocal Synthesis)
 ----
 *Abstract vocal synthesizer*

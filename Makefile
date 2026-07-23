@@ -109,8 +109,30 @@ test-mussola:
 	    -o test_drumlogue_callbacks_mussola -lm
 	./test_drumlogue_callbacks_mussola
 
+# CloudsFX delfx test: links the REAL Clouds engine through the delfx wrapper
+# and verifies FX-bus audio input reaches the engine (dry + wet paths).
+# Usage: make test-clouds-fx
+CLOUDS_FX_ENGINE = \
+    eurorack/clouds/dsp/granular_processor.cc \
+    eurorack/clouds/dsp/correlator.cc \
+    eurorack/clouds/dsp/mu_law.cc \
+    eurorack/clouds/dsp/pvoc/phase_vocoder.cc \
+    eurorack/clouds/dsp/pvoc/frame_transformation.cc \
+    eurorack/clouds/dsp/pvoc/stft.cc \
+    eurorack/clouds/resources.cc \
+    eurorack/stmlib/dsp/units.cc \
+    eurorack/stmlib/dsp/atan.cc \
+    eurorack/stmlib/utils/random.cc
+test-clouds-fx:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_FX \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 -Ieurorack \
+	    test_clouds_fx.cc drumlogue_delfx_wrapper.cc clouds-fx.cc header.c \
+	    $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_fx -lm
+	./test_clouds_fx
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-fx test-mussola test-sound
 
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio
