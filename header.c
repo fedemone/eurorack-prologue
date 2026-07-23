@@ -352,8 +352,10 @@ const __unit_header unit_header_t unit_header = {
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Damping"}},
         /* id 5: Chord (chord type for sympathetic strings) */
         {0, 10, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
-        /* id 6: Model (resonator type: Modal/SympStr/String/FM/...) */
-        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
+        /* id 6: Model (resonator type: Modal/SympStr/String/FM/...).
+         * Default 4 = SympStrQ so the Chord parameter is effective on load
+         * (Chord only affects the quantized sympathetic-strings model). */
+        {0, 5, 4, 4, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
         /* id 7: Polyphony (number of voices 1-4) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Polyphony"}},
 
@@ -426,6 +428,68 @@ const __unit_header unit_header_t unit_header = {
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
 
         // Pages 5-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(OSC_STRING)
+    /* ================================================================
+     * String oscillator (macro-oscillator2.cc, OSC_STRING)
+     *
+     * Same 13-param layout as the other Plaits engines, but the String
+     * engine routes Param 2 to the output limiter as an *attenuation*
+     * (pre_gain = 1 - Param2): 0 % = full level, 100 % = silence.  The
+     * generic Plaits table below defaults Param 2 to 50, which halves the
+     * String's level (and 100 % mutes it entirely) — the cause of "String
+     * makes no / too little sound".  Give String its own table so the
+     * knob is named "Attenuate" and defaults to 0 (full level).
+     * ================================================================ */
+    .num_params = 13,
+    .params = {
+        // Page 1
+        /* id 0: Base Note (MIDI note for gate trigger) */
+        {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
+        /* id 1: Shape (morph) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
+        /* id 2: Shift-Shape (timbre / exciter) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"ShiftShape"}},
+        /* id 3: Harmonics (string structure / inharmonicity) */
+        {0, 100, 50, 50, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
+
+        // Page 2
+        /* id 4: Attenuate (0 = full level, 100 = silent) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Attenuate"}},
+        /* id 5: LFO Target (which param the shape LFO modulates) */
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
+        /* id 6: LFO1 Shape (waveshape for shape LFO modulation) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        /* id 7: LFO1 Rate (internal shape LFO frequency) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
+
+        // Page 3
+        /* id 8: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 9: LFO2 Depth */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
+        /* id 10: LFO2 Target (which param LFO2 modulates) */
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
+        /* id 11: LFO2 Shape (waveform for LFO2) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+
+        // Page 4
+        /* id 12: Gate Mode (envelope/gate behavior) */
+        {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+
+        // Pages 5-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

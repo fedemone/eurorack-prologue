@@ -52,8 +52,8 @@ float shape = 0, shiftshape = 0;
 float shape_lfo = 0;
 
 /* Custom param indices beyond standard user_osc_param_id_t range */
-static uint16_t model_value = 0;
-static uint16_t polyphony_value = 0;
+static uint16_t model_value = RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
+static uint16_t polyphony_value = 1;
 
 /* ======================================================================
  * OSC API Implementation
@@ -65,7 +65,11 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   (void)api;
 
   part_.Init(reverb_buffer_);
-  part_.set_model(RESONATOR_MODEL_MODAL);
+  /* Default to the quantized sympathetic-strings model so the Chord
+   * parameter is effective out of the box.  Chord only affects this model
+   * in the Rings DSP (Modal/String/FM ignore it), so defaulting to Modal
+   * made the Chord knob appear to do nothing. */
+  part_.set_model(RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED);
   part_.set_polyphony(1);
 
   patch_.structure  = 0.5f;

@@ -285,6 +285,18 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   p->reverb = clip01f(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
   p->gate = osc_active_;
 
+  /* Continuously seed a grain each block while the voice is sounding, but
+   * only in Granular mode.  Clouds' granular scheduler otherwise fires grains
+   * solely from the DENSITY meta-parameter, which has a silent "dead zone"
+   * around 50% (overlap == 0) and, away from it, produces sparse, loud grains
+   * that clip and click.  As an audio *processor* Clouds expects an external
+   * grain clock here; as a self-contained synth voice we supply one, giving a
+   * smooth, uninterrupted texture at every DENSITY setting (DENSITY still adds
+   * further grains on top).  The other modes (Stretch/Delay/Spectral) don't
+   * use this trigger and are left untouched. */
+  p->trigger = osc_active_ &&
+      processor_.playback_mode() == PLAYBACK_MODE_GRANULAR;
+
   /* Prepare handles mode/quality switches and buffer resets */
   processor_.Prepare();
 
@@ -314,32 +326,38 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   processor_.Process(input, output, kMaxBlockSize);
 
   /* Mix stereo (L + R) to mono Q31.
-   * The adapter expects exactly kMaxBlockSize mono Q31 samples. */
+   * The adapter expects exactly kMaxBlockSize mono Q31 samples.
+   *
+   * A dense granular cloud sums many overlapping grains and, after Clouds'
+   * internal post-gain, rides right up against 0 dBFS.  At that level the
+   * peaks convert to near-full-scale Q31 and the sharp grain edges read as
+   * clicks/harshness on the output.  Applying a little headroom here
+   * (kOutGain, ~-3 dB) keeps the loudest textures clear of the ceiling
+   * without making the module noticeably quiet.  Each (l+r)/2 mono sample
+   * is in the int16 range; scaling by kOutGain * 65536 lifts it to Q31. */
+  const float kOutGain = 0.7f;
 #ifdef __ARM_NEON
   {
+    const float32x4_t vscale = vdupq_n_f32(kOutGain * 65536.0f);
     size_t i = 0;
     for (; i + 4 <= kMaxBlockSize; i += 4) {
-      int16_t lvals[4] = {output[i].l, output[i + 1].l,
-                          output[i + 2].l, output[i + 3].l};
-      int16_t rvals[4] = {output[i].r, output[i + 1].r,
-                          output[i + 2].r, output[i + 3].r};
-    /* Load 4 stereo samples and de-interleave into L and R registers */
+      /* Load 4 stereo samples and de-interleave into L and R registers */
       const int16x4x2_t stereo = vld2_s16(reinterpret_cast<const int16_t*>(&output[i]));
 
-      /* int16 -> int32, average L+R, then shift left 16 for Q31 */
+      /* int16 -> int32, average L+R, scale (with headroom) up to Q31 */
       const int32x4_t ql = vmovl_s16(stereo.val[0]);
       const int32x4_t qr = vmovl_s16(stereo.val[1]);
-      int32x4_t mono = vhaddq_s32(ql, qr);
-      mono = vshlq_n_s32(mono, 16);
-      vst1q_s32(yn + i, mono);
+      const int32x4_t mono = vhaddq_s32(ql, qr);
+      const float32x4_t f = vmulq_f32(vcvtq_f32_s32(mono), vscale);
+      vst1q_s32(yn + i, vcvtq_s32_f32(f));
     }
     for (; i < kMaxBlockSize; ++i) {
-      yn[i] = ((int32_t)((output[i].l + output[i].r) / 2)) << 16;
+      yn[i] = (int32_t)(((output[i].l + output[i].r) * 0.5f) * kOutGain * 65536.0f);
     }
   }
 #else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
-    yn[i] = ((int32_t)((output[i].l + output[i].r) / 2)) << 16;
+    yn[i] = (int32_t)(((output[i].l + output[i].r) * 0.5f) * kOutGain * 65536.0f);
   }
 #endif
 }

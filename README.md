@@ -203,15 +203,16 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
 | 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
 | 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for sympathetic models (0-10) |
-| 6 | Model | Resonator type (0-5, see table above) |
+| 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-10) |
+| 6 | Model | Resonator type (0-5, see table above; default 4 = Sympathetic Quantized) |
 | 7 | Polyphony | Number of voices (1-4) |
 
 **Sound design tips:**
-- Start with Model 0 (Modal) and sweep Structure for metallic to harmonic
+- The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
+- Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
 - Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord parameter only affects sympathetic models (1 and 4)
+- Chord only affects Model 4 (Sympathetic Quantized); in Model 1 (Sympathetic String) the string voicing is swept continuously by the Structure knob instead
 
 For more information please read the excellent [Mutable Instruments Rings documentation](https://mutable-instruments.net/modules/rings/manual/).
 
@@ -241,7 +242,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
 | 1 | Position | Where in the buffer to read grains (0-100%) |
 | 2 | Size | Grain length / buffer region (0-100%) |
-| 3 | Density | Grain rate / overlap amount (0-100%) |
+| 3 | Density | Extra grain rate / overlap on top of the base grain stream (0-100%) |
 | 4 | Texture | Grain window shape / filtering (0-100%) |
 | 5 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
 | 6 | Feedback | Amount of output fed back into input (0-100%) |
@@ -256,6 +257,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
 
 **Sound design tips:**
+- Mode 0 (Granular) produces a continuous grain stream at any Density (grains are seeded automatically); Density adds extra overlap on top. Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects

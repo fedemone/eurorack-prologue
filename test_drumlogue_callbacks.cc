@@ -308,6 +308,23 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[12].name, "LFO2 Depth"));
   ASSERT_EQ(0, strcmp(unit_header.params[13].name, "LFO2 Target"));
   ASSERT_EQ(0, strcmp(unit_header.params[14].name, "LFO2 Shape"));
+#elif defined(OSC_STRING)
+  /* String layout: shares the Plaits mapping but renames Param 1/Param 2
+   * to Harmonics/Attenuate (Attenuate defaults to 0 = full level). */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "ShiftShape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Harmonics"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Attenuate"));
+  ASSERT_EQ(0, unit_header.params[4].init);  /* full level by default */
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO1 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "Gate Mode"));
 #else
   /* Plaits layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
