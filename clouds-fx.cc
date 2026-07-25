@@ -46,8 +46,18 @@ static int32_t pitch_semitones_ = 0;
 static const float kInScale  = 29490.0f;  /* ~0.9 full scale into int16 */
 static const float kOutGain  = 0.75f;
 
+/* Clamp a 0-1 engine parameter to just below 1.0.
+ *
+ * Clouds uses several 0-1 parameters (dry_wet, size, texture, ...) as LUT
+ * indices via stmlib::Interpolate(table, value, size), which also reads
+ * table[value*size + 1] — one element PAST the table when value is exactly
+ * 1.0.  Harmless on the original bare-metal hardware, but on drumlogue the
+ * unit runs in a memory-protected process and the out-of-bounds read can
+ * fault (an audio crash the first time the dry/wet ramp hits 1.0).
+ * Clamping to 0.9995 is inaudible and keeps every LUT access in bounds
+ * without touching the eurorack submodule. */
 static inline float clamp01(float x) {
-  return (x < 0.0f) ? 0.0f : ((x > 1.0f) ? 1.0f : x);
+  return (x < 0.0f) ? 0.0f : ((x > 0.9995f) ? 0.9995f : x);
 }
 
 static inline int16_t f32_to_s16(float x) {

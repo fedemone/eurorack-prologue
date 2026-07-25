@@ -189,6 +189,24 @@ static void generate_sample_input(ShortFrame *input, size_t size,
   }
 }
 
+/* Clamp a 0-1 engine parameter to just below 1.0.
+ *
+ * Several Clouds parameters (dry_wet, size, texture, ...) are used as LUT
+ * indices via stmlib::Interpolate(table, value, size), which reads
+ * table[value*size] AND table[value*size + 1].  At exactly 1.0 that second
+ * read is one element PAST the end of the table.  On the original Clouds
+ * (bare-metal STM32) the stray flash read was harmless, and the pots/CV
+ * never delivered exactly 1.0 anyway.  On drumlogue, units run in a
+ * memory-protected process, so the out-of-bounds read can fault — which is
+ * exactly what happened at the first trigger with the default Dry/Wet=100%:
+ * the internal dry/wet ramp reached 1.0 on the first sounding block and the
+ * Interpolate(lut_xfade_in, 1.0, 16) read past the 17-entry table.
+ * Clamping to 0.9995 (inaudible, ~0.05% off full) keeps every LUT access
+ * in bounds without touching the eurorack submodule. */
+static inline float clip_param(float x) {
+  return (x < 0.f) ? 0.f : ((x > 0.9995f) ? 0.9995f : x);
+}
+
 static inline float midi_to_hz(float note) {
   /* Fast MIDI-to-Hz: 440 * 2^((note - 69) / 12) */
   return 440.0f * powf(2.0f, (note - 69.0f) / 12.0f);
@@ -275,14 +293,14 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* Update Clouds parameters from stored param values */
   Parameters *p = processor_.mutable_parameters();
-  p->position = clip01f(shape);                              /* id 1 */
-  p->size = clip01f(shiftshape);                             /* id 2 */
-  p->density = clip01f(p_values[k_user_osc_param_id1] * 0.01f);  /* id 3 */
-  p->texture = clip01f(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
+  p->position = clip_param(shape);                              /* id 1 */
+  p->size = clip_param(shiftshape);                             /* id 2 */
+  p->density = clip_param(p_values[k_user_osc_param_id1] * 0.01f);  /* id 3 */
+  p->texture = clip_param(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
   p->pitch = (float)pitch_semitones_;                        /* id 5 */
-  p->feedback = clip01f(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
-  p->dry_wet = clip01f(p_values[k_user_osc_param_id5] * 0.01f);  /* id 7 */
-  p->reverb = clip01f(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
+  p->feedback = clip_param(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
+  p->dry_wet = clip_param(p_values[k_user_osc_param_id5] * 0.01f);  /* id 7 */
+  p->reverb = clip_param(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
   p->gate = osc_active_;
 
   /* Continuously seed a grain each block while the voice is sounding, but
