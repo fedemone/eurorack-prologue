@@ -60,6 +60,20 @@ static inline float clamp01(float x) {
   return (x < 0.0f) ? 0.0f : ((x > 0.9995f) ? 0.9995f : x);
 }
 
+/* Mode / Quality / Freeze are latched here and applied on the audio thread.
+ *
+ * set_playback_mode() and set_quality() change num_channels_ and
+ * low_fidelity_, which decide whether Process() reads the 16-bit or the
+ * 8-bit audio buffers; the matching buffers are only (re)initialized by the
+ * next Prepare().  clouds_fx_set_param() runs on the drumlogue's UI thread,
+ * so calling those setters directly would let the buffer layout change while
+ * the audio thread is inside Process(), reading through a pointer that was
+ * never initialized for that resolution.  Latching the request and applying
+ * it in clouds_fx_process() keeps all reconfiguration on the audio thread. */
+static volatile int32_t pending_mode_ = 0;
+static volatile int32_t pending_quality_ = 0;
+static volatile int32_t pending_freeze_ = 0;
+
 static inline int16_t f32_to_s16(float x) {
   float s = x * kInScale;
   if (s >  32767.0f) s =  32767.0f;
@@ -103,6 +117,16 @@ extern "C" void clouds_fx_init(void) {
   p->trigger = false;
   p->gate = false;
 
+  pending_mode_ = PLAYBACK_MODE_GRANULAR;
+  pending_quality_ = 0;
+  pending_freeze_ = 0;
+
+  /* Run the first Prepare() here rather than letting it land on the first
+   * audio block: it is the call that allocates and zeroes the ~190 KB of
+   * sample/FX buffers, which has no business happening under an audio
+   * deadline.  Afterwards Prepare() is cheap in Granular mode. */
+  processor_.Prepare();
+
   pitch_semitones_ = 0;
 }
 
@@ -135,15 +159,17 @@ extern "C" void clouds_fx_set_param(uint8_t id, int32_t value) {
     case 7: /* Reverb: 0-100 % */
       p->reverb = clamp01(value * 0.01f);
       break;
+    /* These three reconfigure the engine, so they are only latched here and
+     * applied by clouds_fx_process() on the audio thread (see pending_*). */
     case 8: /* Freeze: 0/1 */
-      processor_.set_freeze(value != 0);
+      pending_freeze_ = (value != 0) ? 1 : 0;
       break;
     case 9: /* Mode: 0-3 (Granular/Stretch/Delay/Spectral) */
       if (value >= 0 && value < PLAYBACK_MODE_LAST)
-        processor_.set_playback_mode(static_cast<PlaybackMode>(value));
+        pending_mode_ = value;
       break;
     case 10: /* Quality: 0-3 (StHi/MoHi/StLo/MoLo) */
-      processor_.set_quality(value & 0x3);
+      pending_quality_ = value & 0x3;
       break;
     default:
       break;
@@ -156,6 +182,14 @@ extern "C" void clouds_fx_process(const float *in, float *out,
   Parameters *p = processor_.mutable_parameters();
   /* As an insert FX the engine is always "sounding". */
   p->gate = true;
+
+  /* Apply latched engine reconfiguration on this (audio) thread, so the
+   * buffer layout can never change underneath Process(). */
+  if ((int32_t)processor_.playback_mode() != pending_mode_)
+    processor_.set_playback_mode(static_cast<PlaybackMode>(pending_mode_));
+  if (processor_.quality() != pending_quality_)
+    processor_.set_quality(pending_quality_);
+  processor_.set_freeze(pending_freeze_ != 0);
 
   ShortFrame input[kMaxBlockSize];
   ShortFrame output[kMaxBlockSize];

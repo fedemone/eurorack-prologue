@@ -134,6 +134,56 @@ test-clouds-fx:
 # Run all tests
 test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-fx test-mussola test-sound
 
+##############################################################################
+# ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
+#
+# The host suites above link the port layer into an x86 binary. This target
+# tests the artifact that actually ships: ARM/NEON code, the drumlogue ABI,
+# and — the reason it exists — several units loaded into one address space,
+# which is what the device does with everything in Units/. See
+# drumlogue/unit_exports.map.
+#
+# Requires: an armhf cross toolchain, qemu-arm, and the logue-sdk submodule
+#   apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
+#   git submodule update --init logue-sdk
+#
+# Usage: make test-arm [ARM_UNITS="clouds clouds_fx rings"]
+##############################################################################
+
+ARM_CC      ?= arm-linux-gnueabihf-gcc
+ARM_SYSROOT ?= /usr/arm-linux-gnueabihf
+QEMU_ARM    ?= qemu-arm
+ARM_UNITS   ?= clouds clouds_fx mo2_va rings
+SDK_COMMON  := logue-sdk/platform/drumlogue/common
+
+# The SDK Makefile passes --param max-inline-insns-single=9999999999, which
+# newer GCC rejects. Re-supply the same option set with a value it accepts;
+# everything else matches the SDK defaults.
+ARM_UNIT_OPT := -pipe -ffast-math -fsigned-char -fno-stack-protector \
+                -fstrict-aliasing -falign-functions=16 -fno-math-errno \
+                -fomit-frame-pointer -finline-limit=200000 \
+                --param max-inline-insns-single=200000
+
+.PHONY: test-arm
+test-arm:
+	@command -v $(ARM_CC) >/dev/null 2>&1 || \
+	    { echo "SKIP test-arm: $(ARM_CC) not found"; exit 0; }
+	@command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP test-arm: $(QEMU_ARM) not found"; exit 0; }
+	@test -d $(SDK_COMMON) || \
+	    { echo "SKIP test-arm: run 'git submodule update --init logue-sdk'"; exit 0; }
+	@for u in $(ARM_UNITS); do \
+	    echo "Building drumlogue/$$u ..."; \
+	    $(MAKE) -C drumlogue/$$u CROSS_COMPILE=arm-linux-gnueabihf- \
+	        USER_ID=0 GROUP_ID=0 \
+	        USE_COPT="$(ARM_UNIT_OPT)" \
+	        USE_CXXOPT="$(ARM_UNIT_OPT) -fno-threadsafe-statics" >/dev/null || exit 1; \
+	done
+	$(ARM_CC) -std=gnu11 -O1 -g -march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard \
+	    -I$(SDK_COMMON) test_drmlgunit.c -o test_drmlgunit_arm -ldl -lm -lpthread
+	$(QEMU_ARM) -L $(ARM_SYSROOT) ./test_drmlgunit_arm \
+	    $(foreach u,$(ARM_UNITS),drumlogue/$(u)/build/$(u).drmlgunit)
+
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio
 # Usage: make bench

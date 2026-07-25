@@ -19,3 +19,5 @@ test_clouds_sample_playback
 test_sound_production
 bench_render
 build/drumlogue/
+test_clouds_fx
+test_drmlgunit_arm

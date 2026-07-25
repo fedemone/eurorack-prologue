@@ -1,0 +1,58 @@
+/*
+ * Linker version script for drumlogue units.
+ *
+ * Why this exists
+ * ---------------
+ * A .drmlgunit is an ELF shared object, and the drumlogue loads every
+ * installed unit into one address space.  By default every non-static
+ * function and variable in a unit is exported as a *global* dynamic symbol,
+ * and the dynamic linker resolves each unit's own calls through the global
+ * lookup scope.  Because all the units in this repository are built from the
+ * same port layer, they define the same symbol names -- OSC_CYCLE,
+ * OSC_INIT, osc_adapter_render, the whole eurorack DSP, ... -- so whichever
+ * unit is loaded first wins, and every unit loaded after it silently calls
+ * the first unit's code instead of its own.
+ *
+ * The visible effect is a unit playing the wrong engine, but it is worse than
+ * that: the hijacked callee may have been compiled with a different
+ * OSC_NATIVE_BLOCK_SIZE (24 vs 32 here) or a different channel layout than
+ * the caller's buffers, which turns the mismatch into an out-of-bounds write.
+ *
+ * Restricting the dynamic symbol table to the unit ABI fixes both problems:
+ * nothing but the callbacks the firmware looks up with dlsym() is exported,
+ * and every internal call binds to the definition inside its own unit.
+ *
+ * The list below is the complete drumlogue unit ABI (see
+ * logue-sdk/platform/drumlogue/common/runtime.h and unit.h).  Units that do
+ * not implement an optional callback simply have no such symbol; naming it
+ * here is harmless.
+ */
+{
+  global:
+    unit_header;
+    unit_init;
+    unit_teardown;
+    unit_reset;
+    unit_resume;
+    unit_suspend;
+    unit_render;
+    unit_get_preset_index;
+    unit_get_preset_name;
+    unit_load_preset;
+    unit_get_param_value;
+    unit_get_param_str_value;
+    unit_get_param_bmp_value;
+    unit_set_param_value;
+    unit_set_tempo;
+    unit_note_on;
+    unit_note_off;
+    unit_gate_on;
+    unit_gate_off;
+    unit_all_note_off;
+    unit_pitch_bend;
+    unit_channel_pressure;
+    unit_aftertouch;
+
+  local:
+    *;
+};

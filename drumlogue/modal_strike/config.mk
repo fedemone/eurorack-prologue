@@ -60,6 +60,17 @@ UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
 
 ##############################################################################
+# Linker options
+#
+# Export only the drumlogue unit ABI.  Without this every unit exports its
+# whole port layer (OSC_CYCLE, osc_adapter_*, the eurorack DSP, ...), and
+# since the drumlogue loads all installed units into one address space the
+# first unit loaded hijacks the identically-named symbols of every unit
+# loaded after it.  See drumlogue/unit_exports.map for the details.
+
+USE_LDOPT = --version-script=$(PROJROOT)/drumlogue/unit_exports.map
+
+##############################################################################
 # Libraries
 #
 

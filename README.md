@@ -562,7 +562,46 @@ PLATFORM=prologue make -f osc_fm.mk
 
 # Run host-side tests (no Docker/ARM needed)
 make test-all
+
+# Run the shipped .drmlgunit binaries on emulated ARM
+make test-arm
 ```
+
+**Testing the real unit binaries (`make test-arm`):**
+
+`make test-all` links the port layer into an x86 host binary. That catches
+logic bugs, but it cannot catch anything that only exists in the artifact the
+drumlogue actually loads. `make test-arm` cross-compiles the real
+`.drmlgunit` files and drives them through the SDK ABI under QEMU, checking
+the ARM/NEON paths, parameter sweeps, partial buffers, stack usage, and
+cross-unit isolation.
+
+```bash
+apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
+git submodule update --init logue-sdk
+make test-arm                          # defaults to clouds clouds_fx mo2_va rings
+make test-arm ARM_UNITS="rings mussola"
+```
+
+The target skips itself with a message if the toolchain, QEMU, or the SDK
+submodule is missing, so it is safe to run anywhere.
+
+**Cross-unit isolation (`drumlogue/unit_exports.map`):**
+
+The drumlogue loads every unit in `Units/` into one address space. All the
+units here are built from the same port layer, so they all define
+`OSC_CYCLE`, `osc_adapter_*` and the eurorack DSP under the same names. When
+those are exported, the dynamic linker binds every unit's internal calls to
+whichever unit was loaded first — so the second unit onwards silently renders
+the first unit's engine, and any unit's parameter changes are applied to the
+first unit's engine. Where the two units disagree on buffer geometry (this
+repo mixes `OSC_NATIVE_BLOCK_SIZE` 24 and 32) the mismatch becomes an
+out-of-bounds write.
+
+Every project's `config.mk` therefore links with
+`--version-script=drumlogue/unit_exports.map`, which exports only the
+callbacks the firmware looks up with `dlsym()`. `make test-arm` asserts that
+no unit exports anything else.
 
 **Build outputs:**
 - `.prlgunit` files for prologue

@@ -207,6 +207,21 @@ static inline float clip_param(float x) {
   return (x < 0.f) ? 0.f : ((x > 0.9995f) ? 0.9995f : x);
 }
 
+/* Mode / Quality are latched here and applied on the audio thread.
+ *
+ * set_playback_mode() and set_quality() do more than store a setting: they
+ * change num_channels_ and low_fidelity_, which decide whether Process()
+ * reads the 16-bit or the 8-bit audio buffers.  The matching buffers are only
+ * (re)initialized by the next Prepare().  Calling those setters straight from
+ * the parameter callback — which the drumlogue runs on the UI thread — leaves
+ * a window in which the audio thread is inside Process() with a resolution
+ * whose buffers have never been set up, reading through an uninitialized
+ * pointer.  Latching the request and applying it in OSC_CYCLE, immediately
+ * before Prepare(), keeps every engine reconfiguration on the audio thread. */
+static volatile int32_t pending_mode_ = 0;
+static volatile int32_t pending_quality_ = 0;
+static volatile int32_t pending_freeze_ = 0;
+
 static inline float midi_to_hz(float note) {
   /* Fast MIDI-to-Hz: 440 * 2^((note - 69) / 12) */
   return 440.0f * powf(2.0f, (note - 69.0f) / 12.0f);
@@ -263,6 +278,16 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   params->trigger = false;
   params->gate = false;
 
+  pending_mode_ = PLAYBACK_MODE_GRANULAR;
+  pending_quality_ = 0;
+  pending_freeze_ = 0;
+
+  /* Run the first Prepare() here rather than letting it land on the first
+   * audio block: it is the call that allocates and zeroes the ~190 KB of
+   * sample/FX buffers, which has no business happening under an audio
+   * deadline.  Afterwards Prepare() is cheap in Granular mode. */
+  processor_.Prepare();
+
   osc_phase_ = 0.0f;
   osc_frequency_ = midi_to_hz(60.0f);
   osc_active_ = false;
@@ -314,6 +339,14 @@ void OSC_CYCLE(const user_osc_param_t *const params,
    * use this trigger and are left untouched. */
   p->trigger = osc_active_ &&
       processor_.playback_mode() == PLAYBACK_MODE_GRANULAR;
+
+  /* Apply latched engine reconfiguration on this (audio) thread, so the
+   * buffer layout can never change underneath Process(). */
+  if ((int32_t)processor_.playback_mode() != pending_mode_)
+    processor_.set_playback_mode(static_cast<PlaybackMode>(pending_mode_));
+  if (processor_.quality() != pending_quality_)
+    processor_.set_quality(pending_quality_);
+  processor_.set_freeze(pending_freeze_ != 0);
 
   /* Prepare handles mode/quality switches and buffer resets */
   processor_.Prepare();
@@ -429,18 +462,20 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       shiftshape = param_val_to_f32(value);
       break;
 
-    /* Custom params passed by the wrapper */
+    /* Custom params passed by the wrapper.
+     * These reconfigure the engine, so they are only latched here and
+     * applied by OSC_CYCLE on the audio thread (see pending_* above). */
     case 8: /* Freeze (0 = off, 1 = on) */
-      processor_.set_freeze(value != 0);
+      pending_freeze_ = (value != 0) ? 1 : 0;
       break;
 
     case 9: /* Mode (0-3: Granular/Stretch/Delay/Spectral) */
       if (value < PLAYBACK_MODE_LAST)
-        processor_.set_playback_mode(static_cast<PlaybackMode>(value));
+        pending_mode_ = value;
       break;
 
     case 10: /* Quality (0-3: StHi/MoHi/StLo/MoLo) */
-      processor_.set_quality(value & 0x3);
+      pending_quality_ = value & 0x3;
       break;
 
     case 11: /* SampleBank (0-15) */
