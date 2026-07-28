@@ -278,10 +278,10 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
 
 **Sound design tips:**
-- Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to the full 32-grain pool. It is also the main CPU control — the engine costs roughly 2.5x as much at 100% as at 0%. Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
+- Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to roughly 18 grains. The knob is linear in grain count — the engine's own law is cubic, which put almost all the range and almost all the CPU in the top fifth of the travel, so it is inverted here and capped where the drumlogue can still pay for it. It remains the main CPU control (about 2x from 0% to 100%). Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
+- Mode 1 (Stretch) and Mode 3 (Spectral) currently crackle on hardware. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread; Spectral's worst block costs ten times the entire block budget. Modes 0 (Granular) and 2 (Looping Delay) are unaffected. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
-- Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
 
@@ -289,7 +289,14 @@ For more information please read the excellent [Mutable Instruments Clouds docum
 
 CloudsFX (Clouds as an insert effect)
 ----
-*Granular delay/texture effect (drumlogue only)*
+*Granular delay/texture effect (drumlogue only)* — **work in progress**
+
+> **This unit still crashes on hardware.** The first trigger produces correct
+> sound and the audio interface then goes silent. The cause is understood — a
+> deferred engine reset performs ~180 KB of buffer clearing inside an audio
+> callback — but the fix is not implemented yet. See
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+> Build and experiment with it, but do not rely on it in a set.
 
 The synth `clouds` above has to invent an input — an internal sawtooth or a
 loaded sample — because a drumlogue **synth** unit's render callback ignores
@@ -624,6 +631,13 @@ switch the engine between its 16-bit and 8-bit buffers, and only the following
 `Prepare()` sets the matching buffer up. `make test-arm` runs a control thread
 hammering all four callbacks against 4000 rendered blocks per unit; the
 pre-fix `unit_reset()` segfaults under it.
+
+Deferring to the audio thread trades a data race for a deadline problem,
+though: a reallocating `Prepare()` clears ~180 KB, which is far too much to do
+in one audio callback. That is the open CloudsFX bug. Both the analysis and
+the intended fix — do the reconfiguration on the control thread behind a
+handshake that keeps the renderer out of the engine — are written up in
+[docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 **Build outputs:**
 - `.prlgunit` files for prologue

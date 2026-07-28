@@ -246,20 +246,51 @@ static inline float clip_param(float x) {
  *
  * As a self-contained synth voice we want the knob to read sparse-to-dense
  * end to end, so 0..100 % maps monotonically onto the upper (probabilistic)
- * branch, density 0.68..1.0.  The lower branch's periodic grain clock is not
- * reachable; the trade is a knob with no silent middle.
+ * branch.  The lower branch's periodic grain clock is not reachable; the
+ * trade is a knob with no silent middle.
  *
  * This replaces forcing parameters.trigger on every block, which is what the
  * port used to do to work around the dead zone.  One trigger per 32-sample
  * block is 1500 grains/second: it pinned the grain pool at maximum wherever
  * DENSITY was set, put a 1500 Hz (block-rate) buzz on everything, and left
  * the engine at worst-case CPU permanently.  A trigger is now seeded once at
- * note-on, for an immediate attack, and the scheduler runs the cloud. */
-static const float kDensityMin = 0.68f;
+ * note-on, for an immediate attack, and the scheduler runs the cloud.
+ *
+ * The knob is linear in *grain count*, not in `density`.  Mapping the knob
+ * straight onto density 0.68..1.0 inherits the engine's cubic law, which puts
+ * almost all of the range — and almost all of the CPU — in the last fifth of
+ * the travel:
+ *
+ *      knob      10   30   50   70   80   90  100 %
+ *      grains     1    4    8   15   20   25   32
+ *
+ * The top fifth of that knob adds more grains than the bottom three fifths
+ * together, so the control is unusably bunched at the top and the last part
+ * of it costs more than the drumlogue can pay: measured on ARM, knob 100 %
+ * is 3.1x the block cost of knob 0 %, which puts Clouds above Rings — the
+ * most expensive stock unit — with a whole kit still to render.
+ *
+ * Inverting the cube spreads the grains evenly over the travel, and capping
+ * the top at kGrainsMax keeps the whole range payable.  kGrainsMax is
+ * expressed as a fraction of the pool the engine has allocated, so it tracks
+ * the Quality setting (32 grains stereo hi-fi, 40 mono, more when low-fi). */
+static const float kGrainsMin = 0.032f; /* ~1 grain: sparse but never silent */
+static const float kGrainsMax = 0.57f;  /* ~18 of 32: dense, and affordable  */
 
 static inline float density_to_clouds(float knob01) {
-  return kDensityMin + clip_param(knob01) * (1.0f - kDensityMin);
+  const float k = clip_param(knob01);
+  /* target_num_grains = max_num_grains * overlap^3, so a knob linear in
+   * grains needs the cube root. */
+  const float grains = kGrainsMin + k * (kGrainsMax - kGrainsMin);
+  const float overlap = cbrtf(grains);
+  return 0.53f + overlap * (1.0f / 2.12f);
 }
+
+/* Mapped DENSITY.  Recomputed by OSC_PARAM on the control thread so the cube
+ * root above never runs under the audio deadline; OSC_CYCLE only loads it.
+ * A plain aligned float is fine for that hand-off — it is one word, and a
+ * block rendered with the previous value is inaudible. */
+static volatile float density_mapped_ = 0.0f;
 
 /* Set by OSC_NOTEON (control thread), consumed by the next OSC_CYCLE. */
 static volatile bool note_trigger_ = false;
@@ -325,7 +356,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   params->position = 0.5f;
   params->size = 0.5f;
   params->pitch = 0.0f;
-  params->density = density_to_clouds(0.5f);
+  density_mapped_ = density_to_clouds(0.5f);
+  params->density = density_mapped_;
   params->texture = 0.5f;
   params->dry_wet = 1.0f; /* fully wet by default */
   params->stereo_spread = 0.5f;
@@ -375,7 +407,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   Parameters *p = processor_.mutable_parameters();
   p->position = clip_param(shape);                              /* id 1 */
   p->size = clip_param(shiftshape);                             /* id 2 */
-  p->density = density_to_clouds(p_values[k_user_osc_param_id1] * 0.01f); /* id 3 */
+  p->density = density_mapped_;                                  /* id 3 */
   p->texture = clip_param(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
   p->pitch = (float)pitch_semitones_;                        /* id 5 */
   p->feedback = clip_param(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
@@ -489,6 +521,10 @@ void OSC_PARAM(uint16_t index, uint16_t value)
 {
   switch (index) {
     case k_user_osc_param_id1: /* Density */
+      p_values[index] = value;
+      density_mapped_ = density_to_clouds(value * 0.01f);
+      break;
+
     case k_user_osc_param_id2: /* Texture */
     case k_user_osc_param_id4: /* Feedback */
     case k_user_osc_param_id5: /* Dry/Wet */
