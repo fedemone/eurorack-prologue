@@ -573,8 +573,9 @@ make test-arm
 logic bugs, but it cannot catch anything that only exists in the artifact the
 drumlogue actually loads. `make test-arm` cross-compiles the real
 `.drmlgunit` files and drives them through the SDK ABI under QEMU, checking
-the ARM/NEON paths, parameter sweeps, partial buffers, stack usage, and
-cross-unit isolation.
+the ARM/NEON paths, parameter sweeps, partial buffers, stack usage, the
+UI/preset callbacks over their whole declared range, cross-unit isolation,
+and — see below — control-thread callbacks racing `unit_render()`.
 
 ```bash
 apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
@@ -602,6 +603,27 @@ Every project's `config.mk` therefore links with
 `--version-script=drumlogue/unit_exports.map`, which exports only the
 callbacks the firmware looks up with `dlsym()`. `make test-arm` asserts that
 no unit exports anything else.
+
+**Control thread vs audio thread:**
+
+The drumlogue calls `unit_set_param_value()`, `unit_reset()`, `unit_suspend()`
+and `unit_resume()` from its control thread while `unit_render()` runs on the
+audio thread. Anything a control callback does that re-seats state the
+renderer is reading is a race, and two of them were real crashes:
+
+- `unit_reset()` on CloudsFX used to re-initialize the engine inline, which
+  rewrites the buffer pointers, heads and contents that `Process()` reads.
+- `osc_adapter_reset()` used to clear the render cursor pair inline. Landing
+  between the renderer's `n = min(need, avail)` and its `avail -= n` underflows
+  `avail` to ~2^32, after which the read position walks further off the end of
+  `s_render_buf` every block until it faults.
+
+Both now latch a request that the audio thread applies at the top of its next
+render, which is also where Clouds' Mode/Quality changes are applied — those
+switch the engine between its 16-bit and 8-bit buffers, and only the following
+`Prepare()` sets the matching buffer up. `make test-arm` runs a control thread
+hammering all four callbacks against 4000 rendered blocks per unit; the
+pre-fix `unit_reset()` segfaults under it.
 
 **Build outputs:**
 - `.prlgunit` files for prologue

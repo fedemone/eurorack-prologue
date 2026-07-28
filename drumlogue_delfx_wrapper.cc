@@ -31,6 +31,7 @@
 /* CloudsFX engine entry points (clouds-fx.cc) */
 extern "C" {
 void clouds_fx_init(void);
+void clouds_fx_request_reset(void);
 void clouds_fx_set_param(uint8_t id, int32_t value);
 void clouds_fx_process(const float *in, float *out, uint32_t frames);
 }
@@ -92,7 +93,9 @@ void unit_teardown() {
 __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
-  clouds_fx_init();
+  /* Only latch the request: re-initializing the engine rewrites the buffers
+   * unit_render() is reading, so it has to happen on the audio thread. */
+  clouds_fx_request_reset();
 }
 
 __unit_callback

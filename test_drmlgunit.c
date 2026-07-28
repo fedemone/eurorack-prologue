@@ -48,6 +48,12 @@ typedef void (*void_f)(void);
 typedef void (*render_f)(const float *, float *, uint32_t);
 typedef void (*setp_f)(uint8_t, int32_t);
 typedef void (*noteon_f)(uint8_t, uint8_t);
+typedef int32_t (*getp_f)(uint8_t);
+typedef const char *(*getstr_f)(uint8_t, int32_t);
+typedef const uint8_t *(*getbmp_f)(uint8_t, int32_t);
+typedef uint8_t (*getpreset_f)(void);
+typedef const char *(*presetname_f)(uint8_t);
+typedef void (*loadpreset_f)(uint8_t);
 
 typedef struct {
   const char *path;
@@ -56,6 +62,15 @@ typedef struct {
   render_f render;
   setp_f setp;
   noteon_f noteon;
+  getp_f getp;
+  getstr_f getstr;
+  getbmp_f getbmp;
+  getpreset_f get_preset_index;
+  presetname_f get_preset_name;
+  loadpreset_f load_preset;
+  void_f reset;
+  void_f resume;
+  void_f suspend;
   int is_synth;
   float peak;
 } unit_t;
@@ -82,6 +97,7 @@ static const char *const kPrivateSymbols[] = {
     "clouds_fx_init",
     "clouds_fx_process",
     "clouds_fx_set_param",
+    "clouds_fx_request_reset",
 };
 
 static unit_t s_units[MAX_UNITS];
@@ -132,9 +148,18 @@ static int load_unit(const char *path) {
   u->render = (render_f)dlsym(h, "unit_render");
   u->setp = (setp_f)dlsym(h, "unit_set_param_value");
   u->noteon = (noteon_f)dlsym(h, "unit_note_on");
+  u->getp = (getp_f)dlsym(h, "unit_get_param_value");
+  u->getstr = (getstr_f)dlsym(h, "unit_get_param_str_value");
+  u->getbmp = (getbmp_f)dlsym(h, "unit_get_param_bmp_value");
+  u->get_preset_index = (getpreset_f)dlsym(h, "unit_get_preset_index");
+  u->get_preset_name = (presetname_f)dlsym(h, "unit_get_preset_name");
+  u->load_preset = (loadpreset_f)dlsym(h, "unit_load_preset");
+  u->reset = (void_f)dlsym(h, "unit_reset");
+  u->resume = (void_f)dlsym(h, "unit_resume");
+  u->suspend = (void_f)dlsym(h, "unit_suspend");
   init_f f_init = (init_f)dlsym(h, "unit_init");
-  void_f f_reset = (void_f)dlsym(h, "unit_reset");
-  void_f f_resume = (void_f)dlsym(h, "unit_resume");
+  void_f f_reset = u->reset;
+  void_f f_resume = u->resume;
 
   if (!u->hdr || !f_init || !u->render || !u->setp) {
     printf("  FAIL : %s is missing required unit ABI symbols\n", path);
@@ -244,6 +269,133 @@ static void exercise_unit(unit_t *u) {
   CHECK(!nonfinite, "%s: partial buffers are finite", u->hdr->name);
 }
 
+/* ---- UI / preset surface ----------------------------------------------
+ *
+ * The drumlogue calls these from its UI thread, and it calls them for values
+ * the audio path never sees: it walks a strings parameter over its whole
+ * declared [min,max] to draw the selector list, and it reads preset names
+ * before any preset has been loaded.  A short string table behind a wider
+ * declared range is an out-of-bounds read that only the device triggers, so
+ * probe the full declared surface plus a margin either side.
+ * ---------------------------------------------------------------------- */
+
+/* A returned string must be NUL-terminated within a sane bound; anything
+ * longer means we handed the firmware a pointer into unrelated memory. */
+static int readable_string(const char *s, size_t limit) {
+  for (size_t i = 0; i < limit; ++i)
+    if (s[i] == '\0') return 1;
+  return 0;
+}
+
+static void probe_ui_surface(unit_t *u) {
+  int bad_str = 0, missing_str = 0, bad_preset = 0;
+
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+    const int lo = u->hdr->params[p].min;
+    const int hi = u->hdr->params[p].max;
+    const int strings = u->hdr->params[p].type == k_unit_param_type_strings;
+
+    /* Two values past each end: the firmware clamps, but a unit that indexes
+     * a table without checking would fault here rather than on the device. */
+    for (int v = lo - 2; v <= hi + 2; ++v) {
+      if (u->getstr) {
+        const char *s = u->getstr((uint8_t)p, v);
+        if (s && !readable_string(s, 64)) bad_str = 1;
+        /* Inside the declared range a strings parameter owes the UI a label. */
+        if (strings && v >= lo && v <= hi && !s) missing_str = 1;
+      }
+      if (u->getbmp) (void)u->getbmp((uint8_t)p, v);
+    }
+    if (u->getp) (void)u->getp((uint8_t)p);
+  }
+
+  /* Parameter slots past num_params: the runtime pushes and reads all 24. */
+  for (uint32_t p = u->hdr->num_params; p < UNIT_MAX_PARAM_COUNT; ++p) {
+    if (u->getp) (void)u->getp((uint8_t)p);
+    if (u->getstr) {
+      const char *s = u->getstr((uint8_t)p, 0);
+      if (s && !readable_string(s, 64)) bad_str = 1;
+    }
+    if (u->getbmp) (void)u->getbmp((uint8_t)p, 0);
+  }
+
+  CHECK(!bad_str, "%s: every param string is NUL-terminated", u->hdr->name);
+  CHECK(!missing_str, "%s: strings params label their whole range",
+        u->hdr->name);
+
+  if (u->get_preset_index) (void)u->get_preset_index();
+  for (int i = 0; i <= (int)u->hdr->num_presets + 1 && i < 256; ++i) {
+    if (u->get_preset_name) {
+      const char *s = u->get_preset_name((uint8_t)i);
+      if (s && !readable_string(s, 64)) bad_preset = 1;
+    }
+    if (u->load_preset && i < (int)u->hdr->num_presets)
+      u->load_preset((uint8_t)i);
+  }
+  CHECK(!bad_preset, "%s: every preset name is NUL-terminated", u->hdr->name);
+}
+
+/* ---- control thread racing the audio thread ---------------------------
+ *
+ * On the device unit_set_param_value(), unit_reset(), unit_suspend() and
+ * unit_resume() come from the UI/control thread while unit_render() runs on
+ * the audio thread.  Anything a callback does that re-seats a buffer the
+ * renderer is reading is a race the single-threaded checks above cannot see.
+ * ---------------------------------------------------------------------- */
+
+static unit_t *s_race_unit;
+static volatile int s_race_stop;
+
+static void *control_worker(void *arg) {
+  (void)arg;
+  unit_t *u = s_race_unit;
+  unsigned seed = 12345;
+  while (!s_race_stop) {
+    for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+      const int lo = u->hdr->params[p].min;
+      const int hi = u->hdr->params[p].max;
+      seed = seed * 1103515245u + 12345u;
+      u->setp((uint8_t)p, lo + (int)((seed >> 16) % (unsigned)(hi - lo + 1)));
+    }
+    if (u->reset) u->reset();
+    if (u->suspend) u->suspend();
+    if (u->resume) u->resume();
+  }
+  return NULL;
+}
+
+static void race_control_thread(unit_t *u) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  int nonfinite = 0;
+  int phase = 0;
+
+  s_race_unit = u;
+  s_race_stop = 0;
+  pthread_t th;
+  if (pthread_create(&th, NULL, control_worker, NULL) != 0) return;
+
+  if (u->is_synth && u->noteon) u->noteon(60, 100);
+  for (int b = 0; b < 4000; ++b) {
+    fill_input(in, phase);
+    phase += FRAMES;
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES * 2; ++i)
+      if (!isfinite(out[i])) nonfinite = 1;
+  }
+
+  s_race_stop = 1;
+  pthread_join(th, NULL);
+
+  /* Put the unit back in a known state for the checks that follow. */
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+  if (u->resume) u->resume();
+
+  CHECK(!nonfinite, "%s: survives concurrent control-thread traffic",
+        u->hdr->name);
+}
+
 /* ---- stack high-water measurement ------------------------------------- */
 
 static unit_t *s_stack_unit;
@@ -321,6 +473,12 @@ int main(int argc, char **argv) {
 
   printf("\n=== Rendering ===\n");
   for (int i = 0; i < s_num_units; ++i) exercise_unit(&s_units[i]);
+
+  printf("\n=== UI / preset callbacks ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_ui_surface(&s_units[i]);
+
+  printf("\n=== Control thread racing audio thread ===\n");
+  for (int i = 0; i < s_num_units; ++i) race_control_thread(&s_units[i]);
 
   printf("\n=== Cross-unit isolation ===\n");
   for (int i = 0; i < s_num_units; ++i) {

@@ -74,6 +74,17 @@ static volatile int32_t pending_mode_ = 0;
 static volatile int32_t pending_quality_ = 0;
 static volatile int32_t pending_freeze_ = 0;
 
+/* unit_reset() is latched the same way, and for the same reason.
+ *
+ * A reset has to re-Init() every DSP block and re-Prepare() the sample and
+ * FX buffers — it rewrites the very pointers, head positions and buffer
+ * contents that Process() is reading.  Running that straight from the
+ * drumlogue's control thread would corrupt whatever block the audio thread
+ * is in the middle of; it is also ~190 KB of work, which does not belong on
+ * a control callback either.  clouds_fx_request_reset() just raises this
+ * flag and clouds_fx_process() performs the reset on the audio thread. */
+static volatile int32_t pending_reset_ = 0;
+
 static inline int16_t f32_to_s16(float x) {
   float s = x * kInScale;
   if (s >  32767.0f) s =  32767.0f;
@@ -92,16 +103,37 @@ static inline float s16_to_f32(int16_t x) {
  * FX entry points (called by drumlogue_delfx_wrapper.cc)
  * ==================================================================== */
 
+/* Bring the engine up from scratch, keeping the current parameter values.
+ *
+ * GranularProcessor::Init() re-seats the buffer pointers and sets
+ * reset_buffers_, and the Prepare() below then re-allocates the FX workspace
+ * and re-Init()s the audio buffers — AudioBuffer::Init() zero-fills them, so
+ * no explicit memset is needed here.
+ *
+ * AUDIO THREAD ONLY: every caller must reach this either from
+ * clouds_fx_process() or before the unit is rendering at all. */
+static void engine_reset(void) {
+  processor_.Init(large_buffer_, kLargeBufferSize,
+                  small_buffer_, kSmallBufferSize);
+  processor_.set_playback_mode(static_cast<PlaybackMode>(pending_mode_));
+  processor_.set_quality(pending_quality_);
+  processor_.set_bypass(false);
+  processor_.set_silence(false);
+  processor_.set_freeze(pending_freeze_ != 0);
+
+  Parameters *p = processor_.mutable_parameters();
+  p->trigger = false;
+  p->gate = false;
+
+  /* Run Prepare() here rather than letting it land on the first audio block:
+   * it is the call that allocates and zeroes the ~190 KB of sample/FX
+   * buffers.  Afterwards Prepare() is cheap in Granular mode. */
+  processor_.Prepare();
+}
+
 extern "C" void clouds_fx_init(void) {
   memset(large_buffer_, 0, kLargeBufferSize);
   memset(small_buffer_, 0, kSmallBufferSize);
-
-  processor_.Init(large_buffer_, kLargeBufferSize,
-                  small_buffer_, kSmallBufferSize);
-  processor_.set_playback_mode(PLAYBACK_MODE_GRANULAR);
-  processor_.set_quality(0); /* Stereo, high fidelity */
-  processor_.set_bypass(false);
-  processor_.set_silence(false);
 
   Parameters *p = processor_.mutable_parameters();
   p->position = 0.5f;
@@ -118,16 +150,19 @@ extern "C" void clouds_fx_init(void) {
   p->gate = false;
 
   pending_mode_ = PLAYBACK_MODE_GRANULAR;
-  pending_quality_ = 0;
+  pending_quality_ = 0;   /* Stereo, high fidelity */
   pending_freeze_ = 0;
-
-  /* Run the first Prepare() here rather than letting it land on the first
-   * audio block: it is the call that allocates and zeroes the ~190 KB of
-   * sample/FX buffers, which has no business happening under an audio
-   * deadline.  Afterwards Prepare() is cheap in Granular mode. */
-  processor_.Prepare();
+  pending_reset_ = 0;
 
   pitch_semitones_ = 0;
+
+  engine_reset();
+}
+
+/* Called from unit_reset() on the drumlogue's control thread — see
+ * pending_reset_.  Deliberately does no work beyond raising the flag. */
+extern "C" void clouds_fx_request_reset(void) {
+  pending_reset_ = 1;
 }
 
 /* id is the drumlogue CloudsFX param id (see header.c CLOUDS_FX block). */
@@ -179,6 +214,12 @@ extern "C" void clouds_fx_set_param(uint8_t id, int32_t value) {
 /* Process interleaved stereo float in -> interleaved stereo float out. */
 extern "C" void clouds_fx_process(const float *in, float *out,
                                   uint32_t frames) {
+  /* Apply a latched unit_reset() before anything reads the engine state. */
+  if (pending_reset_) {
+    pending_reset_ = 0;
+    engine_reset();
+  }
+
   Parameters *p = processor_.mutable_parameters();
   /* As an insert FX the engine is always "sounding". */
   p->gate = true;
