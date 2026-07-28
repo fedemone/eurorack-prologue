@@ -27,6 +27,7 @@
 #include "runtime.h"
 #include "unit.h"
 #include "attributes.h"
+#include "drumlogue_fpu.h"
 
 /* CloudsFX engine entry points (clouds-fx.cc) */
 extern "C" {
@@ -132,7 +133,11 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     copy_through(in, out, frames);
     return;
   }
+  /* Flush denormals for the whole render — the reverb/diffuser tails and the
+   * parameter smoothers decay straight into them.  See drumlogue_fpu.h. */
+  const uint32_t fpscr = fpu_begin_audio();
   clouds_fx_process(in, out, frames);
+  fpu_end_audio(fpscr);
 }
 
 /* ===========================================================================

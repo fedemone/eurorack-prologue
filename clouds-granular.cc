@@ -77,21 +77,49 @@ static int32_t pitch_semitones_ = 0;
 
 /* Sample playback state
  *
- * Thread safety: load_sample() is called from the param/UI thread,
- * while generate_sample_input() runs on the audio thread. To avoid
- * torn reads, OSC_CYCLE snapshots the sample state into a local
- * SampleSnapshot before calling generate_sample_input(). load_sample()
- * writes sample_ptr_ last (after frames/channels) so the audio thread
- * sees either the old complete state or the new complete state.
+ * load_sample() runs on the drumlogue's param/UI thread while
+ * generate_sample_input() reads the sample on the audio thread, so pointer
+ * and length have to reach the reader as one unit.  Publishing them as
+ * separate variables — however carefully ordered, and even with the pointer
+ * written last — does not achieve that: the audio thread can read the OLD
+ * pointer just before load_sample() runs and the NEW length just after, then
+ * index a short sample with a long sample's frame count and read clean off
+ * the end of the buffer.
+ *
+ * Instead each load fills the slot that is NOT currently published and then
+ * publishes its address with a release store.  A record is therefore never
+ * mutated while it is reachable, and the acquire load below yields a pointer,
+ * length and channel count that were always written together.
  */
+struct SampleState {
+  const float *ptr;
+  size_t frames;
+  uint8_t channels;
+};
+
 static uint8_t sample_bank_ = 0;
 static uint8_t sample_number_ = 0;  /* 0 = use sawtooth, 1+ = sample */
-static const float * volatile sample_ptr_ = nullptr;
-static volatile size_t sample_frames_ = 0;
-static volatile uint8_t sample_channels_ = 0;
+static SampleState sample_slots_[2];
+static uint8_t sample_slot_ = 0;                    /* UI thread only */
+static SampleState *sample_state_ = nullptr;        /* published record */
 static size_t sample_read_pos_ = 0;
 static volatile uint16_t sample_start_permil_ = 0;     /* 0-1000 (0.0%-100.0%) */
 static volatile uint16_t sample_end_permil_ = 1000;    /* 0-1000 (0.0%-100.0%) */
+
+/* Publish a sample record (UI thread). Pass a null ptr to select the
+ * internal sawtooth. */
+static void publish_sample(const float *ptr, size_t frames, uint8_t channels) {
+  if (!ptr || frames == 0) {
+    __atomic_store_n(&sample_state_, (SampleState *)nullptr, __ATOMIC_RELEASE);
+    return;
+  }
+  sample_slot_ ^= 1;
+  SampleState *s = &sample_slots_[sample_slot_];
+  s->ptr = ptr;
+  s->frames = frames;
+  s->channels = channels;
+  __atomic_store_n(&sample_state_, s, __ATOMIC_RELEASE);
+}
 
 struct SampleSnapshot {
   const float *ptr;
@@ -100,6 +128,16 @@ struct SampleSnapshot {
   uint16_t start_permil;
   uint16_t end_permil;
 };
+
+/* Take a consistent snapshot of the sample state (audio thread). */
+static inline void snapshot_sample(SampleSnapshot *snap) {
+  const SampleState *s = __atomic_load_n(&sample_state_, __ATOMIC_ACQUIRE);
+  snap->ptr = s ? s->ptr : nullptr;
+  snap->frames = s ? s->frames : 0;
+  snap->channels = s ? s->channels : 0;
+  snap->start_permil = sample_start_permil_;
+  snap->end_permil = sample_end_permil_;
+}
 
 /* ======================================================================
  * Audio Input Sources
@@ -112,32 +150,22 @@ struct SampleSnapshot {
 
 static void load_sample(void) {
   if (sample_number_ == 0) {
-    /* Nullify ptr first to signal audio thread to stop reading */
-    sample_ptr_ = nullptr;
-    sample_frames_ = 0;
-    sample_channels_ = 0;
+    publish_sample(nullptr, 0, 0);
     return;
   }
   /* sample_number_ is 1-based; API is 0-based */
   const sample_wrapper_t *sw =
       osc_adapter_get_sample(sample_bank_, sample_number_ - 1);
   if (sw && sw->sample_ptr && sw->frames > 0) {
-    /* Nullify ptr first so audio thread won't use stale frames/channels
-     * with a new pointer. Then set size/channels, then ptr last. */
-    sample_ptr_ = nullptr;
-    sample_frames_ = sw->frames;
-    sample_channels_ = sw->channels;
-    /* Reset read position before exposing the new pointer */
+    /* Move the read position before publishing, so the audio thread never
+     * sees the new sample with the old sample's position. */
     size_t start = (size_t)((uint64_t)sample_start_permil_ * sw->frames / 1000);
     if (start >= sw->frames) start = sw->frames - 1;
     sample_read_pos_ = start;
-    /* Publish pointer last — audio thread checks ptr before reading */
-    sample_ptr_ = sw->sample_ptr;
+    publish_sample(sw->sample_ptr, sw->frames, sw->channels);
   } else {
-    sample_ptr_ = nullptr;
-    sample_frames_ = 0;
-    sample_channels_ = 0;
     sample_read_pos_ = 0;
+    publish_sample(nullptr, 0, 0);
   }
 }
 
@@ -324,10 +352,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
 
   sample_bank_ = 0;
   sample_number_ = 0;
-  sample_ptr_ = nullptr;
-  sample_frames_ = 0;
-  sample_channels_ = 0;
   sample_read_pos_ = 0;
+  publish_sample(nullptr, 0, 0);
   sample_start_permil_ = 0;
   sample_end_permil_ = 1000;
 }
@@ -376,11 +402,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* Snapshot sample state for thread-safe access during this block */
   SampleSnapshot snap;
-  snap.ptr = sample_ptr_;
-  snap.frames = sample_frames_;
-  snap.channels = sample_channels_;
-  snap.start_permil = sample_start_permil_;
-  snap.end_permil = sample_end_permil_;
+  snapshot_sample(&snap);
 
   /* Generate input audio */
   ShortFrame input[kMaxBlockSize];
@@ -443,11 +465,11 @@ void OSC_NOTEON(const user_osc_param_t *const params)
   note_trigger_ = true;
   /* Reset sample playback to start point */
   {
-    const float *ptr = sample_ptr_;
-    size_t frames = sample_frames_;
-    if (ptr && frames > 0) {
-      size_t start = (size_t)((uint64_t)sample_start_permil_ * frames / 1000);
-      if (start >= frames) start = frames - 1;
+    SampleSnapshot snap;
+    snapshot_sample(&snap);
+    if (snap.ptr && snap.frames > 0) {
+      size_t start = (size_t)((uint64_t)snap.start_permil * snap.frames / 1000);
+      if (start >= snap.frames) start = snap.frames - 1;
       sample_read_pos_ = start;
     } else {
       sample_read_pos_ = 0;

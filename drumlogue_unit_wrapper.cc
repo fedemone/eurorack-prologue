@@ -36,6 +36,7 @@
 #include "runtime.h"
 #include "unit.h"
 #include "attributes.h"
+#include "drumlogue_fpu.h"
 
 /* ===========================================================================
  * Module State
@@ -205,6 +206,11 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     return;
   }
 
+  /* Flush denormals for the whole render.  Every decaying tail in these
+   * engines — reverb, filter states, parameter smoothers — lands in the
+   * denormal range once a note stops.  See drumlogue_fpu.h. */
+  const uint32_t fpscr = fpu_begin_audio();
+
   /* Advance internal LFO1 and feed shape_lfo to the adapter.
    * Frequency range matches LFO2: param/600 per block of 24 samples at 48kHz,
    * giving 0-3.3 Hz at 0-100%.  Here we compute per render call. */
@@ -279,6 +285,8 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     remaining -= n;
   }
 #endif
+
+  fpu_end_audio(fpscr);
 }
 
 /* ===========================================================================
