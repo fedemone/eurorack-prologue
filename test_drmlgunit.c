@@ -335,6 +335,69 @@ static void probe_ui_surface(unit_t *u) {
   CHECK(!bad_preset, "%s: every preset name is NUL-terminated", u->hdr->name);
 }
 
+/* ---- Density must stay out of Clouds' dead zone -----------------------
+ *
+ * Clouds' DENSITY is bipolar around 0.5 and schedules no grains at all
+ * between 0.47 and 0.53 — a knob set to its own midpoint is silent.  The port
+ * used to paper over that by asserting parameters.trigger on every block,
+ * which seeds a grain per 32 samples: a block-rate buzz, and the grain pool
+ * pinned at maximum however DENSITY was set.  Density now maps onto the
+ * scheduler's usable range instead, so check both that the low end still
+ * makes sound and that the knob actually changes the grain load.
+ * ---------------------------------------------------------------------- */
+
+static float render_rms(unit_t *u, int blocks, int *phase) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  double sum = 0.0;
+  for (int b = 0; b < blocks; ++b) {
+    fill_input(in, *phase);
+    *phase += FRAMES;
+    memset(out, 0, sizeof(out));
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES * 2; ++i) sum += (double)out[i] * out[i];
+  }
+  return (float)sqrt(sum / (blocks * FRAMES * 2));
+}
+
+static void probe_density(unit_t *u) {
+  int id = -1;
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+    if (strcmp(u->hdr->params[p].name, "Density") == 0) { id = (int)p; break; }
+  }
+  if (id < 0) return;
+
+  const int lo = u->hdr->params[id].min;
+  const int hi = u->hdr->params[id].max;
+  const int mid = lo + (hi - lo) / 2;
+  int phase = 0;
+
+  /* Dry signal would mask the result, so ask for as wet a path as the unit
+   * offers; on the synth there is no dry path to begin with. */
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    if (strcmp(u->hdr->params[p].name, "Dry/Wet") == 0)
+      u->setp((uint8_t)p, u->hdr->params[p].max);
+  if (u->is_synth && u->noteon) u->noteon(60, 100);
+
+  float rms[3];
+  const int vals[3] = {lo, mid, hi};
+  for (int k = 0; k < 3; ++k) {
+    u->setp((uint8_t)id, vals[k]);
+    (void)render_rms(u, 200, &phase);      /* let the grain pool settle */
+    rms[k] = render_rms(u, 400, &phase);
+  }
+
+  CHECK(rms[0] > 1e-4f, "%s: Density %d%% still sounds (rms %.5f)",
+        u->hdr->name, lo, rms[0]);
+  CHECK(rms[1] > 1e-4f, "%s: Density %d%% still sounds (rms %.5f)",
+        u->hdr->name, mid, rms[1]);
+  CHECK(rms[2] > rms[0], "%s: Density scales the cloud (%.5f -> %.5f)",
+        u->hdr->name, rms[0], rms[2]);
+
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+}
+
 /* ---- control thread racing the audio thread ---------------------------
  *
  * On the device unit_set_param_value(), unit_reset(), unit_suspend() and
@@ -473,6 +536,9 @@ int main(int argc, char **argv) {
 
   printf("\n=== Rendering ===\n");
   for (int i = 0; i < s_num_units; ++i) exercise_unit(&s_units[i]);
+
+  printf("\n=== Density / grain scheduling ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_density(&s_units[i]);
 
   printf("\n=== UI / preset callbacks ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_ui_surface(&s_units[i]);

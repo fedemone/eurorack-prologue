@@ -263,7 +263,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
 | 1 | Position | Where in the buffer to read grains (0-100%) |
 | 2 | Size | Grain length / buffer region (0-100%) |
-| 3 | Density | Extra grain rate / overlap on top of the base grain stream (0-100%) |
+| 3 | Density | Grain rate / overlap — sparse individual grains to a dense cloud (0-100%) |
 | 4 | Texture | Grain window shape / filtering (0-100%) |
 | 5 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
 | 6 | Feedback | Amount of output fed back into input (0-100%) |
@@ -278,7 +278,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
 
 **Sound design tips:**
-- Mode 0 (Granular) produces a continuous grain stream at any Density (grains are seeded automatically); Density adds extra overlap on top. Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
+- Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to the full 32-grain pool. It is also the main CPU control — the engine costs roughly 2.5x as much at 100% as at 0%. Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects
@@ -311,7 +311,7 @@ SmplStart / SmplEnd**:
 |---|------|-------------|
 | 0 | Position | Where in the buffer to read grains (0-100%) |
 | 1 | Size | Grain length / buffer region (0-100%) |
-| 2 | Density | Extra grain rate / overlap on top of the base grain stream (0-100%) |
+| 2 | Density | Grain rate / overlap — sparse individual grains to a dense cloud (0-100%) |
 | 3 | Texture | Grain window shape / filtering (0-100%) |
 | 4 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
 | 5 | Feedback | Amount of output fed back into input (0-100%) |

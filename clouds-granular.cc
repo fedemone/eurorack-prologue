@@ -207,6 +207,35 @@ static inline float clip_param(float x) {
   return (x < 0.f) ? 0.f : ((x > 0.9995f) ? 0.9995f : x);
 }
 
+/* Density: map the knob onto Clouds' grain scheduler, skipping its dead zone.
+ *
+ * Clouds' DENSITY is bipolar around 0.5.  ProcessGranular() derives the
+ * scheduler's `overlap` as (density - 0.53) * 2.12 above the centre and
+ * (0.47 - density) * 2.12 below it, so 0.47..0.53 schedules no grains at all.
+ * GranularSamplePlayer::Play() then takes target_num_grains =
+ * max_num_grains * overlap^3, so the useful range runs from overlap ~0.32
+ * (about one grain) to 1.0 (all 32 in stereo hi-fi).
+ *
+ * As a self-contained synth voice we want the knob to read sparse-to-dense
+ * end to end, so 0..100 % maps monotonically onto the upper (probabilistic)
+ * branch, density 0.68..1.0.  The lower branch's periodic grain clock is not
+ * reachable; the trade is a knob with no silent middle.
+ *
+ * This replaces forcing parameters.trigger on every block, which is what the
+ * port used to do to work around the dead zone.  One trigger per 32-sample
+ * block is 1500 grains/second: it pinned the grain pool at maximum wherever
+ * DENSITY was set, put a 1500 Hz (block-rate) buzz on everything, and left
+ * the engine at worst-case CPU permanently.  A trigger is now seeded once at
+ * note-on, for an immediate attack, and the scheduler runs the cloud. */
+static const float kDensityMin = 0.68f;
+
+static inline float density_to_clouds(float knob01) {
+  return kDensityMin + clip_param(knob01) * (1.0f - kDensityMin);
+}
+
+/* Set by OSC_NOTEON (control thread), consumed by the next OSC_CYCLE. */
+static volatile bool note_trigger_ = false;
+
 /* Mode / Quality are latched here and applied on the audio thread.
  *
  * set_playback_mode() and set_quality() do more than store a setting: they
@@ -268,7 +297,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   params->position = 0.5f;
   params->size = 0.5f;
   params->pitch = 0.0f;
-  params->density = 0.5f;
+  params->density = density_to_clouds(0.5f);
   params->texture = 0.5f;
   params->dry_wet = 1.0f; /* fully wet by default */
   params->stereo_spread = 0.5f;
@@ -320,7 +349,7 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   Parameters *p = processor_.mutable_parameters();
   p->position = clip_param(shape);                              /* id 1 */
   p->size = clip_param(shiftshape);                             /* id 2 */
-  p->density = clip_param(p_values[k_user_osc_param_id1] * 0.01f);  /* id 3 */
+  p->density = density_to_clouds(p_values[k_user_osc_param_id1] * 0.01f); /* id 3 */
   p->texture = clip_param(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
   p->pitch = (float)pitch_semitones_;                        /* id 5 */
   p->feedback = clip_param(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
@@ -328,17 +357,11 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   p->reverb = clip_param(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
   p->gate = osc_active_;
 
-  /* Continuously seed a grain each block while the voice is sounding, but
-   * only in Granular mode.  Clouds' granular scheduler otherwise fires grains
-   * solely from the DENSITY meta-parameter, which has a silent "dead zone"
-   * around 50% (overlap == 0) and, away from it, produces sparse, loud grains
-   * that clip and click.  As an audio *processor* Clouds expects an external
-   * grain clock here; as a self-contained synth voice we supply one, giving a
-   * smooth, uninterrupted texture at every DENSITY setting (DENSITY still adds
-   * further grains on top).  The other modes (Stretch/Delay/Spectral) don't
-   * use this trigger and are left untouched. */
-  p->trigger = osc_active_ &&
-      processor_.playback_mode() == PLAYBACK_MODE_GRANULAR;
+  /* Seed exactly one grain per note-on, so the attack is immediate instead of
+   * waiting on the probabilistic scheduler.  The cloud itself is scheduled
+   * from DENSITY — see density_to_clouds(). */
+  p->trigger = note_trigger_;
+  note_trigger_ = false;
 
   /* Apply latched engine reconfiguration on this (audio) thread, so the
    * buffer layout can never change underneath Process(). */
@@ -417,6 +440,7 @@ void OSC_NOTEON(const user_osc_param_t *const params)
 {
   (void)params;
   osc_active_ = true;
+  note_trigger_ = true;
   /* Reset sample playback to start point */
   {
     const float *ptr = sample_ptr_;

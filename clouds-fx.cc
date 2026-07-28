@@ -60,6 +60,25 @@ static inline float clamp01(float x) {
   return (x < 0.0f) ? 0.0f : ((x > 0.9995f) ? 0.9995f : x);
 }
 
+/* Density: map the knob onto Clouds' grain scheduler, skipping its dead zone.
+ *
+ * Clouds' DENSITY is bipolar around 0.5 and schedules no grains at all
+ * between 0.47 and 0.53; above that, target_num_grains is max_num_grains *
+ * ((density - 0.53) * 2.12)^3, so the useful range runs from about one grain
+ * to all 32.  0..100 % therefore maps monotonically onto density 0.68..1.0.
+ *
+ * This replaces setting parameters.trigger on every block, which seeded a
+ * grain every 32 samples — 1500 grains/second, from the moment the unit
+ * loaded.  That pinned the grain pool at maximum whatever DENSITY said, put a
+ * 1500 Hz (block-rate) buzz on the wet signal, and held the engine at
+ * worst-case CPU for as long as the effect was inserted.  See the matching
+ * comment in clouds-granular.cc. */
+static const float kDensityMin = 0.68f;
+
+static inline float density_to_clouds(float knob01) {
+  return kDensityMin + clamp01(knob01) * (1.0f - kDensityMin);
+}
+
 /* Mode / Quality / Freeze are latched here and applied on the audio thread.
  *
  * set_playback_mode() and set_quality() change num_channels_ and
@@ -139,7 +158,7 @@ extern "C" void clouds_fx_init(void) {
   p->position = 0.5f;
   p->size = 0.5f;
   p->pitch = 0.0f;
-  p->density = 0.5f;
+  p->density = density_to_clouds(0.5f);
   p->texture = 0.5f;
   p->dry_wet = 0.5f;        /* 50 % wet: sensible default for an insert FX */
   p->stereo_spread = 0.5f;
@@ -176,7 +195,7 @@ extern "C" void clouds_fx_set_param(uint8_t id, int32_t value) {
       p->size = clamp01(value * 0.01f);
       break;
     case 2: /* Density: 0-100 % */
-      p->density = clamp01(value * 0.01f);
+      p->density = density_to_clouds(value * 0.01f);
       break;
     case 3: /* Texture: 0-100 % */
       p->texture = clamp01(value * 0.01f);
@@ -240,10 +259,9 @@ extern "C" void clouds_fx_process(const float *in, float *out,
     uint32_t n = frames - done;
     if (n > kMaxBlockSize) n = kMaxBlockSize;
 
-    /* Seed a grain each block in Granular mode so the texture stays smooth
-     * even when the incoming audio is steady (mirrors the synth port). The
-     * other modes drive themselves from the input and ignore this. */
-    p->trigger = (processor_.playback_mode() == PLAYBACK_MODE_GRANULAR);
+    /* No external trigger input on the FX bus: the grain clock comes from
+     * DENSITY via the engine's own scheduler (see density_to_clouds()). */
+    p->trigger = false;
 
     /* Prepare handles mode/quality switches and buffer resets. */
     processor_.Prepare();
