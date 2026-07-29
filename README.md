@@ -280,7 +280,8 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 **Sound design tips:**
 - Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to roughly 18 grains. The knob is linear in grain count — the engine's own law is cubic, which put almost all the range and almost all the CPU in the top fifth of the travel, so it is inverted here and capped where the drumlogue can still pay for it. It remains the main CPU control (about 2x from 0% to 100%). Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
-- Mode 1 (Stretch) and Mode 3 (Spectral) currently crackle on hardware. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread; Spectral's worst block costs ten times the entire block budget. Modes 0 (Granular) and 2 (Looping Delay) are unaffected. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
+- Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
+- The engine runs at Clouds' native 32 kHz, converted to and from the drumlogue's 48 kHz at the edges. Size, delay times and the buffer's capacity are therefore 1.5x longer in real time than earlier builds — that is what the hardware sounds like — and the buffer takes 1.5x longer to fill, so give a fresh voice a moment before high Position settings have material. Pitch is unchanged. The top end rolls off above 13 kHz, roughly like Clouds' own codec
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
@@ -289,14 +290,22 @@ For more information please read the excellent [Mutable Instruments Clouds docum
 
 CloudsFX (Clouds as an insert effect)
 ----
-*Granular delay/texture effect (drumlogue only)* — **work in progress**
+*Granular delay/texture effect (drumlogue only)*
 
-> **This unit still crashes on hardware.** The first trigger produces correct
-> sound and the audio interface then goes silent. The cause is understood — a
-> deferred engine reset performs ~180 KB of buffer clearing inside an audio
-> callback — but the fix is not implemented yet. See
+> **Not yet confirmed on hardware.** The previous build crashed: the first
+> trigger produced correct sound and the audio interface then went silent.
+> The cause was a deferred engine reset doing ~180 KB of buffer clearing
+> inside an audio callback. That work now happens on the control thread with
+> the renderer parked, and the engine runs at 32 kHz, but the fix has only
+> been verified on the host and under QEMU. See
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
-> Build and experiment with it, but do not rely on it in a set.
+> Changing Mode, Quality or resetting the unit mutes it for 2-4 blocks while
+> the engine is rebuilt; that is by design.
+>
+> CloudsFX now matches the synth: the same grain-linear Density mapping and
+> the same 32 kHz engine. It adds about 2.2 ms of latency, dry included —
+> passing the dry signal round the conversion would put it ahead of the wet
+> path and comb-filter the mix.
 
 The synth `clouds` above has to invent an input — an internal sawtooth or a
 loaded sample — because a drumlogue **synth** unit's render callback ignores
@@ -570,6 +579,13 @@ PLATFORM=prologue make -f osc_fm.mk
 # Run host-side tests (no Docker/ARM needed)
 make test-all
 
+# Clouds-specific suites (also part of test-all)
+make test-clouds-synth          # real engine behind OSC_*: pitch across the
+                                # 48/32 kHz boundary, all modes x qualities
+make test-clouds-fx             # FX bus in -> engine -> out, dry and wet
+make test-clouds-fx-reconfig    # render thread vs control thread doing
+                                # Mode/Quality/reset (the park handshake)
+
 # Run the shipped .drmlgunit binaries on emulated ARM
 make test-arm
 ```
@@ -625,18 +641,23 @@ renderer is reading is a race, and two of them were real crashes:
   `avail` to ~2^32, after which the read position walks further off the end of
   `s_render_buf` every block until it faults.
 
-Both now latch a request that the audio thread applies at the top of its next
-render, which is also where Clouds' Mode/Quality changes are applied — those
-switch the engine between its 16-bit and 8-bit buffers, and only the following
-`Prepare()` sets the matching buffer up. `make test-arm` runs a control thread
-hammering all four callbacks against 4000 rendered blocks per unit; the
-pre-fix `unit_reset()` segfaults under it.
+`osc_adapter_reset()` now latches a request that the audio thread applies at
+the top of its next render, which is also where the Clouds synth applies
+Mode/Quality changes — those switch the engine between its 16-bit and 8-bit
+buffers, and only the following `Prepare()` sets the matching buffer up.
+`make test-arm` runs a control thread hammering all four callbacks against
+4000 rendered blocks per unit; the pre-fix `unit_reset()` segfaults under it.
 
-Deferring to the audio thread trades a data race for a deadline problem,
-though: a reallocating `Prepare()` clears ~180 KB, which is far too much to do
-in one audio callback. That is the open CloudsFX bug. Both the analysis and
-the intended fix — do the reconfiguration on the control thread behind a
-handshake that keeps the renderer out of the engine — are written up in
+Deferring to the audio thread only works when the deferred work is small,
+though, and CloudsFX's was not: a reallocating `Prepare()` clears ~180 KB,
+which trades a data race for a blown deadline. CloudsFX therefore does the
+opposite — the control thread asks the renderer to stand down, waits for it to
+acknowledge, reconfigures the engine itself, and hands it back. The renderer
+never blocks and never reallocates; it emits silence for the two to four
+blocks the handover takes. `make test-clouds-fx-reconfig` drives that from two
+real threads at three buffer sizes. The protocol, including why the park
+transition has to be a compare-exchange and why the wait needs two different
+timeouts, is written up in
 [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 **Build outputs:**

@@ -94,8 +94,10 @@ void unit_teardown() {
 __unit_callback
 void unit_reset() {
   if (!s_state.initialized) return;
-  /* Only latch the request: re-initializing the engine rewrites the buffers
-   * unit_render() is reading, so it has to happen on the audio thread. */
+  /* Re-initializing the engine rewrites the buffers unit_render() is
+   * reading, so this parks the renderer first and does the work here, on
+   * the control thread.  It can block for about one audio block; see the
+   * handshake comment in clouds-fx.cc. */
   clouds_fx_request_reset();
 }
 

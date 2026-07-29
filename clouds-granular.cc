@@ -10,9 +10,17 @@
  *   2. Sample playback from the drumlogue sample bank
  * Select via SampleNum parameter: 0 = sawtooth, 1+ = sample from bank.
  *
- * Clouds was designed for 32 kHz; we run it at drumlogue's native
- * 48 kHz. The only audible effect is slightly different feedback
- * filter tuning (the phase vocoder's sample_rate parameter is unused).
+ * Clouds is a 32 kHz machine, so the engine runs at 32 kHz here and the
+ * conversion to and from the drumlogue's 48 kHz happens at the edges of
+ * this file (see clouds_src.h).  That keeps SIZE, the delay times, the
+ * buffer capacity and the feedback filter's corner at the values Clouds
+ * was voiced with, and it drops the engine's cost by a third: 1000 blocks
+ * per second instead of 1500.  The audible price is a rolloff above
+ * 13 kHz -- about what Clouds' own codec does.
+ *
+ * Pitch is unaffected either way: the sawtooth is synthesised straight at
+ * 32 kHz, and sample playback still reads at 48 kHz and is decimated, so a
+ * sample plays back at its recorded pitch.
  *
  * Output: Clouds produces stereo (L/R via ShortFrame). We interleave
  * the int16 output into the Q31 buffer as L/R pairs (same pattern
@@ -33,6 +41,7 @@
 
 #include "userosc.h"
 #include "drumlogue_osc_adapter.h"
+#include "clouds_src.h"
 #include "stmlib/dsp/dsp.h"
 
 #include <cstring>
@@ -318,9 +327,17 @@ static inline float midi_to_hz(float note) {
 /**
  * Generate sawtooth samples into ShortFrame input buffer (mono: L=R).
  * Amplitude is 50% (-6 dB) to avoid clipping in the feedback path.
+ *
+ * `rate` is the rate the samples are generated at.  The sawtooth is
+ * synthesised straight at the engine's 32 kHz — it is a naive ramp with no
+ * band limiting either way, so putting it through the input decimator would
+ * cost two 60-tap filters to clean up aliasing that the generator itself
+ * puts back.  Sample playback is the case that genuinely needs the
+ * decimator, and it asks for 48 kHz.
  */
-static void generate_input(ShortFrame *input, size_t size, float frequency) {
-  const float phase_inc = frequency / 48000.0f;
+static void generate_input(ShortFrame *input, size_t size, float frequency,
+                           float rate) {
+  const float phase_inc = frequency / rate;
   for (size_t i = 0; i < size; ++i) {
     float saw = osc_phase_ * 2.0f - 1.0f; /* bipolar -1..+1 */
     int16_t sample = (int16_t)(saw * 16384.0f); /* 50% amplitude */
@@ -330,6 +347,133 @@ static void generate_input(ShortFrame *input, size_t size, float frequency) {
     if (osc_phase_ >= 1.0f)
       osc_phase_ -= 1.0f;
   }
+}
+
+/* ======================================================================
+ * 48 kHz <-> 32 kHz plumbing
+ *
+ * OSC_CYCLE owes the adapter exactly kMaxBlockSize samples at 48 kHz every
+ * call.  The engine runs at 32 kHz, so one engine block of 32 frames covers
+ * 48 output samples -- an engine block is needed on two calls out of three,
+ * and which two depends on the resampler's phase.  Rather than track that,
+ * the render is pull-driven: ask the upsampler how many 32 kHz samples the
+ * next 32 output samples need, and run engine blocks until the staging FIFO
+ * holds that many.
+ *
+ * The input side is asymmetric, deliberately.  Sample playback is decimated
+ * from 48 kHz -- an engine block asks the decimator for 32 samples, which
+ * turns into a request for 48 at 48 kHz, and generate_sample_input() is
+ * called for exactly that many, unchanged.  Reading the bank at 1.5 frames
+ * per step instead would skip the anti-aliasing, which is audible on any
+ * bright sample.  The sawtooth takes the other route and is generated at
+ * 32 kHz directly: it is a naive ramp with no band limiting either way, so
+ * putting it through two 60-tap filters would only clean up aliasing the
+ * generator immediately puts back.  Measured, that one asymmetry is most of
+ * the difference between the first 32 kHz build and this one.
+ * ==================================================================== */
+
+static clouds_src::SrcDown src_down_l_;
+static clouds_src::SrcDown src_down_r_;
+static clouds_src::SrcUp src_up_;
+
+/* Engine output waiting to be resampled up: mono, 32 kHz, int16-scaled.
+ * At most 21 samples survive a call and a block adds 32, so 64 is plenty. */
+static float stage_[64];
+static int stage_avail_ = 0;
+
+/* Note frequency, captured by OSC_CYCLE for the engine blocks it drives. */
+static float note_hz_ = 440.0f;
+
+static inline int16_t clamp_s16(float x) {
+  return (x > 32767.0f) ? 32767 : ((x < -32768.0f) ? -32768 : (int16_t)x);
+}
+
+/* Which source last filled an engine block, so the decimators can be cleared
+ * when the sawtooth/sample switch leaves stale history in them. */
+static bool src_down_active_ = false;
+
+/* Render one 32-frame engine block at 32 kHz and append it to stage_. */
+static void engine_block(void) {
+  ShortFrame input[kMaxBlockSize];
+  ShortFrame output[kMaxBlockSize];
+
+  SampleSnapshot snap;
+  snap.ptr = nullptr;
+  snap.frames = 0;
+  if (osc_active_)
+    snapshot_sample(&snap);
+
+  if (snap.ptr && snap.frames > 0) {
+    /* --- Sample input: read at 48 kHz, decimate to 32 kHz ---
+     * Stepping the sample pointer at 1.5 frames instead would be cheaper but
+     * has no anti-aliasing, which is audible on anything bright. */
+    if (!src_down_active_) {
+      src_down_l_.Init();
+      src_down_r_.Init();
+      src_down_active_ = true;
+    }
+    const int need48 = src_down_l_.InputNeeded((int)kMaxBlockSize);
+    ShortFrame gen[clouds_src::kMaxIn];
+    generate_sample_input(gen, (size_t)need48, snap);
+
+    float *dl = src_down_l_.Input();
+    float *dr = src_down_r_.Input();
+    for (int i = 0; i < need48; ++i) {
+      dl[i] = (float)gen[i].l;
+      dr[i] = (float)gen[i].r;
+    }
+
+    float il[kMaxBlockSize], ir[kMaxBlockSize];
+    src_down_l_.Process(il, (int)kMaxBlockSize, 1);
+    src_down_r_.Process(ir, (int)kMaxBlockSize, 1);
+    for (size_t i = 0; i < kMaxBlockSize; ++i) {
+      input[i].l = clamp_s16(il[i]);
+      input[i].r = clamp_s16(ir[i]);
+    }
+  } else {
+    src_down_active_ = false;
+    if (osc_active_)
+      generate_input(input, kMaxBlockSize, note_hz_, 32000.0f);
+    else
+      memset(input, 0, sizeof(input));
+  }
+
+  /* --- Engine --- */
+  Parameters *p = processor_.mutable_parameters();
+  p->position = clip_param(shape);                                 /* id 1 */
+  p->size = clip_param(shiftshape);                                /* id 2 */
+  p->density = density_mapped_;                                    /* id 3 */
+  p->texture = clip_param(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
+  p->pitch = (float)pitch_semitones_;                              /* id 5 */
+  p->feedback = clip_param(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
+  p->dry_wet = clip_param(p_values[k_user_osc_param_id5] * 0.01f);  /* id 7 */
+  p->reverb = clip_param(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
+  p->gate = osc_active_;
+
+  /* Seed exactly one grain per note-on, so the attack is immediate instead of
+   * waiting on the probabilistic scheduler.  The flag is cleared here rather
+   * than in OSC_CYCLE because a call that runs no engine block would
+   * otherwise swallow the note's only trigger. */
+  p->trigger = note_trigger_;
+  note_trigger_ = false;
+
+  /* Apply latched engine reconfiguration on this (audio) thread, so the
+   * buffer layout can never change underneath Process(). */
+  if ((int32_t)processor_.playback_mode() != pending_mode_)
+    processor_.set_playback_mode(static_cast<PlaybackMode>(pending_mode_));
+  if (processor_.quality() != pending_quality_)
+    processor_.set_quality(pending_quality_);
+  processor_.set_freeze(pending_freeze_ != 0);
+
+  /* Prepare handles mode/quality switches and buffer resets */
+  processor_.Prepare();
+  processor_.Process(input, output, kMaxBlockSize);
+
+  /* --- Output: mix to mono and stage for the upsampler --- */
+  float *dst = &stage_[stage_avail_];
+  for (size_t i = 0; i < kMaxBlockSize; ++i)
+    dst[i] = (output[i].l + output[i].r) * 0.5f;
+  stage_avail_ += (int)kMaxBlockSize;
 }
 
 /* ======================================================================
@@ -377,8 +521,15 @@ void OSC_INIT(uint32_t platform, uint32_t api)
    * deadline.  Afterwards Prepare() is cheap in Granular mode. */
   processor_.Prepare();
 
+  src_down_l_.Init();
+  src_down_r_.Init();
+  src_down_active_ = false;
+  src_up_.Init();
+  stage_avail_ = 0;
+
   osc_phase_ = 0.0f;
   osc_frequency_ = midi_to_hz(60.0f);
+  note_hz_ = osc_frequency_;
   osc_active_ = false;
   pitch_semitones_ = 0;
 
@@ -402,58 +553,23 @@ void OSC_CYCLE(const user_osc_param_t *const params,
       ((float)(params->pitch >> 8)) +
       ((params->pitch & 0xFF) * k_note_mod_fscale);
   osc_frequency_ = midi_to_hz(note);
+  note_hz_ = osc_frequency_;
 
-  /* Update Clouds parameters from stored param values */
-  Parameters *p = processor_.mutable_parameters();
-  p->position = clip_param(shape);                              /* id 1 */
-  p->size = clip_param(shiftshape);                             /* id 2 */
-  p->density = density_mapped_;                                  /* id 3 */
-  p->texture = clip_param(p_values[k_user_osc_param_id2] * 0.01f);  /* id 4 */
-  p->pitch = (float)pitch_semitones_;                        /* id 5 */
-  p->feedback = clip_param(p_values[k_user_osc_param_id4] * 0.01f); /* id 6 */
-  p->dry_wet = clip_param(p_values[k_user_osc_param_id5] * 0.01f);  /* id 7 */
-  p->reverb = clip_param(p_values[k_user_osc_param_id6] * 0.01f);   /* id 8 */
-  p->gate = osc_active_;
+  /* Run only as many engine blocks as this output block actually consumes.
+   * Two calls in three need one; the third needs none. */
+  const int need = src_up_.InputNeeded((int)kMaxBlockSize);
+  while (stage_avail_ < need)
+    engine_block();
 
-  /* Seed exactly one grain per note-on, so the attack is immediate instead of
-   * waiting on the probabilistic scheduler.  The cloud itself is scheduled
-   * from DENSITY — see density_to_clouds(). */
-  p->trigger = note_trigger_;
-  note_trigger_ = false;
+  float *up_in = src_up_.Input();
+  memcpy(up_in, stage_, (size_t)need * sizeof(float));
+  stage_avail_ -= need;
+  memmove(stage_, stage_ + need, (size_t)stage_avail_ * sizeof(float));
 
-  /* Apply latched engine reconfiguration on this (audio) thread, so the
-   * buffer layout can never change underneath Process(). */
-  if ((int32_t)processor_.playback_mode() != pending_mode_)
-    processor_.set_playback_mode(static_cast<PlaybackMode>(pending_mode_));
-  if (processor_.quality() != pending_quality_)
-    processor_.set_quality(pending_quality_);
-  processor_.set_freeze(pending_freeze_ != 0);
+  float mono[kMaxBlockSize];
+  src_up_.Process(mono, (int)kMaxBlockSize, 1);
 
-  /* Prepare handles mode/quality switches and buffer resets */
-  processor_.Prepare();
-
-  /* Snapshot sample state for thread-safe access during this block */
-  SampleSnapshot snap;
-  snapshot_sample(&snap);
-
-  /* Generate input audio */
-  ShortFrame input[kMaxBlockSize];
-  ShortFrame output[kMaxBlockSize];
-
-  if (osc_active_) {
-    if (snap.ptr && snap.frames > 0) {
-      generate_sample_input(input, kMaxBlockSize, snap);
-    } else {
-      generate_input(input, kMaxBlockSize, osc_frequency_);
-    }
-  } else {
-    memset(input, 0, sizeof(ShortFrame) * kMaxBlockSize);
-  }
-
-  /* Process through Clouds granular engine */
-  processor_.Process(input, output, kMaxBlockSize);
-
-  /* Mix stereo (L + R) to mono Q31.
+  /* Mono 32 kHz engine output, now at 48 kHz, converted to Q31.
    * The adapter expects exactly kMaxBlockSize mono Q31 samples.
    *
    * A dense granular cloud sums many overlapping grains and, after Clouds'
@@ -461,31 +577,24 @@ void OSC_CYCLE(const user_osc_param_t *const params,
    * peaks convert to near-full-scale Q31 and the sharp grain edges read as
    * clicks/harshness on the output.  Applying a little headroom here
    * (kOutGain, ~-3 dB) keeps the loudest textures clear of the ceiling
-   * without making the module noticeably quiet.  Each (l+r)/2 mono sample
-   * is in the int16 range; scaling by kOutGain * 65536 lifts it to Q31. */
+   * without making the module noticeably quiet.  Each mono sample is in the
+   * int16 range; scaling by kOutGain * 65536 lifts it to Q31. */
   const float kOutGain = 0.7f;
 #ifdef __ARM_NEON
   {
     const float32x4_t vscale = vdupq_n_f32(kOutGain * 65536.0f);
-    size_t i = 0;
-    for (; i + 4 <= kMaxBlockSize; i += 4) {
-      /* Load 4 stereo samples and de-interleave into L and R registers */
-      const int16x4x2_t stereo = vld2_s16(reinterpret_cast<const int16_t*>(&output[i]));
-
-      /* int16 -> int32, average L+R, scale (with headroom) up to Q31 */
-      const int32x4_t ql = vmovl_s16(stereo.val[0]);
-      const int32x4_t qr = vmovl_s16(stereo.val[1]);
-      const int32x4_t mono = vhaddq_s32(ql, qr);
-      const float32x4_t f = vmulq_f32(vcvtq_f32_s32(mono), vscale);
-      vst1q_s32(yn + i, vcvtq_s32_f32(f));
-    }
-    for (; i < kMaxBlockSize; ++i) {
-      yn[i] = (int32_t)(((output[i].l + output[i].r) * 0.5f) * kOutGain * 65536.0f);
+    for (size_t i = 0; i < kMaxBlockSize; i += 4) {
+      /* vcvtq_s32_f32 saturates, so the resampler's overshoot on a
+       * full-scale transient cannot wrap the Q31 output. */
+      vst1q_s32(yn + i, vcvtq_s32_f32(vmulq_f32(vld1q_f32(mono + i), vscale)));
     }
   }
 #else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
-    yn[i] = (int32_t)(((output[i].l + output[i].r) * 0.5f) * kOutGain * 65536.0f);
+    float v = mono[i] * (kOutGain * 65536.0f);
+    if (v > 2147483520.0f) v = 2147483520.0f;
+    if (v < -2147483520.0f) v = -2147483520.0f;
+    yn[i] = (int32_t)v;
   }
 #endif
 }

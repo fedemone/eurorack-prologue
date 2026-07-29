@@ -37,7 +37,9 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
+
+SDK_COMMON  := logue-sdk/platform/drumlogue/common
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -131,8 +133,32 @@ test-clouds-fx:
 	    -o test_clouds_fx -lm
 	./test_clouds_fx
 
+# Clouds synth test: links the REAL Clouds engine behind the OSC_* callbacks
+# and checks the 48 kHz <-> 32 kHz boundary keeps pitch, plus every
+# mode x quality combination.
+# Usage: make test-clouds-synth
+test-clouds-synth:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_GRANULAR \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -Ieurorack -I$(SDK_COMMON) \
+	    test_clouds_synth.cc clouds-granular.cc \
+	    $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_synth -lm
+	./test_clouds_synth
+
+# CloudsFX reconfiguration test: renders on one thread while Mode, Quality and
+# unit_reset() are driven from another, which is how the drumlogue drives the
+# unit and the only way to exercise the park handshake in clouds-fx.cc.
+# Usage: make test-clouds-fx-reconfig
+test-clouds-fx-reconfig:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_FX -DCLOUDS_FX_TEST \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 -Ieurorack -pthread \
+	    test_clouds_fx_reconfig.cc clouds-fx.cc \
+	    $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_fx_reconfig -lm
+	./test_clouds_fx_reconfig
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-fx test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -154,7 +180,6 @@ ARM_CC      ?= arm-linux-gnueabihf-gcc
 ARM_SYSROOT ?= /usr/arm-linux-gnueabihf
 QEMU_ARM    ?= qemu-arm
 ARM_UNITS   ?= clouds clouds_fx mo2_va rings
-SDK_COMMON  := logue-sdk/platform/drumlogue/common
 
 # The SDK Makefile passes --param max-inline-insns-single=9999999999, which
 # newer GCC rejects. Re-supply the same option set with a value it accepts;

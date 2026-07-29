@@ -13,31 +13,46 @@ turned out to be wrong.
 
 | Unit | State |
 |------|-------|
-| `clouds` (synth) | Working. Granular mode is within budget; Stretch and Spectral are not — see [Prepare() on the audio thread](#prepare-on-the-audio-thread). |
-| `clouds_fx` (delfx) | **Work in progress — still crashes on hardware.** Do not treat as usable. |
+| `clouds` (synth) | Working. The engine runs at its native 32 kHz; Granular and Delay are comfortable, Stretch is better than it was, Spectral is still the expensive one — see [Prepare() on the audio thread](#prepare-on-the-audio-thread). |
+| `clouds_fx` (delfx) | Reconfiguration moved off the audio thread and the engine runs at 32 kHz. **Awaiting hardware confirmation** — the previous build crashed and the fix has only been verified on host and under QEMU. |
 
 ---
 
 Measurement method
 ------------------
 
-Numbers below come from the real ARM engine build (`arm-linux-gnueabihf-g++`,
-the SDK's own flags: `-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4
--Os -ffast-math -ftree-vectorize`) running under `qemu-arm`, timing
-`GranularProcessor::Prepare()` and `::Process()` separately per 32-frame
-block and expressing each as a percentage of one block's wall-clock budget at
-48 kHz (667 µs).
+Numbers come from the real ARM engine build (`arm-linux-gnueabihf-g++`, the
+SDK's own flags: `-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -Os
+-ffast-math -ftree-vectorize`) running under `qemu-arm`.
+
+Two harnesses, and it matters which one a number came from:
+
+- **Engine-level** (`bench_mode.cc`, `bench_dens.cc`): times
+  `GranularProcessor::Prepare()` and `::Process()` separately per 32-frame
+  block. Good for attributing cost inside the engine.
+- **End-to-end** (`bench_cycle.cc`): times whole `OSC_CYCLE` calls in pairs,
+  because the drumlogue asks the adapter for 64 frames and the adapter fills
+  that with two 32-sample calls. **This is the deadline that actually
+  exists**, and since the 32 kHz pipeline deliberately makes one call in three
+  free, per-call figures are misleading — a pair is the smallest honest unit.
 
 **These percentages are relative, not absolute.** QEMU is roughly an order of
 magnitude slower than the real SoC, so a row reading "25%" does not mean the
 unit uses a quarter of the drumlogue's CPU. Comparisons *between* rows are
 meaningful; the absolute values are not. QEMU also does not model memory
-bandwidth or the denormal penalty, so anything dominated by those is
-understated here.
+bandwidth, cache behaviour or the denormal penalty, so anything dominated by
+those is understated here — and it prices every NEON instruction about the
+same, so it cannot rank two vectorisations against each other at all.
 
-Mean and worst-case block are both reported, because dropouts are a
-worst-case phenomenon: a mean comfortably under budget with a 20x spike still
-drops audio.
+The end-to-end harness reports the **99.9th percentile** rather than the
+single worst block: under QEMU the maximum is dominated by host scheduling
+noise, not by the code under test. Dropouts are still a tail phenomenon — a
+mean comfortably under budget with a large spike still drops audio — so the
+tail is reported, just not the one sample of it that is pure noise.
+
+Function-level attribution comes from `gprof` on an x86 `-O2` build. That
+does not transfer as an absolute cost, but the *ranking* does, and it is the
+only way to see inside the inlined engine.
 
 ---
 
@@ -183,7 +198,9 @@ What `Prepare()` does per mode:
 `EvaluateSomeCandidates()` runs `(size >> 2) + 16` candidates, each XOR-ing
 and popcounting `size >> 5` words — a burst of tens of thousands of word
 operations, unbudgeted, in one audio block. Measured at density 50%,
-StereoHi:
+StereoHi, **engine-level and with the engine still clocked at 48 kHz** (these
+rows are what motivated the 32 kHz change; the end-to-end figures after it are
+in the next section):
 
 | Mode | Process mean | Prepare mean | Prepare **worst block** |
 |------|--------------|--------------|-------------------------|
@@ -216,26 +233,106 @@ Fixing this properly needs one of:
 1. **A background worker thread** calling `Prepare()`, mirroring the original
    firmware's idle loop. Architecturally faithful, but the original's
    main-loop/interrupt overlap is a data race that bare metal got away with
-   and a preemptive scheduler may not.
+   and a preemptive scheduler may not. **Not done.**
 2. **Running the engine at its native 32 kHz** with sample-rate conversion at
-   the boundary. Clouds was designed for 32 kHz and this port feeds it 48 kHz
-   directly, so it does 1.5x the work per second of audio that Clouds
-   hardware ever did. This would cut *every* mode by about a third and make
-   the `sample_rate()`-derived constants (feedback high-pass cutoff, reverb
-   LFO rates) correct. It changes pitch/time behaviour, so it is a deliberate
-   sound change, not a transparent optimization.
+   the boundary. **Done — see the next section.** It does not make the burst
+   go away; it makes it happen two-thirds as often and shrinks every other
+   mode along with it.
 
-Neither is done. Granular and Delay are unaffected and are the modes to use.
+Granular and Delay remain the modes with no burst at all.
 
 ---
 
-CloudsFX — work in progress
----------------------------
+Running the engine at 32 kHz
+----------------------------
 
-**`clouds_fx` still crashes on hardware and should be treated as unfinished.**
+`GranularProcessor::sample_rate()` returns `32000 / (low_fidelity ? 2 : 1)`.
+Everything derived from it — the feedback high-pass corner, the phase
+vocoder's frame rate, the grain scheduler's notion of time, the buffer's
+capacity in seconds — assumes the engine is clocked there. This port used to
+feed it 48 kHz directly, which cost 1.5x the work per second of audio Clouds
+hardware ever did *and* left every one of those constants a third off.
 
-Reported behaviour: the first trigger produces correct sound, then the audio
-interface goes silent.
+`clouds_src.h` now converts at the boundary. 48 and 32 kHz are exactly 3:2, so
+this is a fixed rational resampler — no drift, no position-dependent
+interpolation error, coefficients computed once offline.
+
+**The filter.** One prototype low-pass shared by both directions, designed at
+the 96 kHz common multiple: 120 taps, Kaiser (β = 8), -6 dB at 14.4 kHz.
+Measured response — flat to 13 kHz, **-42 dB at 16 kHz**, -82 dB at 17 kHz,
+below -95 dB from 18 kHz. The 16 kHz figure is the one that matters: it is the
+Nyquist of the 32 kHz engine, so it bounds both the aliasing folded in going
+down and the imaging let through coming back up. Round-tripping a unit sine
+48→32→48 kHz measures 0.00 dB to 12 kHz, -0.37 dB at 13 kHz, -27 dB at 15 kHz.
+
+**Where the conversions are.** Not everywhere, because a conversion nobody
+needs is pure cost:
+
+| Path | Conversion |
+|------|-----------|
+| Synth, sawtooth source | **None.** Generated directly at 32 kHz. It is a naive ramp with no band limiting either way, so decimating it would spend two 60-tap filters cleaning up aliasing the generator puts straight back. |
+| Synth, sample source | 48 → 32 kHz, stereo. Sample data is 48 kHz and genuinely needs anti-aliasing; stepping the read pointer 1.5 frames at a time is audible on anything bright. |
+| Synth output | 32 → 48 kHz, mono (after the L+R mix, which is linear and therefore free to do first). |
+| FX input and output | 48 → 32 → 48 kHz, stereo both ways. |
+
+The FX converts its **dry** signal too. Keeping dry at 48 kHz and mixing it
+outside the engine would preserve its top octave, but it would also put it
+~1.2 ms ahead of the wet path, and a delayed copy summed with an undelayed one
+is a comb filter — much more audible than a rolloff above 13 kHz. Clouds' own
+codec band-limits its dry path the same way, so this is also the more faithful
+option.
+
+**Scheduling.** Both units are pull-driven: ask the upsampler how many 32 kHz
+samples the next output block needs, then run engine blocks until the staging
+FIFO holds that many. Two calls in three run a block; the third runs none. The
+FX additionally buffers its incoming audio, because unlike the synth it cannot
+generate input on demand — the rates are exactly rational so the deficit is
+deterministic, and simulating the counters over buffer sizes from 16 to 128
+frames puts the exact minimum cushion at 32 samples. It primes 48, for 1 ms of
+latency plus the two conversions' group delay: **~2.2 ms** through the FX,
+~1.2 ms through the synth.
+
+**Measured, end-to-end, per 64-frame buffer** (Granular unless stated,
+StereoHi, `bench_cycle.cc`):
+
+| Setting | 48 kHz engine | 32 kHz engine | Change |
+|---------|--------------:|--------------:|-------:|
+| Density 0 %   | 15.30 % | 13.69 % | -11 % |
+| Density 40 %  | 28.86 % | 23.20 % | -20 % |
+| Density 60 %  | 28.90 % | 22.84 % | -21 % |
+| Density 80 %  | 31.35 % | 23.25 % | -26 % |
+| Density 100 % | 34.43 % | 25.64 % | -26 % |
+| Stretch       | 22.84 % | 18.85 % | -17 % |
+| Delay         | 19.14 % | 15.64 % | -18 % |
+| Spectral      | 40.84 % | 29.69 % | -27 % |
+
+The tail improves too: Granular's 99.9th percentile 68.6 % → 60.1 %, Stretch
+46.4 % → 39.7 %, Spectral 585 % → 506 %.
+
+Not the full third, because the upsampler is not free — it is 40 taps per
+output sample, and `gprof` puts the whole port layer at 17.5 % of Granular
+mode. That is also why the sawtooth path skips the input decimator: the first
+version converted it too and gave back most of the win.
+
+**Pitch is unaffected**, and there is a regression test that says so
+(`make test-clouds-synth`). Getting this wrong in the obvious way — feeding
+the engine 48 kHz samples and playing them back as if they were 32 kHz — still
+runs, still produces plausible audio, and is a fifth flat. The test measures
+the fundamental with a Goertzel and requires it to beat both the 1.5x and the
+1/1.5x impostor by 2x; it currently beats them by about 100x.
+
+What *does* change audibly, by design: SIZE, the delay times and the buffer's
+capacity are all 1.5x longer in real time, which is what Clouds sounds like.
+The recording buffer also takes 1.5x longer to fill, so a grain reading from a
+high POSITION finds material later than it used to.
+
+---
+
+CloudsFX — reconfiguration off the audio thread
+----------------------------------------------
+
+Reported behaviour of the previous build: the first trigger produces correct
+sound, then the audio interface goes silent.
 
 ### What is known
 
@@ -270,38 +367,165 @@ stream dies. The earlier symptom ("first press → immediate silence") became
 consistent with the fault simply moving one block later.
 
 The same applies to the synth's Mode/Quality changes, which also reallocate —
-but there the reconfiguration is a deliberate user gesture, and hardware now
-reports Quality switching as fixed.
+but there the reconfiguration is a deliberate user gesture, and hardware
+reports Quality switching as working.
 
-### Divergence from the synth
+### What was searched and not found
 
-`clouds-fx.cc` was deliberately left untouched while the crash is open, so its
-`density_to_clouds()` still uses the old linear-in-`density` mapping with its
-cubic grain law. The two units' DENSITY knobs therefore behave differently
-right now. Bring `clouds-fx.cc` in line with `clouds-granular.cc` once the
-crash is resolved.
+Before rewriting anything, `clouds-fx.cc` was driven under ASan + UBSan
+through ~48,000 randomised iterations (every parameter, every mode, every
+quality, resets interleaved) across several seeds. **The only memory error
+found was one shared with the synth** — see `lut_window` under "Ruled out"
+below — and it is benign in the shipping binary. There is no memory-safety
+defect unique to the FX. That is what pointed at the deadline rather than at a
+pointer bug.
 
-### Suggested direction (not implemented)
+### The fix
 
-Do the reconfiguration on the **control thread**, where taking milliseconds is
-fine, and keep the audio thread out of the engine while it happens, rather
-than moving the work onto the audio thread. A Dekker-style handshake is
-enough and needs no locks in the renderer:
+The reconfiguration happens on the **control thread**, where taking a
+millisecond is fine, with the renderer held out of the engine while it runs —
+rather than moving 180 KB of work onto the audio thread. One word carries the
+protocol:
 
-- audio thread: store `in_engine = 1` (seq_cst), then load `request`; if set,
-  clear `in_engine`, emit silence, return.
-- control thread: store `request = 1` (seq_cst), then spin-with-sleep until
-  `in_engine` reads 0, do the heavy `Init()`/`Prepare()`, clear `request`.
+- `kRunning` — the audio thread owns the engine.
+- `kParkReq` — the control thread wants it.
+- `kParked` — the audio thread has stood down and will not touch the engine
+  until the state is `kRunning` again.
 
-Under sequential consistency at least one side observes the other, so the
-control thread never reallocates while the renderer is inside the engine, and
-the renderer never blocks. Emitting silence for the few blocks a
-reconfiguration takes matches what the engine already does — `Process()`
-returns zeros while `reset_buffers_` or `silence_` is set.
+The audio thread only ever writes `kParked`, only after reading a non-running
+state, and having written it that call returns without going near the engine.
+So once the control thread observes `kParked`, every render from that point on
+is on the silent path. A render that read `kRunning` just before the request
+landed completes normally and parks on its next call, costing the control
+thread one extra block of waiting.
 
-A bounded wait is needed so the control thread cannot hang if audio is not
-running; if `in_engine` is 0 because no render is in flight, the handshake
-completes immediately.
+Three details that are easy to get wrong:
+
+- **The transition is a compare-exchange**, `kParkReq → kParked`, not a plain
+  store. A control thread that has given up and restored `kRunning` must not
+  be pushed back into a park nobody will ever leave.
+- **The wait is bounded twice.** `render_count_` decides "the audio thread is
+  not running": if it has not moved in 10 ms then no callback happened and the
+  engine is ours whatever the park state says (this covers a suspended unit, a
+  unit not yet rendering, and a host that calls `unit_reset()` from the render
+  thread). A separate 50 ms ceiling covers a renderer that is running but
+  somehow never parks — there the reconfiguration is *abandoned*, because
+  doing it anyway is exactly the race the handshake exists to prevent.
+  `pending_mode_`/`pending_quality_` stay latched, so the next successful park
+  picks up whatever was missed.
+- **Mode and Quality go through the same park**, not just `unit_reset()`. Both
+  set `reset_buffers_`, so both send the next `Prepare()` down the
+  reallocating path; latching them for the audio thread would have left the
+  spike exactly where it was.
+
+While parked the FX emits silence rather than dry, because the gain a dry
+passthrough would need depends on engine state the renderer must not read. A
+reconfiguration measures 2-4 blocks.
+
+`test_clouds_fx_reconfig.cc` (`make test-clouds-fx-reconfig`) drives this the
+way the drumlogue does — one thread rendering, one turning knobs — at 32, 64
+and 128 frames per buffer. Across ~230 reconfigurations per size it checks the
+renderer makes progress, never emits non-finite output, never gets stuck
+parked (longest observed silent run: 2-4 blocks), and that the last mode
+request took effect.
+
+### Divergence from the synth — resolved
+
+`clouds-fx.cc` was previously left behind on the old linear-in-`density`
+mapping. It now uses the same grain-linear mapping as `clouds-granular.cc`,
+and both units run their engine at 32 kHz. The knobs behave the same way
+again.
+
+---
+
+Where the time actually goes
+----------------------------
+
+`gprof`, x86 `-O2`, synth at density 50 %, StereoHi, self time. Absolute
+values do not transfer to ARM; the ranking does.
+
+**Granular**
+
+| Function | Self |
+|----------|-----:|
+| `GranularSamplePlayer::Play` (grain overlap-add) | 42.1 % |
+| `Reverb::Process` | 20.2 % |
+| `OSC_CYCLE` (this port: SRC, staging, Q31 conversion) | 17.5 % |
+| `GranularProcessor::Process` (conversion, feedback, dry/wet) | 12.0 % |
+| `Diffuser::Process` | 6.6 % |
+| everything else | < 2 % |
+
+**Stretch**: `GranularProcessor::Process` 35.6 %, `Reverb::Process` 21.2 %,
+port layer 12.7 %, `Prepare()` 9.3 %, `ProcessGranular` 9.3 %,
+`Correlator::EvaluateNextCandidate` 6.8 %, `Diffuser::Process` 5.1 %.
+
+**Spectral**: `STFT::Buffer` **56.1 %**, port layer 9.3 %, `Reverb::Process`
+9.3 %, `GranularProcessor::Process` 7.8 %, `FrameTransformation::*` ~12 %.
+
+### What was optimised in the port layer
+
+The port layer's 17.5 % is the only column this repo owns outright. Two
+changes:
+
+1. **The sawtooth skips the input decimator** (above). Removing two 60-tap
+   filters from the default signal path is most of the difference between the
+   first 32 kHz build and the numbers in the table.
+2. **The polyphase dot product runs both operands forward.** The tables in
+   `clouds_src.h` are stored reversed at generation time, so the NEON inner
+   loop is load / load / `vmla` with no lane shuffling. The previous version
+   ran coefficients forward and samples backward, which needed a `vrev64q` per
+   multiply-accumulate. Counted from the disassembly (`-Os`, `neon-vfpv4`):
+
+   | Version | NEON ops per tap |
+   |---------|-----------------:|
+   | coefficients forward, samples reversed | 1.00 |
+   | both forward, two accumulators | 0.75 |
+
+   That is a 25 % reduction in issued NEON instructions, plus the second
+   accumulator breaking the multiply-accumulate dependency chain. **This is an
+   instruction count, not a cycle count** — QEMU prices every NEON instruction
+   about the same and cannot rank the two, and there is no hardware here to
+   measure on. The change is justified by what it issues, not by a stopwatch.
+
+### Rewriting the Mutable Instruments core — evaluation
+
+`eurorack/` is a submodule this repo does not edit, so any of the following
+means forking the file into the port layer and dropping the submodule's copy
+from the source list. That is a real maintenance cost — MIT-licensed and
+therefore legally fine with attribution, but it forks code that upstream may
+still fix. Ranked by return:
+
+1. **Gate the reverb and diffuser on their amount. Biggest win, no rewrite,
+   no numerical change.** Both are literally `in_out += amount * (wet -
+   in_out)`, so at `amount == 0` the output is *bit-identical* to the input —
+   and both run unconditionally, every block, whatever the knobs say. That is
+   20 % of Granular, 26 % of Stretch (reverb + diffuser together) burned to
+   produce a value that is discarded. A guard needs three lines in
+   `GranularProcessor::Process()` plus a short fade when the amount leaves
+   zero so the delay lines refill without a click. This is the one to do
+   first; it is worth more than everything below combined and it is not
+   really an "optimisation" so much as a missing early-out.
+
+2. **A NEON FFT for Spectral.** `STFT::Buffer` is 56 % of Spectral mode, and
+   it is a scalar radix-2 `ShyFFT`. A radix-4 NEON FFT is textbook 2-3x on
+   ARMv7, which would take Spectral from ~30 % to ~20 % end-to-end. Highest
+   confidence of any SIMD work here because FFT butterflies are contiguous and
+   regular. It is also the largest chunk of code to fork.
+
+3. **Vectorising the grain overlap-add.** 42 % of Granular, so tempting, but
+   the return is poorer than the number suggests: the envelope render
+   (`RenderEnvelope`) is contiguous and vectorises cleanly, while the buffer
+   read underneath it is a per-grain gather at that grain's own phase
+   increment through a circular int16 buffer, which does not. Expect to reach
+   maybe a quarter of the 42 %, i.e. ~6-10 % overall.
+
+4. **NEON popcount in the correlator.** ARM has `VCNT`; `EvaluateNextCandidate`
+   is XOR + popcount over bit-packed words. But it is 6.8 % of Stretch, so
+   even a 3x on it buys ~4 %. Not worth a fork on its own.
+
+Not worth doing: the port layer's own conversions and staging are already
+either NEON or memcpy-bound, and `Prepare()` outside Stretch/Spectral rounds
+to zero.
 
 ---
 
@@ -318,6 +542,28 @@ Ruled out — do not re-investigate without new evidence
   other units removed, so it was not the cause of this one.
 - **Memory errors on quality/mode change.** ASan + UBSan across all 16
   mode × quality combinations, 1500 blocks each with a sample loaded: clean.
+  Repeated for `clouds_fx` over ~48,000 randomised iterations across several
+  seeds, single-threaded and with a live render thread: clean apart from the
+  `lut_window` read below.
+- **`lut_window[4097]` — a real out-of-bounds read, and harmless here.** ASan
+  flags `Grain::RenderEnvelope` reading one element past `lut_window` (4097
+  floats) via `stmlib::Interpolate`, which always touches `table[i]` and
+  `table[i+1]`. It fires whenever a grain's envelope phase lands on exactly
+  1.0 — reachable, because the phase increment is `2/width` and typical widths
+  make that an exact binary fraction. It is the same defect class as the
+  `lut_xfade_in` overrun that `clip_param()` was written for, but this one
+  cannot be fixed from the port layer: `gain` is computed inside the grain
+  from its own phase, with nothing to clamp from outside.
+
+  It is benign in the shipping binary, which was checked rather than assumed.
+  In `clouds_fx.drmlgunit` the read-only `LOAD` segment spans `0x0-0x13f24`
+  and `.rodata` ends at `0x13cb4` with `.unit_header`, `.ARM.exidx` and
+  `.eh_frame` after it in the same segment, so four bytes past any object in
+  `.rodata` land inside mapped read-only memory. The value perturbs one sample
+  of one grain envelope at its exact midpoint, blended by `envelope_smoothness_`.
+  ASan only reports it because ASan inserts redzones between globals that the
+  real link does not have. **Do not chase this as a crash cause**; fix it if
+  and only if the engine gets forked for one of the reasons above.
 - **Buffer over-allocation.** Workspace is 53,248 bytes (stereo) against
   42,520 used, with the pitch shifter aliasing to 49,152. It fits, and
   `BufferAllocator` bounds-checks and returns NULL anyway.

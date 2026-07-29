@@ -97,26 +97,45 @@ int main(void) {
   CHECK(strcmp(unit_get_param_str_value(9, 2), "Delay") == 0, "Mode 2 == Delay");
   CHECK(strcmp(unit_get_param_str_value(10, 0), "StHi") == 0, "Quality 0 == StHi");
 
-  /* --- 4. Dry passthrough: Dry/Wet = 0 -> output tracks the input --- */
+  /* --- 4. Dry passthrough: Dry/Wet = 0 -> output tracks the input ---
+   *
+   * The engine runs at 32 kHz, so the signal crosses two sample-rate
+   * conversions and a priming cushion on the way through: about 2.2 ms, or
+   * two 64-frame buffers.  Measure how many buffers it actually takes rather
+   * than assuming — a latency regression is worth catching, and it is the
+   * same measurement as "input reached the engine". */
   printf("[4] Dry passthrough carries the FX-bus input\n");
   unit_set_param_value(6, 0);      /* Dry/Wet = 0% (fully dry) */
   float phase = 0.0f;
   float in[64 * 2], out[64 * 2];
-  fill_sine(in, 64, phase, 220.0f);
-  memset(out, 0, sizeof(out));
-  unit_render(in, out, 64);
-  float in_pk = peak_abs(in, 64);
-  float out_pk = peak_abs(out, 64);
+  float in_pk = 0.0f, out_pk = 0.0f;
+  int latency_blocks = -1;
+  for (int blk = 0; blk < 8; ++blk) {
+    fill_sine(in, 64, phase, 220.0f);
+    memset(out, 0, sizeof(out));
+    unit_render(in, out, 64);
+    if (blk == 0) in_pk = peak_abs(in, 64);
+    out_pk = peak_abs(out, 64);
+    if (latency_blocks < 0 && out_pk > 0.05f) latency_blocks = blk;
+  }
   CHECK(in_pk > 0.1f, "input is non-silent (peak %.3f)", in_pk);
-  CHECK(out_pk > 0.05f, "dry output is non-silent (peak %.3f) -> input reached engine", out_pk);
+  CHECK(latency_blocks >= 0,
+        "dry output is non-silent (peak %.3f) -> input reached engine", out_pk);
+  CHECK(latency_blocks >= 0 && latency_blocks <= 3,
+        "dry latency is %d buffers of 64 frames (<= 3 expected)", latency_blocks);
 
-  /* --- 5. Wet granular: prime the buffer, expect non-silent wet output --- */
+  /* --- 5. Wet granular: prime the buffer, expect non-silent wet output ---
+   *
+   * At 32 kHz the recording buffer holds 1.5x more time and therefore takes
+   * 1.5x longer to fill, so a grain reading from POSITION finds material
+   * later than it did when the engine ran at 48 kHz.  600 buffers is ~0.8 s,
+   * comfortably past that for any POSITION. */
   printf("[5] Wet granular output\n");
   unit_set_param_value(6, 100);    /* Dry/Wet = 100% (fully wet) */
   unit_set_param_value(9, 0);      /* Mode = Granular */
   unit_set_param_value(2, 70);     /* Density */
   float wet_pk = 0.0f;
-  for (int blk = 0; blk < 200; ++blk) {
+  for (int blk = 0; blk < 600; ++blk) {
     fill_sine(in, 64, phase, 220.0f);
     memset(out, 0, sizeof(out));
     unit_render(in, out, 64);
