@@ -553,10 +553,73 @@ the lines would look like.
 
 ### Considered and not done
 
-- **A NEON FFT for Spectral.** `STFT::Buffer` is still 56 % of Spectral, and a
-  radix-4 NEON FFT is textbook 2-3x on ARMv7. It is the largest remaining
-  single win, and also the largest chunk of code to fork and the one with real
-  correctness risk. The phasor change above took a chunk of it for one line.
+- **A NEON FFT for Spectral.** `STFT::Buffer` is still the largest single
+  item in Spectral mode (56 % before the phasor change above took some of
+  it), and a radix-4 NEON FFT is textbook 2-3x on ARMv7. That would put
+  Spectral somewhere near 16-18 % end-to-end, against 23.6 % now. Not done
+  because of the size of the job, not because of accuracy — see below, which
+  corrects an earlier note in this file that called it a correctness risk
+  without separating the two things that phrase can mean.
+
+  **Numerical drift is not the obstacle**, and the margin is not close.
+  Measured at N = 4096 on windowed, int16-quantised input:
+
+  | | |
+  |---|---|
+  | `RotationPhasor` twiddle error, worst over the longest pass | 1.57e-5 (132 ulp) |
+  | `LutPhasor` twiddle error | 2.98e-8 (0 ulp — exact on the float grid) |
+  | Resulting spectrum difference between the two | 101.7 dB below the peak bin |
+  | Float FFT `Direct` + `Inverse` round trip | 104.5 dB below signal peak |
+  | One int16 LSB, same signal | **87.1 dB** below signal peak |
+
+  The last two rows are the argument: `STFT` keeps its analysis and synthesis
+  buffers as `short`, so the FFT sits inside a 16-bit quantiser and its own
+  error is **17.4 dB below** it. An FFT would have to get roughly 7x less
+  accurate before it contributed anything those buffers were not contributing
+  already. A radix-4 kernel would if anything be *more* accurate than what is
+  there now — six passes instead of twelve, so fewer rounding steps, and FFT
+  error grows with pass count. NEON single precision on ARMv7 always flushes
+  denormals and does not honour every rounding mode, which is irrelevant here
+  on both counts: the port already forces FZ/DN for the whole render, and a
+  denormal in a spectrum of int16 audio is hundreds of dB below the signal.
+
+  **What the risk actually is** is that the failure mode is silent. Spectral
+  mode's job is to blur, randomise phases and warp magnitudes, so a wrong
+  spectrum still sounds like a working one — you lose the ability to hear the
+  bug, which is the opposite of the reverb work, where a botched flush was
+  audible as a burst. Four specific ways to get it wrong:
+
+  1. **Layout.** `FrameTransformation` reads a split spectrum: `real =
+     &fft_data[0]`, `imag = &fft_data[fft_size >> 1]`
+     (`frame_transformation.cc:110-111`). ShyFFT produces exactly that; CMSIS
+     produces interleaved, which is why `stft.cc` has an explicit
+     de-interleave under `USE_ARM_FFT`. A replacement has to reproduce
+     ShyFFT's ordering *and* its sign convention on the imaginary half. Worth
+     taking seriously: the reference DFT written to produce the table above
+     got this wrong on the first attempt.
+  2. **Scaling.** ShyFFT is unnormalised in both directions and `stft.cc`
+     compensates with `1/(fft_size * fft_size / hop_size >> 1)`, against
+     `1/(fft_size / hop_size >> 1)` on the CMSIS path. Getting this wrong is
+     a factor of 4096, and one of the two directions is loud.
+  3. **Aliasing.** `ifft_in_ = fft_in_` and `ifft_out_ = fft_out_` are the
+     same buffers, and "fft_in is lost" is part of the contract. A kernel
+     that assumes distinct input and output will corrupt them.
+  4. **Workspace.** The FFT buffers come out of `BufferAllocator` in
+     `Prepare()`, sharing the workspace with the grain pool and the
+     correlator. Twiddle tables and scratch come out of the same budget.
+
+  Two things make the job smaller than it looks. `fft_size` is **always
+  4096** — `PhaseVocoder::Init` takes `largest_fft_size` and never reduces
+  it, and `hop_ratio` is fixed at 4 — so there is one size, it is a pure
+  power of four (no odd radix-2 stage), and `STFT`'s variable-size path is
+  dead code in this port. And the verification is the pattern already used
+  for the engine fork: run both FFTs on the same buffers and bound the
+  difference. Given 17.4 dB of headroom, a tolerance of -90 dB relative to
+  the peak bin is easy to hit and still stricter than the int16 buffers
+  around it.
+
+  The real argument against, then, is not risk but reach: it helps Spectral
+  and nothing else, and the other three modes are already within budget.
 - **Vectorising the grain overlap-add.** 42 % of Granular, so tempting, but
   the return is poorer than the number suggests: `RenderEnvelope` is
   contiguous and vectorises cleanly, while the buffer read underneath it is a
