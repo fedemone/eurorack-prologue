@@ -37,9 +37,12 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-fft test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
+ARM_CC      ?= arm-linux-gnueabihf-gcc
+ARM_SYSROOT ?= /usr/arm-linux-gnueabihf
+QEMU_ARM    ?= qemu-arm
 
 CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
@@ -201,8 +204,26 @@ test-clouds-engine-opt:
 	@echo ""
 	@echo "=== ALL PASS (0 failures) ==="
 
+# FFT tests: the interface contract (split layout, sign convention,
+# unnormalised scaling) and the vectorised butterfly against upstream's scalar
+# one.  Runs on the host, and under QEMU if the ARM toolchain is present --
+# which is the run that matters, since the NEON path only exists there.
+# Usage: make test-clouds-fft
+test-clouds-fft:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_fft.cc -o test_clouds_fft -lm
+	./test_clouds_fft
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP ARM/NEON run: cross toolchain or qemu-arm not found"; exit 0; }; \
+	 echo "" && echo "--- same tests, ARM/NEON under QEMU ---" && \
+	 arm-linux-gnueabihf-g++ -std=c++11 -Wall -Wextra -O2 -march=armv7-a \
+	    -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math \
+	    -fsigned-char $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. \
+	    test_clouds_fft.cc -o test_clouds_fft_arm -lm && \
+	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-fft test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -220,9 +241,6 @@ test-all: test test-elements test-rings test-clouds test-clouds-sample test-clou
 # Usage: make test-arm [ARM_UNITS="clouds clouds_fx rings"]
 ##############################################################################
 
-ARM_CC      ?= arm-linux-gnueabihf-gcc
-ARM_SYSROOT ?= /usr/arm-linux-gnueabihf
-QEMU_ARM    ?= qemu-arm
 ARM_UNITS   ?= clouds clouds_fx mo2_va rings
 
 # The SDK Makefile passes --param max-inline-insns-single=9999999999, which
