@@ -23,3 +23,6 @@ test_clouds_fx
 test_drmlgunit_arm
 test_clouds_synth
 test_clouds_fx_reconfig
+test_clouds_engine_opt_stock
+test_clouds_engine_opt_fork
+.engine_opt_*.txt

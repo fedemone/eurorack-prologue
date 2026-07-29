@@ -1,10 +1,12 @@
 OSCILLATOR = clouds
 PROJECT = $(OSCILLATOR)
 
-OSC_DDEFS = -DCLOUDS_GRANULAR
+# CLOUDS_OPT_ENGINE says the eurorack-opt/ fork is expected on the include
+# path; clouds-granular.cc fails the build if it is not (see its guard).
+OSC_DDEFS = -DCLOUDS_GRANULAR -DCLOUDS_OPT_ENGINE
 
 UCXXSRC = clouds-granular.cc \
-	eurorack/clouds/dsp/granular_processor.cc \
+	eurorack-opt/clouds/dsp/granular_processor.cc \
 	eurorack/clouds/dsp/correlator.cc \
 	eurorack/clouds/dsp/mu_law.cc \
 	eurorack/clouds/dsp/pvoc/phase_vocoder.cc \

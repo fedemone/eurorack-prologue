@@ -42,15 +42,21 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 ##############################################################################
 # Include paths
 #
-# - drumlogue/   : userosc.h compatibility header
-# - eurorack/    : Mutable Instruments source headers
-# - repo root    : drumlogue_osc_adapter.h
+# - drumlogue/    : userosc.h compatibility header
+# - eurorack-opt/ : forked/optimized MI headers, and so it MUST precede
+#                   eurorack/ -- it shadows a few of the submodule's headers
+#                   and a build where only some objects see them is corrupt.
+#                   Listed for every project, not just the ones forking today,
+#                   so the ordering rule holds by construction.
+# - eurorack/     : Mutable Instruments source headers
+# - repo root     : drumlogue_osc_adapter.h
 #
 # SDK common/ headers (runtime.h, unit.h, attributes.h) are added
 # automatically by the SDK Makefile via DINCDIR.
 #
 
 UINCDIR  = $(PROJROOT)/drumlogue
+UINCDIR += $(PROJROOT)/eurorack-opt
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM

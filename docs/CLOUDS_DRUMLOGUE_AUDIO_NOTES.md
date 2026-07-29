@@ -13,7 +13,7 @@ turned out to be wrong.
 
 | Unit | State |
 |------|-------|
-| `clouds` (synth) | Working. The engine runs at its native 32 kHz; Granular and Delay are comfortable, Stretch is better than it was, Spectral is still the expensive one — see [Prepare() on the audio thread](#prepare-on-the-audio-thread). |
+| `clouds` (synth) | Working. The engine runs at its native 32 kHz and against the `eurorack-opt/` fork; Granular and Delay are comfortable, Stretch is better than it was, Spectral is still the expensive one — see [Prepare() on the audio thread](#prepare-on-the-audio-thread). |
 | `clouds_fx` (delfx) | Reconfiguration moved off the audio thread and the engine runs at 32 kHz. **Awaiting hardware confirmation** — the previous build crashed and the fix has only been verified on host and under QEMU. |
 
 ---
@@ -449,15 +449,17 @@ values do not transfer to ARM; the ranking does.
 | Function | Self |
 |----------|-----:|
 | `GranularSamplePlayer::Play` (grain overlap-add) | 42.1 % |
-| `Reverb::Process` | 20.2 % |
+| `Reverb::Process` (unconditional — see the fork below) | 20.2 % |
 | `OSC_CYCLE` (this port: SRC, staging, Q31 conversion) | 17.5 % |
 | `GranularProcessor::Process` (conversion, feedback, dry/wet) | 12.0 % |
-| `Diffuser::Process` | 6.6 % |
+| `Diffuser::Process` (unconditional — see the fork below) | 6.6 % |
 | everything else | < 2 % |
 
 **Stretch**: `GranularProcessor::Process` 35.6 %, `Reverb::Process` 21.2 %,
 port layer 12.7 %, `Prepare()` 9.3 %, `ProcessGranular` 9.3 %,
-`Correlator::EvaluateNextCandidate` 6.8 %, `Diffuser::Process` 5.1 %.
+`Correlator::EvaluateNextCandidate` 6.8 %, `Diffuser::Process` 5.1 %. (The
+diffuser cannot be skipped in Stretch: its amount there is `parameters_.density`,
+which this port never maps below 0.68.)
 
 **Spectral**: `STFT::Buffer` **56.1 %**, port layer 9.3 %, `Reverb::Process`
 9.3 %, `GranularProcessor::Process` 7.8 %, `FrameTransformation::*` ~12 %.
@@ -487,45 +489,84 @@ changes:
    about the same and cannot rank the two, and there is no hardware here to
    measure on. The change is justified by what it issues, not by a stopwatch.
 
-### Rewriting the Mutable Instruments core — evaluation
+### The engine fork — what was done
 
-`eurorack/` is a submodule this repo does not edit, so any of the following
-means forking the file into the port layer and dropping the submodule's copy
-from the source list. That is a real maintenance cost — MIT-licensed and
-therefore legally fine with attribution, but it forks code that upstream may
-still fix. Ranked by return:
+`eurorack/` is a submodule this repo does not edit, so changing engine code
+means forking the file into `eurorack-opt/` and dropping the submodule's copy
+from the build. That is a real maintenance cost — MIT-licensed and legally
+fine with attribution, but it forks code upstream may still fix — so only two
+things were judged worth it. `eurorack-opt/README.md` has the build wiring and
+the re-sync procedure; this is the reasoning and the measurements.
 
-1. **Gate the reverb and diffuser on their amount. Biggest win, no rewrite,
-   no numerical change.** Both are literally `in_out += amount * (wet -
-   in_out)`, so at `amount == 0` the output is *bit-identical* to the input —
-   and both run unconditionally, every block, whatever the knobs say. That is
-   20 % of Granular, 26 % of Stretch (reverb + diffuser together) burned to
-   produce a value that is discarded. A guard needs three lines in
-   `GranularProcessor::Process()` plus a short fade when the amount leaves
-   zero so the delay lines refill without a click. This is the one to do
-   first; it is worth more than everything below combined and it is not
-   really an "optimisation" so much as a missing early-out.
+**1. Reverb and diffuser early-out** (`granular_processor.{h,cc}`). Both are
+literally `in_out += amount * (wet - in_out)`, so at `amount == 0` the output
+is *bit-identical* to the input — and both ran unconditionally, every block,
+whatever the knobs said. Reverb defaults to 0 in both units, and Granular's
+diffusion is 0 for any TEXTURE at or below 75 %, so this is the common case,
+not a corner. It is less an optimisation than a missing early-out.
 
-2. **A NEON FFT for Spectral.** `STFT::Buffer` is 56 % of Spectral mode, and
-   it is a scalar radix-2 `ShyFFT`. A radix-4 NEON FFT is textbook 2-3x on
-   ARMv7, which would take Spectral from ~30 % to ~20 % end-to-end. Highest
-   confidence of any SIMD work here because FFT butterflies are contiguous and
-   regular. It is also the largest chunk of code to fork.
+Skipping is not simply "don't call it", though: the delay lines freeze, and
+content stale by however long the skip lasted gets released the moment the
+amount comes back up — a preset load can take REVERB from 0 to full in one
+block. The two effects need different treatment:
 
-3. **Vectorising the grain overlap-add.** 42 % of Granular, so tempting, but
-   the return is poorer than the number suggests: the envelope render
-   (`RenderEnvelope`) is contiguous and vectorises cleanly, while the buffer
-   read underneath it is a per-grain gather at that grain's own phase
-   increment through a circular int16 buffer, which does not. Expect to reach
-   maybe a quarter of the 42 %, i.e. ~6-10 % overall.
+- The **reverb** has an input gain, so it can be flushed. Before idling it
+  runs 5120 samples with the input muted and both recirculating gains
+  (`reverb_time`, `diffusion`) forced to zero. Measured on the real `Reverb`:
+  that empties every line to below -100 dBFS in 143 blocks of 32 samples,
+  *independent of the reverb time in force* — against 1769 blocks if you just
+  mute the input and let it decay naturally at the amount-0 reverb time. 5120
+  samples leaves margin over the longest line (4782). Output is unchanged
+  throughout, because the amount is already zero.
+- The **diffuser** has no input gain to mute, so its all-pass states just
+  freeze. Its amount is ramped in over 8192 samples on resume instead; the
+  chain decays to inaudibility in about 0.27 s, so the frozen smear is gone
+  before the amount is loud enough to hear. This is the only place the fork's
+  output deviates from upstream, and only for a quarter second after a resume.
 
-4. **NEON popcount in the correlator.** ARM has `VCNT`; `EvaluateNextCandidate`
-   is XOR + popcount over bit-packed words. But it is 6.8 % of Stretch, so
-   even a 3x on it buys ~4 %. Not worth a fork on its own.
+**2. LUT twiddle factors for the FFT** (`pvoc/stft.h`, one line).
+`stmlib::RotationPhasor` → `stmlib::LutPhasor`. Both are stmlib and both
+produce the same sequence; `RotationPhasor` advances by complex multiplication
+(four multiplies and two adds per butterfly group) where `LutPhasor` walks a
+table built once in `Init()`. It is also more accurate, since repeated
+rotation drifts. Costs 8176 bytes of BSS against the 184 KB each unit already
+reserves. Measured with Granular as a control for QEMU noise, the
+Spectral/Granular ratio went 1.24-1.33 → 1.13-1.16 across three paired runs:
+about half the FFT's excess cost.
 
-Not worth doing: the port layer's own conversions and staging are already
-either NEON or memcpy-bound, and `Prepare()` outside Stretch/Spectral rounds
-to zero.
+**Measured, all three builds in one QEMU session**, end-to-end per 64-frame
+buffer, at the units' defaults (REVERB 0, TEXTURE 50 %):
+
+| Setting | 48 kHz, stock | 32 kHz, stock | 32 kHz + fork | Total |
+|---------|--------------:|--------------:|--------------:|------:|
+| Density 100 % | 33.60 % | 28.43 % | **21.91 %** | -35 % |
+| Granular | 29.60 % | 24.19 % | **18.85 %** | -36 % |
+| Stretch | 23.46 % | 19.65 % | **14.98 %** | -36 % |
+| Delay | 19.91 % | 17.51 % | **11.57 %** | -42 % |
+| Spectral | 40.55 % | 31.08 % | **23.58 %** | -42 % |
+
+`make test-clouds-engine-opt` compiles the same rendering against both engines
+and compares it sample for sample: bit-identical with both effects active,
+bit-identical with both skipped, and on the REVERB 0 → full jump the fork's
+peak must not exceed upstream's — which is what a flush that failed to empty
+the lines would look like.
+
+### Considered and not done
+
+- **A NEON FFT for Spectral.** `STFT::Buffer` is still 56 % of Spectral, and a
+  radix-4 NEON FFT is textbook 2-3x on ARMv7. It is the largest remaining
+  single win, and also the largest chunk of code to fork and the one with real
+  correctness risk. The phasor change above took a chunk of it for one line.
+- **Vectorising the grain overlap-add.** 42 % of Granular, so tempting, but
+  the return is poorer than the number suggests: `RenderEnvelope` is
+  contiguous and vectorises cleanly, while the buffer read underneath it is a
+  per-grain gather at that grain's own phase increment through a circular
+  int16 buffer, which does not. Expect maybe a quarter of the 42 %.
+- **NEON popcount in the correlator.** ARM has `VCNT`, and
+  `EvaluateNextCandidate` is XOR + popcount over bit-packed words — but it is
+  6.8 % of Stretch, so even a 3x buys ~4 %. Not worth a fork on its own.
+- The port layer's own conversions and staging are already NEON or
+  memcpy-bound, and `Prepare()` outside Stretch/Spectral rounds to zero.
 
 ---
 

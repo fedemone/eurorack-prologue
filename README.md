@@ -282,6 +282,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
 - Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
 - The engine runs at Clouds' native 32 kHz, converted to and from the drumlogue's 48 kHz at the edges. Size, delay times and the buffer's capacity are therefore 1.5x longer in real time than earlier builds — that is what the hardware sounds like — and the buffer takes 1.5x longer to fill, so give a fresh voice a moment before high Position settings have material. Pitch is unchanged. The top end rolls off above 13 kHz, roughly like Clouds' own codec
+- Reverb at 0% and Texture at or below 75% are now genuinely free: the engine used to run its reverb and diffuser every block whatever the knobs said, and the fork in `eurorack-opt/` skips them when their amount is zero. Together with the 32 kHz change that is about a third off every mode. Turning Reverb up from 0 starts the tail from silence rather than releasing the history the stock engine had been quietly accumulating
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
@@ -585,6 +586,8 @@ make test-clouds-synth          # real engine behind OSC_*: pitch across the
 make test-clouds-fx             # FX bus in -> engine -> out, dry and wet
 make test-clouds-fx-reconfig    # render thread vs control thread doing
                                 # Mode/Quality/reset (the park handshake)
+make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
+                                # engine, compared sample for sample
 
 # Run the shipped .drmlgunit binaries on emulated ARM
 make test-arm
@@ -659,6 +662,24 @@ real threads at three buffer sizes. The protocol, including why the park
 transition has to be a compare-exchange and why the wait needs two different
 timeouts, is written up in
 [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+
+**Forked engine sources (`eurorack-opt/`):**
+
+`eurorack/` is a submodule this repo does not edit, so the two engine changes
+that were worth making live in `eurorack-opt/`, which shadows the submodule on
+the include path: an early-out for the reverb and diffuser when their amount
+is zero (about a quarter of a block, at both units' default settings), and a
+one-line switch to LUT twiddle factors in the FFT. `make test-clouds-engine-opt`
+compiles the same rendering against both engines and compares it sample for
+sample, because "this optimisation is inaudible" is a claim worth checking
+rather than asserting.
+
+Two of the forked files are headers that change `sizeof(GranularProcessor)`,
+so the fork is all-or-nothing: `eurorack-opt` must precede `eurorack` on the
+include path, and `clouds-granular.cc`/`clouds-fx.cc` `#error` if the build
+says it wants the fork but the headers say otherwise. See
+[eurorack-opt/README.md](eurorack-opt/README.md) for the wiring and for how to
+re-sync when the submodule moves.
 
 **Build outputs:**
 - `.prlgunit` files for prologue

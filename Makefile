@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 
@@ -114,8 +114,13 @@ test-mussola:
 # CloudsFX delfx test: links the REAL Clouds engine through the delfx wrapper
 # and verifies FX-bus audio input reaches the engine (dry + wet paths).
 # Usage: make test-clouds-fx
+# granular_processor.cc comes from the eurorack-opt/ fork (reverb/diffuser
+# early-out); everything else is the submodule.  -Ieurorack-opt must precede
+# -Ieurorack so the forked headers shadow the submodule's -- see
+# eurorack-opt/README.md.
+CLOUDS_OPT_FLAGS = -Ieurorack-opt -Ieurorack -DCLOUDS_OPT_ENGINE
 CLOUDS_FX_ENGINE = \
-    eurorack/clouds/dsp/granular_processor.cc \
+    eurorack-opt/clouds/dsp/granular_processor.cc \
     eurorack/clouds/dsp/correlator.cc \
     eurorack/clouds/dsp/mu_law.cc \
     eurorack/clouds/dsp/pvoc/phase_vocoder.cc \
@@ -127,7 +132,7 @@ CLOUDS_FX_ENGINE = \
     eurorack/stmlib/utils/random.cc
 test-clouds-fx:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_FX \
-	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 -Ieurorack \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 $(CLOUDS_OPT_FLAGS) \
 	    test_clouds_fx.cc drumlogue_delfx_wrapper.cc clouds-fx.cc header.c \
 	    $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_fx -lm
@@ -139,7 +144,7 @@ test-clouds-fx:
 # Usage: make test-clouds-synth
 test-clouds-synth:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_GRANULAR \
-	    -DOSC_NATIVE_BLOCK_SIZE=32 -Ieurorack -I$(SDK_COMMON) \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 $(CLOUDS_OPT_FLAGS) -I$(SDK_COMMON) \
 	    test_clouds_synth.cc clouds-granular.cc \
 	    $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_synth -lm
@@ -151,14 +156,53 @@ test-clouds-synth:
 # Usage: make test-clouds-fx-reconfig
 test-clouds-fx-reconfig:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_FX -DCLOUDS_FX_TEST \
-	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 -Ieurorack -pthread \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 $(CLOUDS_OPT_FLAGS) -pthread \
 	    test_clouds_fx_reconfig.cc clouds-fx.cc \
 	    $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_fx_reconfig -lm
 	./test_clouds_fx_reconfig
 
+# Engine fork differential test: the same rendering compiled against the
+# submodule and against eurorack-opt/, compared sample for sample.  Proves the
+# reverb/diffuser early-out is inaudible where it claims to be, and pins the
+# direction of the one case where the two legitimately differ.
+# Usage: make test-clouds-engine-opt
+CLOUDS_STOCK_ENGINE = $(patsubst eurorack-opt/%,eurorack/%,$(CLOUDS_FX_ENGINE))
+test-clouds-engine-opt:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -Ieurorack \
+	    test_clouds_engine_opt.cc $(CLOUDS_STOCK_ENGINE) \
+	    -o test_clouds_engine_opt_stock -lm
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_engine_opt.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_engine_opt_fork -lm
+	@./test_clouds_engine_opt_stock > .engine_opt_stock.txt
+	@./test_clouds_engine_opt_fork  > .engine_opt_fork.txt
+	@echo "Clouds Engine Fork Differential Test"
+	@echo ""
+	@grep -E '^[AB] ' .engine_opt_stock.txt > .engine_opt_stock_ab.txt
+	@grep -E '^[AB] ' .engine_opt_fork.txt  > .engine_opt_fork_ab.txt
+	@if cmp -s .engine_opt_stock_ab.txt .engine_opt_fork_ab.txt; then \
+	    echo "  ok:   A (reverb + diffuser active) bit-identical to upstream"; \
+	    echo "  ok:   B (both amounts zero, skipped) bit-identical to upstream"; \
+	 else \
+	    echo "  FAIL: forked engine changed the output"; \
+	    diff .engine_opt_stock_ab.txt .engine_opt_fork_ab.txt || true; \
+	    rm -f .engine_opt_*.txt; exit 1; \
+	 fi
+	@sp=`awk '/^C /{print $$2}' .engine_opt_stock.txt`; \
+	 fp=`awk '/^C /{print $$2}' .engine_opt_fork.txt`; \
+	 awk -v s=$$sp -v f=$$fp 'BEGIN{ \
+	    if (f <= s * 1.02) \
+	      printf("  ok:   C (REVERB 0 -> full) fork peak %.0f <= upstream %.0f: no stale tail released\n", f, s); \
+	    else { \
+	      printf("  FAIL: C fork peak %.0f exceeds upstream %.0f -- flush is not emptying the delay lines\n", f, s); \
+	      exit 1 } }'
+	@rm -f .engine_opt_*.txt
+	@echo ""
+	@echo "=== ALL PASS (0 failures) ==="
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

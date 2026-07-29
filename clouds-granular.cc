@@ -55,6 +55,19 @@
 
 using namespace clouds;
 
+/* The optimized engine fork must actually be on the include path.
+ *
+ * eurorack-opt/ shadows two submodule headers, and both change the size of
+ * GranularProcessor.  A build that compiles the forked granular_processor.cc
+ * but lets some translation unit see the submodule's headers -- or the other
+ * way round -- links without complaint and then corrupts memory at run time,
+ * which is not a failure anyone should have to debug.  So the build declares
+ * its intent with CLOUDS_OPT_ENGINE and this checks the headers agree. */
+#if defined(CLOUDS_OPT_ENGINE) && !defined(CLOUDS_OPT_ACTIVE)
+#error "CLOUDS_OPT_ENGINE is set but eurorack-opt/ is not ahead of eurorack/ on the include path -- see eurorack-opt/README.md"
+#endif
+
+
 /* --- Static memory allocations ---
  *
  * GranularProcessor requires two memory regions:

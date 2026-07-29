@@ -31,7 +31,7 @@ CSRC = $(PROJROOT)/header.c
 # C++ sources (delfx wrapper + FX engine glue + Clouds DSP engine)
 CXXSRC  = $(PROJROOT)/drumlogue_delfx_wrapper.cc
 CXXSRC += $(PROJROOT)/clouds-fx.cc
-CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/granular_processor.cc
+CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/granular_processor.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/correlator.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/mu_law.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/phase_vocoder.cc
@@ -45,8 +45,12 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 ##############################################################################
 # Include paths
 #
+# eurorack-opt/ MUST precede eurorack/: it shadows some of the submodule's
+# headers and they change sizeof(GranularProcessor).
+#
 
 UINCDIR  = $(PROJROOT)/drumlogue
+UINCDIR += $(PROJROOT)/eurorack-opt
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
@@ -77,6 +81,6 @@ ULIBS += -lc
 # Defines
 #
 
-UDEFS  = -DCLOUDS_FX -DSTM32F401xC -DSTM32F401xx
+UDEFS  = -DCLOUDS_FX -DCLOUDS_OPT_ENGINE -DSTM32F401xC -DSTM32F401xx
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=32
 UDEFS += -DBLOCKSIZE=32

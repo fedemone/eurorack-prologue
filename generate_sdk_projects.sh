@@ -109,15 +109,21 @@ CONFIGEOF
 ##############################################################################
 # Include paths
 #
-# - drumlogue/   : userosc.h compatibility header
-# - eurorack/    : Mutable Instruments source headers
-# - repo root    : drumlogue_osc_adapter.h
+# - drumlogue/    : userosc.h compatibility header
+# - eurorack-opt/ : forked/optimized MI headers, and so it MUST precede
+#                   eurorack/ -- it shadows a few of the submodule's headers
+#                   and a build where only some objects see them is corrupt.
+#                   Listed for every project, not just the ones forking today,
+#                   so the ordering rule holds by construction.
+# - eurorack/     : Mutable Instruments source headers
+# - repo root     : drumlogue_osc_adapter.h
 #
 # SDK common/ headers (runtime.h, unit.h, attributes.h) are added
 # automatically by the SDK Makefile via DINCDIR.
 #
 
 UINCDIR  = \$(PROJROOT)/drumlogue
+UINCDIR += \$(PROJROOT)/eurorack-opt
 UINCDIR += \$(PROJROOT)/eurorack
 UINCDIR += \$(PROJROOT)
 UINCDIR += \$(PROJROOT)/eurorack/stmlib/third_party/STM
@@ -267,12 +273,12 @@ create_project "rings" "rings" \
 # Clouds-based oscillator (clouds-granular.cc, block size 32)
 ##############################################################################
 
-CLOUDS_SOURCES="eurorack/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/dsp/pvoc/phase_vocoder.cc eurorack/clouds/dsp/pvoc/frame_transformation.cc eurorack/clouds/dsp/pvoc/stft.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/dsp/atan.cc eurorack/stmlib/utils/random.cc"
+CLOUDS_SOURCES="eurorack-opt/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/dsp/pvoc/phase_vocoder.cc eurorack/clouds/dsp/pvoc/frame_transformation.cc eurorack/clouds/dsp/pvoc/stft.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/dsp/atan.cc eurorack/stmlib/utils/random.cc"
 
 create_project "clouds" "clouds" \
     "clouds-granular.cc" \
     "$CLOUDS_SOURCES" \
-    "-DCLOUDS_GRANULAR -DSTM32F401xC -DSTM32F401xx" 32
+    "-DCLOUDS_GRANULAR -DCLOUDS_OPT_ENGINE -DSTM32F401xC -DSTM32F401xx" 32
 
 ##############################################################################
 # CloudsFX (clouds-fx.cc, delfx effect, block size 32)
@@ -324,7 +330,7 @@ CSRC = $(PROJROOT)/header.c
 # C++ sources (delfx wrapper + FX engine glue + Clouds DSP engine)
 CXXSRC  = $(PROJROOT)/drumlogue_delfx_wrapper.cc
 CXXSRC += $(PROJROOT)/clouds-fx.cc
-CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/granular_processor.cc
+CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/granular_processor.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/correlator.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/mu_law.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/phase_vocoder.cc
@@ -338,8 +344,12 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 ##############################################################################
 # Include paths
 #
+# eurorack-opt/ MUST precede eurorack/: it shadows some of the submodule's
+# headers and they change sizeof(GranularProcessor).
+#
 
 UINCDIR  = $(PROJROOT)/drumlogue
+UINCDIR += $(PROJROOT)/eurorack-opt
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
@@ -370,7 +380,7 @@ ULIBS += -lc
 # Defines
 #
 
-UDEFS  = -DCLOUDS_FX -DSTM32F401xC -DSTM32F401xx
+UDEFS  = -DCLOUDS_FX -DCLOUDS_OPT_ENGINE -DSTM32F401xC -DSTM32F401xx
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=32
 UDEFS += -DBLOCKSIZE=32
 CONFIGEOF
