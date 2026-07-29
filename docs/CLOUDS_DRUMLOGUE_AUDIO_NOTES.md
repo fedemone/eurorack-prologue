@@ -545,6 +545,26 @@ buffer, at the units' defaults (REVERB 0, TEXTURE 50 %):
 | Delay | 19.91 % | 17.51 % | **11.57 %** | -42 % |
 | Spectral | 40.55 % | 31.08 % | **23.58 %** | -42 % |
 
+**CloudsFX gets all of it too** — same forked sources, same include order,
+same `CLOUDS_OPT_ENGINE` define in `drumlogue/clouds_fx/config.mk`, and its
+defaults (Reverb 0 %, Texture 50 %) put it squarely in the case the early-out
+is for. Measured with its own harness, per 64-frame `unit_render`, three
+paired runs averaged:
+
+| Mode | stock | fork | | with Reverb 60 % + Texture 90 % |
+|------|------:|-----:|--:|--:|
+| Granular | 24.51 % | **20.82 %** | -15 % | 23.77 % → 24.02 % (flat) |
+| Stretch | 21.45 % | **17.80 %** | -17 % | 22.30 % → 21.67 % (flat) |
+| Delay | 18.21 % | **15.01 %** | -18 % | 19.18 % → 20.03 % (flat) |
+| Spectral | 29.67 % | **24.97 %** | -16 % | 33.30 % → **29.16 %** (-12 %) |
+
+The right-hand column is the control, and it is the useful half of the table:
+with both effects turned up the early-out cannot fire, and the first three
+modes come out flat within the run-to-run spread — which is what says the
+saving on the left is really the skipped reverb and diffuser rather than
+something else that moved. Spectral improves in *both* columns, because the
+two FFT changes do not care where the Reverb knob is.
+
 `make test-clouds-engine-opt` compiles the same rendering against both engines
 and compares it sample for sample: bit-identical with both effects active,
 bit-identical with both skipped, and on the REVERB 0 → full jump the fork's
