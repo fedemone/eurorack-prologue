@@ -18,7 +18,7 @@ commit **58b9125**.
 | File | Change | Affects |
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
-| `clouds/dsp/pvoc/stft.h` | LUT twiddle factors | Spectral |
+| `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 
 Why forked, and what changed
@@ -106,6 +106,78 @@ again on ARM under QEMU, which is the run that exercises the vector code. It
 pins the interface contract against hand-computed expectations rather than
 against the other implementation, so those still hold if someone later swaps
 in a different FFT entirely.
+
+### `clouds/dsp/pvoc/stft.h` — smaller FFT (`kMaxFftSize` 4096 → 1024)
+
+This is the one change here that alters what a mode sounds like, and it was
+made because upstream's 4096 hung the hardware.
+
+Upstream computes the whole transform in one `STFT::Buffer()` call from the
+idle loop, where it is not deadline work. This port has no idle loop and runs
+it on the audio thread, so it arrives as a single burst once per hop —
+forward FFT, spectral modifier, inverse FFT, twice over in stereo, inside one
+audio block. Peak cost goes as `(N/2)·log2(N)` while the hop only goes as
+`N`, so a smaller transform cuts the burst by more than it raises the burst
+rate, and the average barely moves.
+
+Measured with `make bench-clouds-spike` (ARM under `qemu-arm`, per 32-sample
+engine block at 32 kHz = a 1.00 ms deadline, two runs per size). Granular is
+there as a reference: it has no burst mechanism at all, so it calibrates the
+harness and the host.
+
+| `kMaxFftSize` | mean | p99 | p99.9 | over deadline | window @ 32 kHz |
+|---|---:|---:|---:|---:|---|
+| 4096 (upstream) | 11.1% | 298% | 380-463% | **3.12%** | 128 ms, 7.8 Hz bins |
+| 2048 | 10.3% | 147% | 168-178% | **6.25%** | 64 ms, 15.6 Hz |
+| **1024 (default)** | **9.9%** | **74-79%** | **94-96%** | **0.01-0.05%** | 32 ms, 31.2 Hz |
+| 512 | 9.2% | 35-44% | 42-50% | 0.00% | 16 ms, 62.5 Hz |
+| *Granular, for reference* | *15.1%* | *22-24%* | *28-30%* | *0.00-0.01%* | — |
+
+Two things to read out of that. The over-deadline column at 4096 and 2048 is
+*exactly* 1/32 and 1/16 in every run — that is structural, one block per hop,
+not noise; at 1024 it collapses into the same range as Granular, which is
+known to work on hardware. And 2048 is **worse** than 4096 by that measure:
+halving the transform did not bring the burst under the deadline, it just
+doubled how often it missed. That is why the default is not simply "one step
+down".
+
+1024 is the largest size where the structural overrun disappears, which is
+why it is the default rather than 512 — the size sets what Spectral *is*, so
+the change should be the smallest one that works. If it still crackles on
+hardware, 512 is a one-line change with 2x more margin:
+
+```c
+// eurorack-opt/clouds/dsp/pvoc/stft.h
+#define CLOUDS_FFT_SIZE 512
+```
+
+Set it in the header, not with `-D` — the value has to reach every
+translation unit or `sizeof(GranularProcessor)` disagrees between objects,
+and the `CLOUDS_OPT_ACTIVE` guard cannot catch that because both sides are
+this same header.
+
+Lowering `kMaxFftSize` is deliberate, rather than the more obvious route of
+passing a smaller `largest_fft_size` to `PhaseVocoder::Init()`. `STFT::Buffer()`
+switches to `fft_->Direct(in, out, num_passes)` the moment
+`fft_size != FFT::max_size` — a runtime-sized path that has never executed in
+this port and that the NEON butterfly does not cover, so that route would
+activate untested code and throw away the vectorisation in the same move.
+Keeping the two equal is why `granular_processor.cc` also had its literal
+`4096` replaced with `kMaxFftSize`; the two must not drift apart.
+
+**It also fixes POSITION in Spectral mode, by accident.** `num_textures` is
+`min(free buffer space / texture_size, kMaxNumTextures)` and
+`FrameTransformation` reserves one of them for phases, so at 4096 the port
+got 2 textures — one usable magnitude buffer. `ReplayMagnitudes` computes
+`index = position * (num_textures_ - 1)`, which with one texture is always
+zero: **the POSITION knob did nothing at all in Spectral**. At 1024 the
+allocation reaches the `kMaxNumTextures = 7` cap, so POSITION scans six
+magnitude textures, as upstream intends.
+
+Sonically, 1024 is a 32 ms window with 31.2 Hz bins against 4096's 128 ms and
+7.8 Hz: tighter, less smeared, more transient detail, less of the long
+frozen-pad character. Different, not worse — but different, and worth knowing
+before wondering why a patch does not sound like it used to.
 
 ### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
 

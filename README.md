@@ -3,30 +3,34 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
-> ## ⚠ Danger — `clouds` and `clouds_fx` on drumlogue can hang the instrument
+> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Spectral mode has hung the instrument
 >
-> **Confirmed on hardware.** Selecting **Mode 3 (Spectral)** on the `clouds`
-> synth produces crackling and, after a few seconds of continuous use, **freezes
-> the whole drumlogue — the power cable has to be pulled to recover it.** There
-> is no way to save your work once it happens.
+> **Seen on hardware:** **Mode 3 (Spectral)** on the `clouds` synth crackled
+> and, after a few seconds of continuous use, **froze the whole drumlogue —
+> the power cable had to be pulled.** `clouds_fx` no longer crashes, but its
+> CPU cost makes it hard to use in practice, and it was unstable in Spectral
+> and at Position 100% + Density 100%.
 >
-> `clouds_fx` no longer crashes, but its CPU cost makes it hard to use in
-> practice, and its output is unstable in Spectral mode and at Position 100% +
-> Density 100%.
+> The cause is measured, and it is **not** memory corruption: the phase
+> vocoder's FFT ran on the audio thread — where the original firmware ran it
+> in its idle loop — as one burst per hop costing about 4x a whole block's
+> budget, missing the deadline on 3.12% of blocks for as long as Spectral was
+> selected.
 >
-> The cause is understood and measured — the phase vocoder's FFT runs on the
-> audio thread, where the original firmware ran it in its idle loop, so it
-> arrives as one burst costing several times a whole block's budget. It is
-> **not** memory corruption. No safe fix was found that could be verified
-> without the hardware, so the units ship as-is. See
+> **The FFT has since been shrunk from 4096 to 1024 points**, which removes
+> that overrun in every measurement available here: Spectral's per-block cost
+> distribution is now statistically indistinguishable from Granular's, which
+> does not hang. Spectral sounds tighter and less smeared as a result — a
+> 32 ms analysis window instead of 128 ms. **This has not been re-tested on
+> hardware.** Until it has, treat Spectral as suspect and do not use either
+> unit in a live set or anywhere an unrecoverable freeze would cost you
+> something. If it still crackles, `CLOUDS_FFT_SIZE` drops to 512 for 2x more
+> margin — one line in `eurorack-opt/clouds/dsp/pvoc/stft.h`.
+>
+> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware and are
+> unaffected by the change. So is every other oscillator in this repository.
+> Full analysis and measurements:
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
->
-> **Avoid Mode 3 (Spectral) on both units. Do not use either unit in a live set
-> or anywhere an unrecoverable freeze would cost you something.** The other
-> three modes (Granular, Stretch, Looping Delay) have no burst and have not
-> been seen to hang.
->
-> Every other oscillator in this repository is unaffected.
 
 **Platforms supported:**
 - Korg prologue
@@ -266,11 +270,13 @@ Clouds (based on Clouds)
 ----
 *Granular audio processor*
 
-> **⚠ Danger — Mode 3 (Spectral) freezes the drumlogue.** Confirmed on
-> hardware: Spectral crackles and then locks the instrument up after a few
-> seconds, recoverable only by unplugging the power. Use Modes 0-2. The cause
-> is a once-per-32-blocks FFT burst on the audio thread, measured at ~4x a
-> whole block's budget; see
+> **⚠ Warning — Mode 3 (Spectral) froze the drumlogue at the previous FFT
+> size.** On hardware, Spectral crackled and then locked the instrument up
+> after a few seconds, recoverable only by unplugging the power. The cause was
+> a once-per-hop FFT burst on the audio thread costing ~4x a whole block's
+> budget; the FFT is now 1024 points instead of 4096, which removes the
+> overrun under measurement but **has not been re-tested on hardware**. Modes
+> 0-2 were unaffected throughout. See
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 Based on Mutable Instruments **Clouds**, a granular audio processor with four playback modes. Transforms incoming audio or internal oscillator into textural clouds, time-stretched drones, delays, and spectral freezes.
@@ -312,9 +318,10 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 **Sound design tips:**
 - Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to roughly 18 grains. The knob is linear in grain count — the engine's own law is cubic, which put almost all the range and almost all the CPU in the top fifth of the travel, so it is inverted here and capped where the drumlogue can still pay for it. It remains the main CPU control (about 2x from 0% to 100%). Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
-- Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. **Spectral's burst is what hangs the instrument** — its average cost is only ~12% of the block budget, but 84% of that cost lands in one block out of 32, which measures at ~4x the budget for that block. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
+- Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. **Spectral's burst is what hung the instrument** — its average cost is only ~10% of the block budget, but nearly all of it landed in one block per hop, measuring ~4x the budget for that block. Shrinking the FFT from 4096 to 1024 points brought that under the deadline; Stretch's burst is the correlator, not the FFT, and is untouched. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
 - The engine runs at Clouds' native 32 kHz, converted to and from the drumlogue's 48 kHz at the edges. Size, delay times and the buffer's capacity are therefore 1.5x longer in real time than earlier builds — that is what the hardware sounds like — and the buffer takes 1.5x longer to fill, so give a fresh voice a moment before high Position settings have material. Pitch is unchanged. The top end rolls off above 13 kHz, roughly like Clouds' own codec
 - Reverb at 0% and Texture at or below 75% are now genuinely free: the engine used to run its reverb and diffuser every block whatever the knobs said, and the fork in `eurorack-opt/` skips them when their amount is zero. Together with the 32 kHz change that is about a third off every mode. Turning Reverb up from 0 starts the tail from silence rather than releasing the history the stock engine had been quietly accumulating
+- Mode 3 (Spectral) now runs a 1024-point FFT instead of 4096, so its analysis window is 32 ms rather than 128 ms at the engine's 32 kHz: tighter and more transient, less of the long smeared freeze. This was done to keep the per-hop FFT burst inside the audio deadline — at 4096 it hung the instrument. Two side effects worth knowing: **Position now works in Spectral**, where it previously did nothing at all (the old FFT size left room for only one magnitude texture, and Position indexes between textures), and the whole mode got slightly cheaper on average as well
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
@@ -325,14 +332,15 @@ CloudsFX (Clouds as an insert effect)
 ----
 *Granular delay/texture effect (drumlogue only)*
 
-> **⚠ Danger — usable only with care; Spectral is unstable.** Hardware
-> testing found: the crash is **fixed** (the unit no longer silences the audio
-> interface), but the CPU cost is high enough that the unit is hard to use in
-> practice, and the output is unstable in **Mode 3 (Spectral)** and at
-> **Position 100% + Density 100%**. The synth's Spectral freeze (see the
-> warning at the top of this README) has the same root cause and the same
-> risk applies here. Development stopped at this point; the diagnosis and the
-> measurements behind it are in
+> **⚠ Warning — usable only with care.** Hardware testing found the crash
+> **fixed** (the unit no longer silences the audio interface), but the CPU
+> cost is high enough that the unit is hard to use in practice, and the output
+> was unstable in **Mode 3 (Spectral)** and at **Position 100% + Density
+> 100%**. CloudsFX builds against the same engine fork as the synth, so it
+> picks up the smaller FFT and the Spectral fix described at the top of this
+> README — untested on hardware, as there. The Position/Density instability is
+> a separate, undiagnosed issue: that setting measures 15.9% mean with zero
+> deadline misses, so the FFT burst does not explain it. Measurements in
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 >
 > Changing Mode, Quality or resetting the unit mutes it for 2-4 blocks while

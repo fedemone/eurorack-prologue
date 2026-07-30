@@ -37,15 +37,42 @@
 // built once in Init() -- two pointer bumps and two loads.  It is also the
 // more accurate of the two, since repeated rotation drifts.
 //
-// Cost: 8176 bytes of BSS for the table (num_passes = 12 at kMaxFftSize
-// 4096).  Benefit, measured under qemu-arm with Granular mode as a control
-// for run-to-run noise: Spectral/Granular cost ratio 1.24-1.33 -> 1.13-1.16
-// across three paired runs, i.e. roughly half of the FFT's excess cost.
+// Cost: 8176 bytes of BSS for the table at kMaxFftSize 4096, less at the
+// smaller sizes below.  Benefit, measured under qemu-arm with Granular mode
+// as a control for run-to-run noise: Spectral/Granular cost ratio 1.24-1.33
+// -> 1.13-1.16 across three paired runs, i.e. roughly half of the FFT's
+// excess cost.
+//
+// Change: kMaxFftSize is smaller than upstream's 4096, and settable at build
+// time.  Upstream computes the whole transform in one call, in the idle loop
+// where it is not deadline work; this port has no idle loop and runs it on
+// the audio thread, where it lands as a single burst once per hop.  At 4096
+// that burst measured around 4x a whole block's budget and hung the hardware.
+// Peak cost falls as (N/2)*log2(N) while the hop only falls as N, so halving
+// the size cuts the burst by more than half and leaves the average roughly
+// where it was.  See eurorack-opt/README.md for the measured table.
+//
+// This is not a free change: it is the analysis window, so it sets what
+// Spectral mode *is*.  At 32 kHz, 4096 is a 128 ms window with 7.8 Hz bins
+// and 1024 is a 32 ms window with 31.2 Hz bins -- less smeared, tighter,
+// more transient detail.  Different, not worse, but different.
+//
+// Lowering kMaxFftSize rather than passing a smaller largest_fft_size to
+// PhaseVocoder::Init() is deliberate.  STFT::Buffer() switches to
+// fft_->Direct(in, out, num_passes) as soon as fft_size != FFT::max_size,
+// which is a runtime-sized path that has never executed in this port and
+// that the NEON butterfly in shy_fft.h does not cover.  Keeping the two
+// equal keeps the compile-time path, and the vectorisation, live.
 //
 // This header must shadow the submodule's copy for EVERY translation unit in
 // the build.  It changes sizeof(FFT), hence sizeof(PhaseVocoder) and
 // sizeof(GranularProcessor); a build where some objects see this and others
-// see upstream's is silently corrupt.
+// see upstream's is silently corrupt.  The same goes for CLOUDS_FFT_SIZE: it
+// must be defined for every translation unit or none.  Setting it in one
+// project's UDEFS and not in a shared object file is the same class of bug,
+// and the CLOUDS_OPT_ACTIVE guard will not catch it because both sides are
+// this header.  Change the default here rather than passing -D, unless you
+// are sure the flag reaches everything.
 //
 // -----------------------------------------------------------------------------
 //
@@ -68,7 +95,21 @@ namespace clouds {
 
 struct Parameters;
 
-const size_t kMaxFftSize = 4096;
+// Any power of two from 256 to 4096 works -- all five were round-tripped
+// against ShyFFT before this was made settable, so 2048 and 512 are fine even
+// though they are not powers of four.  4096 restores upstream's window (and
+// upstream's burst).  The window LUT is strided by
+// LUT_SINE_WINDOW_4096_SIZE / fft_size, which is why the ceiling is 4096.
+#ifndef CLOUDS_FFT_SIZE
+#define CLOUDS_FFT_SIZE 1024
+#endif
+
+const size_t kMaxFftSize = CLOUDS_FFT_SIZE;
+
+STATIC_ASSERT(CLOUDS_FFT_SIZE >= 256 && CLOUDS_FFT_SIZE <= 4096 &&
+              (CLOUDS_FFT_SIZE & (CLOUDS_FFT_SIZE - 1)) == 0,
+              clouds_fft_size_must_be_a_power_of_two_from_256_to_4096);
+
 #ifdef USE_ARM_FFT
   typedef arm_rfft_fast_instance_f32 FFT;
 #else

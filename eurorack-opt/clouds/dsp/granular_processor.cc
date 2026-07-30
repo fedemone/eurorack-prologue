@@ -494,9 +494,12 @@ void GranularProcessor::Prepare() {
     pitch_shifter_.Init((uint16_t*)correlator_data);
     
     if (playback_mode_ == PLAYBACK_MODE_SPECTRAL) {
+      // kMaxFftSize, not upstream's literal 4096: the two must stay equal or
+      // STFT::Buffer() drops to its runtime-sized path, which the NEON
+      // butterfly does not cover.  See eurorack-opt/clouds/dsp/pvoc/stft.h.
       phase_vocoder_.Init(
           buffer, buffer_size,
-          lut_sine_window_4096, 4096,
+          lut_sine_window_4096, kMaxFftSize,
           num_channels_, resolution(), sr);
     } else {
       for (int32_t i = 0; i < num_channels_; ++i) {

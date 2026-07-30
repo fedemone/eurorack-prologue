@@ -29,6 +29,14 @@
  *     bin, which is stricter than the int16 buffers STFT keeps on either side
  *     of the transform (one LSB is 87 dB below signal peak).
  *
+ * Both run at every size the build can select. kMaxFftSize is settable
+ * (CLOUDS_FFT_SIZE, default 1024, lowered from upstream's 4096 to keep the
+ * per-hop burst inside the audio deadline), and the transform is not the same
+ * shape at each one: 4096 and 1024 are powers of four and 2048 and 512 are
+ * not, so the pass count changes parity, and the NEON loop's scalar tail runs
+ * a different number of butterflies. Testing only the configured size would
+ * leave the rest to be discovered by whoever changes the flag.
+ *
  * Build/run: make test-clouds-fft   (host, plus ARM under QEMU if available)
  */
 
@@ -37,16 +45,6 @@
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
-
-static const int N = 4096;   /* the only size Clouds uses; see PhaseVocoder::Init */
-
-typedef stmlib::ShyFFT<float, N, stmlib::LutPhasor, false> FftScalar;
-typedef stmlib::ShyFFT<float, N, stmlib::LutPhasor, true>  FftVector;
-
-static FftScalar fft_scalar;
-static FftVector fft_vector;
-
-static float in_a[N], in_b[N], out_a[N], out_b[N];
 
 static int g_fail = 0;
 #define CHECK(cond, ...)                          \
@@ -60,18 +58,26 @@ static int g_fail = 0;
 static double db(double x) { return 20.0 * log10(x > 1e-300 ? x : 1e-300); }
 
 /* Windowed, int16-quantised noise: what the STFT actually hands the FFT. */
-static void fill_signal(float *x) {
+static void fill_signal(float *x, int n) {
   uint32_t s = 12345u;
-  for (int i = 0; i < N; ++i) {
+  for (int i = 0; i < n; ++i) {
     s = s * 1664525u + 1013904223u;
-    const double n = (double)(int32_t)s / 2147483648.0;
-    const double w = 0.5 - 0.5 * cos(2.0 * M_PI * i / N);
-    x[i] = (float)(floor(n * 0.7 * 32768.0) * w);
+    const double v = (double)(int32_t)s / 2147483648.0;
+    const double w = 0.5 - 0.5 * cos(2.0 * M_PI * i / n);
+    x[i] = (float)(floor(v * 0.7 * 32768.0) * w);
   }
 }
 
-int main(void) {
-  printf("Clouds FFT Tests\n\n");
+template <int N>
+static void test_size(void) {
+  typedef stmlib::ShyFFT<float, N, stmlib::LutPhasor, false> FftScalar;
+  typedef stmlib::ShyFFT<float, N, stmlib::LutPhasor, true>  FftVector;
+
+  static FftScalar fft_scalar;
+  static FftVector fft_vector;
+  static float in_a[N], in_b[N], out_a[N], out_b[N];
+
+  printf("\n--- N = %d ---\n", N);
   fft_scalar.Init();
   fft_vector.Init();
 
@@ -101,8 +107,8 @@ int main(void) {
 
   /* Round trip is N*x, not x: both directions are unnormalised and stft.cc
    * folds the factor into inverse_window_size. Getting this wrong is a
-   * factor of 4096 in one direction or the other. */
-  fill_signal(in_a);
+   * factor of N in one direction or the other. */
+  fill_signal(in_a, N);
   float peak = 0.0f;
   for (int i = 0; i < N; ++i) peak = fmaxf(peak, fabsf(in_a[i]));
   for (int i = 0; i < N; ++i) in_b[i] = in_a[i];
@@ -116,14 +122,9 @@ int main(void) {
         "(one int16 LSB is %.1f dB down)", -db(rt / peak), -db(1.0 / peak));
 
   /* --- 2. Vectorised butterfly against upstream's scalar one ------------ */
-#ifdef __ARM_NEON
-  printf("\n[2] NEON butterfly vs upstream scalar (NEON path active)\n");
-#else
-  printf("\n[2] NEON butterfly vs upstream scalar "
-         "(no NEON on this target: both paths scalar, refactor smoke test)\n");
-#endif
+  printf("[2] NEON butterfly vs upstream scalar\n");
 
-  fill_signal(in_a);
+  fill_signal(in_a, N);
   for (int i = 0; i < N; ++i) in_b[i] = in_a[i];
   fft_scalar.Direct(in_a, out_a);
   fft_vector.Direct(in_b, out_b);
@@ -148,6 +149,22 @@ int main(void) {
   CHECK(sigerr / sigmax < 3.2e-5,
         "Inverse: worst sample difference %.1f dB below peak (need >= 90)",
         -db(sigerr / sigmax));
+}
+
+int main(void) {
+  printf("Clouds FFT Tests\n");
+#ifdef __ARM_NEON
+  printf("(NEON path active)\n");
+#else
+  printf("(no NEON on this target: both paths scalar, refactor smoke test)\n");
+#endif
+
+  /* Every size kMaxFftSize is allowed to take. */
+  test_size<4096>();
+  test_size<2048>();
+  test_size<1024>();
+  test_size<512>();
+  test_size<256>();
 
   printf("\n=== %s (%d failures) ===\n", g_fail ? "FAILED" : "ALL PASS", g_fail);
   return g_fail ? 1 : 0;
