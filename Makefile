@@ -284,6 +284,21 @@ bench:
 	    -o bench_render -lm
 	./bench_render
 
+# Benchmark: where Spectral's cost sits within a block, which is what decides
+# whether the unit crackles.  Reports mean, worst block and the fraction of
+# blocks over the 1 ms deadline, per mode.  ARM under QEMU, because the shape
+# of the answer is what matters and QEMU preserves it.
+# Usage: make bench-clouds-spike
+bench-clouds-spike:
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP bench-clouds-spike: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
+	arm-linux-gnueabihf-g++ -std=c++11 -O2 -march=armv7-a -mtune=cortex-a7 \
+	    -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math -fsigned-char -DTEST \
+	    $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. \
+	    bench_clouds_spike.cc $(CLOUDS_FX_ENGINE) \
+	    -o bench_clouds_spike_arm -lm
+	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_clouds_spike_arm
+
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd
 NUTEKT_DIGITAL_PACKAGE=eurorack_nutekt-digital

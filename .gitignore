@@ -28,3 +28,4 @@ test_clouds_engine_opt_fork
 .engine_opt_*.txt
 test_clouds_fft
 test_clouds_fft_arm
+bench_clouds_spike_arm
