@@ -54,8 +54,16 @@
 //
 // This is not a free change: it is the analysis window, so it sets what
 // Spectral mode *is*.  At 32 kHz, 4096 is a 128 ms window with 7.8 Hz bins
-// and 1024 is a 32 ms window with 31.2 Hz bins -- less smeared, tighter,
-// more transient detail.  Different, not worse, but different.
+// and 512 is a 16 ms window with 62.5 Hz bins -- much less smeared, tighter,
+// far more transient detail.  Different, not worse, but different.
+//
+// 512 rather than 1024 because of clouds_fx, not the synth.  The synth clears
+// its deadline at 1024; the FX does not -- it carries stereo resampling in
+// both directions including the dry path, so less of its buffer is left for
+// the burst, and at 1024 it still missed 0.93% of renders.  Both units clear
+// at 512 with the FX's Spectral tail (p99.9 75-82%) sitting alongside its
+// other modes rather than above them.  A synth-only build can raise this to
+// 1024 and get the longer window back.
 //
 // Lowering kMaxFftSize rather than passing a smaller largest_fft_size to
 // PhaseVocoder::Init() is deliberate.  STFT::Buffer() switches to
@@ -101,7 +109,7 @@ struct Parameters;
 // upstream's burst).  The window LUT is strided by
 // LUT_SINE_WINDOW_4096_SIZE / fft_size, which is why the ceiling is 4096.
 #ifndef CLOUDS_FFT_SIZE
-#define CLOUDS_FFT_SIZE 1024
+#define CLOUDS_FFT_SIZE 512
 #endif
 
 const size_t kMaxFftSize = CLOUDS_FFT_SIZE;

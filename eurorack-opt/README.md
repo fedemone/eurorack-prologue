@@ -107,7 +107,7 @@ pins the interface contract against hand-computed expectations rather than
 against the other implementation, so those still hold if someone later swaps
 in a different FFT entirely.
 
-### `clouds/dsp/pvoc/stft.h` — smaller FFT (`kMaxFftSize` 4096 → 1024)
+### `clouds/dsp/pvoc/stft.h` — smaller FFT (`kMaxFftSize` 4096 → 512)
 
 This is the one change here that alters what a mode sounds like, and it was
 made because upstream's 4096 hung the hardware.
@@ -129,26 +129,41 @@ harness and the host.
 |---|---:|---:|---:|---:|---|
 | 4096 (upstream) | 11.1% | 298% | 380-463% | **3.12%** | 128 ms, 7.8 Hz bins |
 | 2048 | 10.3% | 147% | 168-178% | **6.25%** | 64 ms, 15.6 Hz |
-| **1024 (default)** | **9.9%** | **74-79%** | **94-96%** | **0.01-0.05%** | 32 ms, 31.2 Hz |
-| 512 | 9.2% | 35-44% | 42-50% | 0.00% | 16 ms, 62.5 Hz |
+| 1024 | 9.9% | 74-79% | 94-96% | 0.01-0.05% | 32 ms, 31.2 Hz |
+| **512 (default)** | **9.2%** | **35-44%** | **42-50%** | **0.00%** | 16 ms, 62.5 Hz |
 | *Granular, for reference* | *15.1%* | *22-24%* | *28-30%* | *0.00-0.01%* | — |
 
 Two things to read out of that. The over-deadline column at 4096 and 2048 is
 *exactly* 1/32 and 1/16 in every run — that is structural, one block per hop,
-not noise; at 1024 it collapses into the same range as Granular, which is
-known to work on hardware. And 2048 is **worse** than 4096 by that measure:
-halving the transform did not bring the burst under the deadline, it just
-doubled how often it missed. That is why the default is not simply "one step
-down".
+not noise. And 2048 is **worse** than 4096 by that measure: halving the
+transform did not bring the burst under the deadline, it just doubled how
+often it missed. The obvious "one step down" would have looked like progress
+on the mean while making the actual failure twice as frequent.
 
-1024 is the largest size where the structural overrun disappears, which is
-why it is the default rather than 512 — the size sets what Spectral *is*, so
-the change should be the smallest one that works. If it still crackles on
-hardware, 512 is a one-line change with 2x more margin:
+The table above is engine-level. The size was chosen on the end-to-end
+numbers, per whole render callback, because that is the deadline that exists
+— and the two units do not agree:
+
+| | Spectral p99.9 | over deadline |
+|---|---:|---:|
+| `clouds` synth @ 1024 | 79% | 0.05% |
+| `clouds` synth @ 512 | 60% | 0.00% |
+| `clouds_fx` @ 1024 | 126% | **0.93%** |
+| `clouds_fx` @ 512 | 75-82% | 0.00% |
+
+**1024 is enough for the synth and not for the FX.** CloudsFX runs stereo
+resampling in both directions, dry path included, so less of its 64-frame
+buffer is left over for the burst; at 1024 it still missed 0.93% of renders,
+which at ~750 renders a second is about seven dropouts a second. 512 clears
+both, and puts the FX's Spectral tail alongside its other modes (Granular
+48-51%, Stretch 51-54%) instead of above them.
+
+A synth-only build can have the longer window back — one line, and nothing
+else depends on it:
 
 ```c
 // eurorack-opt/clouds/dsp/pvoc/stft.h
-#define CLOUDS_FFT_SIZE 512
+#define CLOUDS_FFT_SIZE 1024
 ```
 
 Set it in the header, not with `-D` — the value has to reach every
@@ -170,14 +185,16 @@ Keeping the two equal is why `granular_processor.cc` also had its literal
 `FrameTransformation` reserves one of them for phases, so at 4096 the port
 got 2 textures — one usable magnitude buffer. `ReplayMagnitudes` computes
 `index = position * (num_textures_ - 1)`, which with one texture is always
-zero: **the POSITION knob did nothing at all in Spectral**. At 1024 the
+zero: **the POSITION knob did nothing at all in Spectral**. At 512 the
 allocation reaches the `kMaxNumTextures = 7` cap, so POSITION scans six
 magnitude textures, as upstream intends.
 
-Sonically, 1024 is a 32 ms window with 31.2 Hz bins against 4096's 128 ms and
-7.8 Hz: tighter, less smeared, more transient detail, less of the long
-frozen-pad character. Different, not worse — but different, and worth knowing
-before wondering why a patch does not sound like it used to.
+Sonically, 512 is a 16 ms window with 62.5 Hz bins against 4096's 128 ms and
+7.8 Hz: much tighter, far less smeared, more transient detail, and very
+little of the long frozen-pad character the mode used to have. Different, not
+worse — but different, and worth knowing before wondering why a patch does
+not sound like it used to. This is the real price of the fix, and it is paid
+in Spectral only; the other three modes are untouched.
 
 ### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
 

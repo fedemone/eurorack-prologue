@@ -10,10 +10,10 @@ Clouds on drumlogue — audio-thread notes
 >
 > The cause is measured, and is **not memory corruption** — it is the phase
 > vocoder's FFT running on the audio thread as one burst per hop. The FFT has
-> since been shrunk from upstream's 4096 to 1024, which removes the
-> structural deadline overrun in every measurement available here. **That has
-> not yet been checked on hardware**, so treat Spectral as suspect until it
-> has been. See
+> since been shrunk from upstream's 4096 to 512, which removes the structural
+> deadline overrun on both units in every measurement available here. **That
+> has not yet been checked on hardware**, so treat Spectral as suspect until
+> it has been. See
 > [Hardware results and the FFT size](#hardware-results-and-the-fft-size).
 
 Working notes from debugging audio dropouts ("audio interface crash") in the
@@ -28,8 +28,8 @@ turned out to be wrong.
 
 | Unit | State |
 |------|-------|
-| `clouds` (synth) | Modes 0-2 working on hardware. Mode 3 (Spectral) hung the instrument at FFT size 4096; now 1024, which fits the deadline under QEMU but is **unconfirmed on hardware**. |
-| `clouds_fx` (delfx) | Crash **fixed** on hardware. CPU cost high; was unstable in Spectral and at Position 100% + Density 100%. Shares the engine fork, so it gets the smaller FFT too. |
+| `clouds` (synth) | Modes 0-2 working on hardware. Mode 3 (Spectral) hung the instrument at FFT size 4096; now 512, which fits the deadline under QEMU but is **unconfirmed on hardware**. |
+| `clouds_fx` (delfx) | Crash **fixed** on hardware. CPU cost high; was unstable in Spectral and at Position 100% + Density 100%. Shares the engine fork, so it gets the smaller FFT — and needed it: 1024 was enough for the synth but not for this unit. |
 
 ---
 
@@ -166,7 +166,7 @@ drumlogue unit, whether the firmware tolerates a plugin spawning a thread is
 unknown, and if it does not, the failure mode is *the same hang* — with no
 way to tell the two apart without the hardware in hand.
 
-The one taken was to **shrink the transform**: `kMaxFftSize` 4096 → 1024,
+The one taken was to **shrink the transform**: `kMaxFftSize` 4096 → 512,
 settable at build time via `CLOUDS_FFT_SIZE`. Peak cost goes as
 `(N/2)·log2(N)` while the hop only goes as `N`, so a smaller transform cuts
 the burst by more than it raises the burst rate.
@@ -179,23 +179,50 @@ calibrates the harness and the host:
 |---|---:|---:|---:|---:|
 | 4096 (upstream) | 11.1% | 298% | 380-463% | **3.12%** |
 | 2048 | 10.3% | 147% | 168-178% | **6.25%** |
-| **1024 (chosen)** | **9.9%** | **74-79%** | **94-96%** | **0.01-0.05%** |
-| 512 | 9.2% | 35-44% | 42-50% | 0.00% |
+| 1024 | 9.9% | 74-79% | 94-96% | 0.01-0.05% |
+| **512 (chosen)** | **9.2%** | **35-44%** | **42-50%** | **0.00%** |
 | *Granular, reference* | *15.1%* | *22-24%* | *28-30%* | *0.00-0.01%* |
 
 The over-deadline column is the one that matters. At 4096 and 2048 it is
 *exactly* 1/32 and 1/16 in every run — structural, one block per hop, not
-noise. At 1024 it collapses into the same range as Granular, which is known
-to work on hardware. Note also that **2048 is worse than 4096** by that
-measure: halving the transform did not bring the burst under the deadline, it
-only doubled how often the deadline was missed. The obvious "one step down"
-would have made things worse and looked like progress on the mean.
+noise. Note that **2048 is worse than 4096** by that measure: halving the
+transform did not bring the burst under the deadline, it only doubled how
+often the deadline was missed. The obvious "one step down" would have made
+things worse while looking like progress on the mean.
 
-1024 rather than 512 because it is the largest size where the structural
-overrun disappears, and the size sets what Spectral *is*, so the change
-should be the smallest one that works. 512 remains a one-line fallback with
-about 2x more margin if hardware still crackles — see
-`eurorack-opt/clouds/dsp/pvoc/stft.h`.
+### Why 512 and not 1024 — the two units disagree
+
+The table above is engine-level. Repeating it end-to-end, per whole render
+callback — the deadline that actually exists — splits the two units apart:
+
+| | Spectral p99.9 | over deadline |
+|---|---:|---:|
+| `clouds` synth @ 4096 | 268% | 4.16% |
+| `clouds` synth @ 1024 | 79% | 0.05% |
+| `clouds` synth @ 512 | 60% | 0.00% |
+| `clouds_fx` @ 4096 | 329% | 4.17% |
+| `clouds_fx` @ 1024 | 126% | **0.93%** |
+| `clouds_fx` @ 512 | 75-82% | 0.00% |
+
+1024 is enough for the synth and **not** for the FX. CloudsFX runs stereo
+resampling in both directions with the dry path included, so less of its
+64-frame buffer is left for the burst; at 1024 it still missed 0.93% of
+renders, which at roughly 750 renders a second is about seven dropouts a
+second — audible, and consistent with the instability reported for that unit.
+At 512 both clear, and the FX's Spectral tail (p99.9 75-82%) sits alongside
+its other modes (Granular 48-51%, Stretch 51-54%) rather than above them.
+
+The two units share one engine fork, so they share the constant; a per-unit
+`-D` would work mechanically, since every translation unit of a drumlogue
+project sees that project's `UDEFS`, but it would mean Spectral was two
+different effects depending on which unit you loaded, and it would put the
+host test targets and the unit builds one edit apart from disagreeing. Not
+worth it. A synth-only build can raise the constant to 1024 in the header.
+
+This is the change's real cost, and it is worth being blunt about: at 512 the
+analysis window is 16 ms with 62.5 Hz bins, against upstream's 128 ms and
+7.8 Hz. Spectral keeps far less of its long frozen-pad character. The other
+three modes are untouched.
 
 **Percentiles, not maxima.** The harness originally reported the single worst
 block, and that number is useless here: the Granular reference row, which
@@ -215,7 +242,7 @@ compute `index = position * (num_textures_ - 1)`, which with one texture is
 identically zero.
 
 **The POSITION knob did nothing whatsoever in Spectral mode**, on every build
-of this port to date. At 1024 the allocation reaches the `kMaxNumTextures = 7`
+of this port to date. At 512 the allocation reaches the `kMaxNumTextures = 7`
 cap, so POSITION scans six magnitude textures as upstream intends. This was
 found while checking that the smaller FFT did not break the allocator, not by
 noticing it in use — which is a fair illustration of the point made at the
@@ -224,11 +251,21 @@ dead control does not announce itself.
 
 ### Still unconfirmed
 
-Everything above is QEMU. The prediction is specific and falsifiable: at 1024
-Spectral's per-block cost distribution is statistically indistinguishable from
-Granular's, and Granular does not crackle or hang on hardware. If Spectral
-still misbehaves, the model is wrong somewhere and the worker thread is the
-next thing to try.
+Everything above is QEMU. The prediction is specific and falsifiable: at 512,
+on both units, Spectral's per-render cost distribution sits inside the range
+of the modes that already work on hardware, and no render misses its deadline
+in 4000-8000 sample runs. If Spectral still misbehaves, the model is wrong
+somewhere and the worker thread is the next thing to try.
+
+One alternative was not pursued and is worth recording, because it would buy
+the window length back. `PhaseVocoder::Buffer()` transforms both channels in
+the same call, so the stereo pair's two FFTs always land in the same block.
+Servicing one channel per call instead would halve the peak at unchanged FFT
+size — each channel still gets a turn every other block against a hop of
+eight or more, so the deferral is at most one block, well inside the hop of
+slack the synthesis ring already carries. That would likely make 1024, maybe
+2048, fit. It needs `phase_vocoder.cc` forked as well, and was out of scope
+for a change asked for as "shrink the FFT".
 
 ---
 
@@ -420,7 +457,7 @@ Fixing this properly needs one of:
    mode along with it.
 3. **Shrinking the FFT**, which trades Spectral's analysis window for a
    smaller burst. Only applies to Spectral — Stretch's burst is the
-   correlator, not the FFT. **Done, at `kMaxFftSize` 1024, after hardware
+   correlator, not the FFT. **Done, at `kMaxFftSize` 512, after hardware
    showed 4096 hanging the instrument.**
 
 Granular and Delay remain the modes with no burst at all. Stretch still has
