@@ -9,11 +9,13 @@ Clouds on drumlogue — audio-thread notes
 > expensive, and was unstable in Spectral and at Position 100% + Density 100%.
 >
 > The cause is measured, and is **not memory corruption** — it is the phase
-> vocoder's FFT running on the audio thread as one burst per hop. The FFT has
-> since been shrunk from upstream's 4096 to 512, which removes the structural
-> deadline overrun on both units in every measurement available here. **That
-> has not yet been checked on hardware**, so treat Spectral as suspect until
-> it has been. See
+> vocoder's FFT running on the audio thread as one burst per hop. Two changes
+> address it: the FFT was shrunk from upstream's 4096 to 512, and the stereo
+> pair's two transforms were split apart so they no longer land in the same
+> host render. Together they remove the structural deadline overrun on both
+> units in every measurement available here, with Spectral now costing *less*
+> than the modes that already work. **Neither has been checked on hardware**,
+> so treat Spectral as suspect until it has been. See
 > [Hardware results and the FFT size](#hardware-results-and-the-fft-size).
 
 Working notes from debugging audio dropouts ("audio interface crash") in the
@@ -51,11 +53,22 @@ Two harnesses, and it matters which one a number came from:
   no-burst reference row to calibrate the host. This is the one that found
   the Spectral freeze and chose the FFT size, and the only one of the three
   committed to the repository — the other two were throwaway harnesses.
-- **End-to-end** (`bench_cycle.cc`): times whole `OSC_CYCLE` calls in pairs,
+- **Scheduling differential** (`test_clouds_pvoc_rr.cc`, `make
+  test-clouds-pvoc-rr`): not a timing harness at all — it compiles the same
+  rendering with the phase vocoder's round-robin on and off and compares the
+  output sample for sample, at every FFT size. What makes a scheduling change
+  safe to make is that it changes nothing audible, and that is a correctness
+  question, not a performance one.
+- **End-to-end** (`bench_cycle.cc`, `bench_fx.cc`): times whole `OSC_CYCLE`
+  calls in pairs, and whole 64-frame FX renders,
   because the drumlogue asks the adapter for 64 frames and the adapter fills
   that with two 32-sample calls. **This is the deadline that actually
   exists**, and since the 32 kHz pipeline deliberately makes one call in three
   free, per-call figures are misleading — a pair is the smallest honest unit.
+  The gap between this and the engine-level harness is not cosmetic: a 64-frame
+  render spans 1.33 engine blocks, which is exactly why spreading the two
+  channel transforms one block apart looked like a win engine-side and was
+  nearly worthless end to end.
 
 **These percentages are relative, not absolute.** QEMU is roughly an order of
 magnitude slower than the real SoC, so a row reading "25%" does not mean the
@@ -249,23 +262,78 @@ noticing it in use — which is a fair illustration of the point made at the
 top of `test_clouds_fft.cc`: in a mode whose job is to smear and randomise, a
 dead control does not announce itself.
 
+### The second fix: one channel per call, spread across the hop
+
+The FFT-size change attacks how big the burst is. This one attacks the fact
+that it is a single burst. `PhaseVocoder::Buffer()` loops over the channels,
+so in stereo a forward FFT, the modifier and an inverse run **twice, back to
+back, inside one audio block**. Splitting the pair halves the spike, and the
+buffers already have room: `STFT`'s analysis ring is `fft_size + hop_size`
+long while `Buffer()` reads `fft_size` of it, leaving exactly one hop between
+the write pointer and the window being transformed.
+
+Where the second transform lands turned out to matter more than that it was
+moved at all:
+
+| CloudsFX, Spectral, p99.9 per render | defaults | reverb 60 % + texture 90 % |
+|---|---:|---:|
+| upstream scheduling | 95–111 % (0.05–0.53 % over) | 101–111 % (0.10–0.53 % over) |
+| split, adjacent blocks | 85–100 % (0.05–0.08 % over) | 107–121 % (0.62–0.97 % over) |
+| split, spread across the hop | **63 %** (0.00 % over) | **69 %** (0.00 % over) |
+
+Adjacent blocks bought almost nothing, and the reason is a granularity
+mismatch that the engine-level bench cannot see. The deadline that exists is
+one 64-frame host render, and with the engine at 32 kHz that render spans
+1.33 audio blocks — so two transforms one block apart still share a render
+about a third of the time. Half a hop apart they never do. `Init()` sets the
+spacing to `hop_blocks / num_channels`, which at 512 is two blocks out of a
+four-block hop.
+
+On the synth the same change takes Spectral's p99.9 from 84 % of deadline to
+44 %, and at engine level from ~71 % to 36 % — below Stretch's 38 %, where
+before it was at twice everything else.
+
+**It does not buy the window back.** 1024 with the split still misses 1.12 %
+of renders on the FX, so `CLOUDS_FFT_SIZE` stays at 512 and the sonic cost
+above stands. What it buys is margin — roughly a factor of two on both units,
+on the mode that was hanging the hardware. The synth alone clears 1024
+comfortably (p99.9 90 %, no misses), which is what keeps the synth-only
+override worth documenting.
+
+Steady-state output is **bit-identical** to upstream's scheduling, pinned by
+`make test-clouds-pvoc-rr`: the same rendering built with
+`CLOUDS_PVOC_ROUND_ROBIN` 1 and 0 and compared sample for sample at every FFT
+size from 256 to 4096, stereo and mono, hi-fi and lo-fi. Two findings came
+out of getting there and are recorded in `phase_vocoder.cc`:
+
+- **The channel order is load-bearing, in upstream.** `FrameTransformation`
+  writes only the lowest `(fft_size / 2) - kHighFrequencyTruncation` bins of
+  `ifft_in`, and `ifft_in` is scratch shared by both channels, so every
+  transform inherits its top 16 bins from whichever transform ran last. A
+  rotation coming up in the opposite phase feeds each channel the other's
+  residue and changes the output. The turn therefore advances only when a
+  transform actually runs; an earlier version advanced on idle calls, and the
+  output then depended on whether Spectral was entered by `Init()` or by a
+  mode change.
+- **Transitions can land in the gap.** FREEZE engaging, or a mode change
+  reallocating the workspace, can arrive between the two channels' transforms
+  and leave them a frame apart in what they captured. At 512 the test
+  measures no difference; it appears only at 2048 and 4096, where the gap is
+  8 or 16 blocks, and then as a fraction of a percent of level.
+
 ### Still unconfirmed
 
-Everything above is QEMU. The prediction is specific and falsifiable: at 512,
-on both units, Spectral's per-render cost distribution sits inside the range
-of the modes that already work on hardware, and no render misses its deadline
-in 4000-8000 sample runs. If Spectral still misbehaves, the model is wrong
-somewhere and the worker thread is the next thing to try.
+Everything above is QEMU. The prediction is specific and falsifiable: at 512
+with the split, on both units, Spectral's per-render cost distribution sits
+inside the range of the modes that already work on hardware — below them, in
+fact — and no render misses its deadline in 4000-8000 sample runs. If
+Spectral still misbehaves, the model is wrong somewhere and the worker thread
+is the next thing to try.
 
-One alternative was not pursued and is worth recording, because it would buy
-the window length back. `PhaseVocoder::Buffer()` transforms both channels in
-the same call, so the stereo pair's two FFTs always land in the same block.
-Servicing one channel per call instead would halve the peak at unchanged FFT
-size — each channel still gets a turn every other block against a hop of
-eight or more, so the deferral is at most one block, well inside the hop of
-slack the synthesis ring already carries. That would likely make 1024, maybe
-2048, fit. It needs `phase_vocoder.cc` forked as well, and was out of scope
-for a change asked for as "shrink the FFT".
+CloudsFX's instability at POSITION 100 % + DENSITY 100 % is still
+undiagnosed and is a separate matter from the FFT burst: that setting
+measures 15.9 % mean with no deadline misses, so nothing in this analysis
+explains it.
 
 ---
 
@@ -459,11 +527,18 @@ Fixing this properly needs one of:
    smaller burst. Only applies to Spectral — Stretch's burst is the
    correlator, not the FFT. **Done, at `kMaxFftSize` 512, after hardware
    showed 4096 hanging the instrument.**
+4. **Splitting the burst across the hop** rather than shrinking it: one
+   channel per `Buffer()` call, spaced half a hop apart, so a stereo pair's
+   two transforms never share a host render. Costs nothing sonically —
+   steady-state output is bit-identical — and halves the spike again on top
+   of (3). Spectral only, for the same reason as (3). **Done.**
 
 Granular and Delay remain the modes with no burst at all. Stretch still has
 one, and nothing on this branch removed it: it is smaller than Spectral's was
 (worst block ~29% against ~400%) and has not been reported as a problem, but
-it is the same structural mistake and the same worker thread would fix it.
+it is the same structural mistake. Note that (4) does not generalise to it —
+there is only one correlator, so there is nothing to take turns. The worker
+thread remains the only fix for Stretch.
 
 ---
 

@@ -153,7 +153,13 @@ class STFT {
       size_t stride);
 
   void Buffer();
-  
+
+  // Hops that have arrived but not yet been transformed; 0 means Buffer()
+  // would return immediately.  Added for the round-robin scheduler in
+  // phase_vocoder.cc, which needs to know when a deferred channel has fallen
+  // further behind than deferring can recover from.
+  inline size_t pending() const { return ready_ - done_; }
+
  private:
   FFT* fft_;
   size_t fft_size_;

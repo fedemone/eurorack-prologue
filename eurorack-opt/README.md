@@ -19,6 +19,7 @@ commit **58b9125**.
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
+| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop** | Spectral, stereo |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 
 Why forked, and what changed
@@ -195,6 +196,70 @@ little of the long frozen-pad character the mode used to have. Different, not
 worse — but different, and worth knowing before wondering why a patch does
 not sound like it used to. This is the real price of the fix, and it is paid
 in Spectral only; the other three modes are untouched.
+
+### `clouds/dsp/pvoc/phase_vocoder.{h,cc}` — one channel per call, spread across the hop
+
+The FFT-size fix above attacks the size of the once-per-hop burst. This one
+attacks the fact that it is *one* burst: upstream's `Buffer()` loops over the
+channels, so in stereo a forward FFT, the spectral modifier and an inverse
+run **twice, back to back, in a single audio block**. Upstream can afford
+that because it calls `Buffer()` from the main idle loop, where it is not
+deadline work. This port has no idle loop and calls it from the audio thread.
+
+Serving one channel per call halves the spike. Where the two calls land
+matters more than it looks:
+
+| CloudsFX, Spectral, p99.9 per render | defaults | reverb 60 % + texture 90 % |
+|---|---:|---:|
+| upstream scheduling | 95–111 % (0.05–0.53 % over) | 101–111 % (0.10–0.53 % over) |
+| one channel per call, adjacent blocks | 85–100 % (0.05–0.08 % over) | 107–121 % (0.62–0.97 % over) |
+| one channel per call, spread across the hop | **63 %** (0.00 % over) | **69 %** (0.00 % over) |
+
+Adjacent blocks barely helped, and the reason is a mismatch of granularity.
+The deadline that exists is one 64-frame host render; the engine runs at
+32 kHz, so a render covers 1.33 audio blocks. Two transforms one block apart
+still share a render about a third of the time. Half a hop apart they never
+do — and a hop is 128 samples at `kMaxFftSize` 512, so there is room to
+spare. `Init()` computes the spacing as `hop_blocks / num_channels`.
+
+On the synth the same change takes Spectral's p99.9 from 84 % of deadline to
+44 %; at the engine level, from ~71 % to 36 %, which puts it below Stretch
+(38 %) rather than at twice everything else.
+
+**What this does not buy is a longer window.** 1024 with the split still
+misses 1.12 % of renders on the FX, so `CLOUDS_FFT_SIZE` stays at 512 and the
+sonic cost above stands. The split is margin, not headroom to spend: roughly
+a factor of two between Spectral and its deadline on both units, on a mode
+whose burst was hanging the hardware three commits ago. (The synth alone
+clears 1024 comfortably — p99.9 90 %, no misses — which is what makes the
+synth-only override above worth keeping.)
+
+Steady-state output is **bit-identical** to upstream's scheduling, not merely
+close, and `make test-clouds-pvoc-rr` pins that: the same rendering compiled
+with `CLOUDS_PVOC_ROUND_ROBIN` 1 and 0, compared sample for sample at every
+FFT size from 256 to 4096, stereo and mono, hi-fi and lo-fi. The deferral is
+exact because `STFT`'s analysis ring is `fft_size + hop_size` long while
+`Buffer()` reads `fft_size` of it — exactly one hop of slack between the
+write pointer and the window being transformed, of which spreading uses half.
+
+Two details are worth knowing before touching this code:
+
+- **The channel order is load-bearing.** `FrameTransformation` writes only the
+  lowest `(fft_size / 2) - kHighFrequencyTruncation` bins of `ifft_in`, and
+  `ifft_in` is scratch *shared by both channels*, so every transform inherits
+  its top 16 bins from whichever transform ran last. That is upstream's
+  behaviour, not something introduced here, but it means a rotation that comes
+  up in the opposite phase feeds each channel the other one's residue and
+  changes the output. The turn therefore advances only when a transform
+  actually runs — an earlier version advanced on idle calls too, and the
+  output then depended on whether Spectral was entered by `Init()` or by a
+  mode change, which is how this was found.
+- **Transitions can land in the gap.** FREEZE engaging, or a mode change
+  reallocating the workspace, can arrive between the two channels' transforms
+  and leave them one frame apart in what they captured. At 512 the gap is two
+  blocks and the test measures no difference at all; it is visible only at
+  2048 and 4096, where the gap is 8 or 16 blocks, and then only as a fraction
+  of a percent of level.
 
 ### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
 
