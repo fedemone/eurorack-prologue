@@ -19,3 +19,15 @@ test_clouds_sample_playback
 test_sound_production
 bench_render
 build/drumlogue/
+test_clouds_fx
+test_drmlgunit_arm
+test_clouds_synth
+test_clouds_fx_reconfig
+test_clouds_engine_opt_stock
+test_clouds_engine_opt_fork
+.engine_opt_*.txt
+test_clouds_fft
+test_clouds_fft_arm
+test_clouds_pvoc_rr_0
+test_clouds_pvoc_rr_1
+bench_clouds_spike_arm

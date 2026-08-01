@@ -147,6 +147,7 @@ OBJS := $(ASMXOBJS) $(ASMOBJS) $(COBJS) $(CXXOBJS)
 
 DINCDIR = $(TEMPLATEDIR)/inc \
 	  $(TEMPLATEDIR)/inc/api \
+	  $(PROJECTDIR)/eurorack-opt \
 	  $(PROJECTDIR)/eurorack \
 	  $(PROJECTDIR)/eurorack/stmlib/third_party/STM \
 	  $(PROJECTDIR)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx \

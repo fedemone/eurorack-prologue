@@ -41,6 +41,17 @@ alignas(16) static float    s_render_buf[OSC_NATIVE_BLOCK_SIZE];
 static uint32_t s_render_rd = 0;   /* read position */
 static uint32_t s_render_avail = 0; /* samples available */
 
+/* Flush request, applied on the audio thread.
+ *
+ * s_render_rd/s_render_avail are owned by osc_adapter_render(), which runs on
+ * the drumlogue's audio thread.  osc_adapter_reset() is reached from
+ * unit_reset() on the control thread, so clearing the pair there races the
+ * renderer: if the clear lands between "n = min(need, avail)" and the
+ * "avail -= n" that follows, avail underflows to ~2^32 and the read position
+ * then walks off the end of s_render_buf, further every block, until it
+ * faults.  Latch the request instead and let the renderer do the flush. */
+static volatile int s_flush_pending = 0;
+
 #if defined(MUSSOLA_VOCAL)
 /* Stereo buffers: filled alongside mono when OSC_CYCLE is called.
  * OSC_NATIVE_BLOCK_SIZE must not exceed the oscillator's internal
@@ -94,8 +105,9 @@ void osc_adapter_init(uint32_t platform, uint32_t api_version) {
   s_adapter.tempo            = 0;
 
   /* Flush render buffer */
-  s_render_rd    = 0;
-  s_render_avail = 0;
+  s_render_rd     = 0;
+  s_render_avail  = 0;
+  s_flush_pending = 0;
 
   OSC_INIT(platform, api_version);
 
@@ -104,8 +116,9 @@ void osc_adapter_init(uint32_t platform, uint32_t api_version) {
 
 void osc_adapter_teardown(void) {
   s_adapter.initialized = false;
-  s_render_rd    = 0;
-  s_render_avail = 0;
+  s_render_rd     = 0;
+  s_render_avail  = 0;
+  s_flush_pending = 0;
 }
 
 void osc_adapter_reset(void) {
@@ -115,9 +128,8 @@ void osc_adapter_reset(void) {
   s_adapter.shape_lfo        = 0.0f;
   s_adapter.params.shape_lfo = 0;
 
-  /* Flush render buffer */
-  s_render_rd    = 0;
-  s_render_avail = 0;
+  /* Ask the audio thread to flush the render buffer (see s_flush_pending). */
+  s_flush_pending = 1;
 
   OSC_NOTEOFF(&s_adapter.params);
 }
@@ -183,12 +195,24 @@ void osc_adapter_set_shape_lfo(float lfo_value) {
 
 /* ---- Tempo ---- */
 
+/* Reserved OSC_PARAM index for forwarding host tempo to the oscillator.
+ * Must match kTempoParamIndex in rings-resonator.cc.  Kept high so it never
+ * collides with a real per-oscillator parameter index; oscillators that
+ * don't consume it simply ignore the unknown index. */
+#define OSC_ADAPTER_TEMPO_PARAM 63
+
 void osc_adapter_set_tempo(uint32_t tempo) {
   if (!s_adapter.initialized) return;
 
   s_adapter.tempo = tempo;
-  /* OSC modules don't have a direct tempo API;
-     stored for potential future LFO sync use. */
+
+  /* Forward the current tempo as an integer BPM so tempo-synced features
+   * (e.g. the Rings arpeggiator) can follow the host clock.  drumlogue
+   * passes tempo as a Q16 fixed-point BPM (bpm = tempo / 65536). */
+  uint32_t bpm = tempo >> 16;
+  if (bpm == 0)   bpm = 120;   /* fall back to a musical default */
+  if (bpm > 480)  bpm = 480;
+  OSC_PARAM(OSC_ADAPTER_TEMPO_PARAM, (uint16_t)bpm);
 }
 
 /* ---- Audio Rendering (Buffered) ---- */
@@ -258,11 +282,32 @@ static void render_one_block(void) {
   s_render_avail = OSC_NATIVE_BLOCK_SIZE;
 }
 
+/**
+ * Apply a pending flush, then make the cursor pair self-consistent.
+ *
+ * The clamp is belt-and-braces: read position plus available count can never
+ * legitimately exceed the buffer, and pinning them here means a desynchronised
+ * cursor costs one glitched block instead of reading off the end of
+ * s_render_buf.  Audio thread only.
+ */
+static inline void render_cursor_sync(void) {
+  if (s_flush_pending) {
+    s_flush_pending = 0;
+    s_render_rd     = 0;
+    s_render_avail  = 0;
+  }
+  if (s_render_rd > OSC_NATIVE_BLOCK_SIZE) s_render_rd = OSC_NATIVE_BLOCK_SIZE;
+  const uint32_t remaining = OSC_NATIVE_BLOCK_SIZE - s_render_rd;
+  if (s_render_avail > remaining) s_render_avail = remaining;
+}
+
 void osc_adapter_render(float *output, uint32_t frames) {
   if (!s_adapter.initialized || !output) {
     if (output) memset(output, 0, frames * sizeof(float));
     return;
   }
+
+  render_cursor_sync();
 
   uint32_t written = 0;
   while (written < frames) {
@@ -289,6 +334,8 @@ void osc_adapter_render_stereo(float *left, float *right, uint32_t frames) {
     if (right) memset(right, 0, frames * sizeof(float));
     return;
   }
+
+  render_cursor_sync();
 
   uint32_t written = 0;
   while (written < frames) {

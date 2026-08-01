@@ -241,7 +241,7 @@ TEST(unit_header_num_params) {
 #elif defined(CLOUDS_GRANULAR)
   ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
-  ASSERT_EQ(8U, unit_header.num_params);
+  ASSERT_EQ(12U, unit_header.num_params);
 #elif defined(ELEMENTS_RESONATOR_MODES)
   ASSERT_EQ(15U, unit_header.num_params);
 #else
@@ -291,6 +291,10 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[5].name, "Chord"));
   ASSERT_EQ(0, strcmp(unit_header.params[6].name, "Model"));
   ASSERT_EQ(0, strcmp(unit_header.params[7].name, "Polyphony"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "Arp"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "Arp Src"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "Arp Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "Arp Oct"));
 #elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
@@ -308,6 +312,23 @@ TEST(unit_header_param_names) {
   ASSERT_EQ(0, strcmp(unit_header.params[12].name, "LFO2 Depth"));
   ASSERT_EQ(0, strcmp(unit_header.params[13].name, "LFO2 Target"));
   ASSERT_EQ(0, strcmp(unit_header.params[14].name, "LFO2 Shape"));
+#elif defined(OSC_STRING)
+  /* String layout: shares the Plaits mapping but renames Param 1/Param 2
+   * to Harmonics/Attenuate (Attenuate defaults to 0 = full level). */
+  ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
+  ASSERT_EQ(0, strcmp(unit_header.params[1].name, "Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[2].name, "ShiftShape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[3].name, "Harmonics"));
+  ASSERT_EQ(0, strcmp(unit_header.params[4].name, "Attenuate"));
+  ASSERT_EQ(0, unit_header.params[4].init);  /* full level by default */
+  ASSERT_EQ(0, strcmp(unit_header.params[5].name, "LFO Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[6].name, "LFO1 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[7].name, "LFO1 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[8].name, "LFO2 Rate"));
+  ASSERT_EQ(0, strcmp(unit_header.params[9].name, "LFO2 Depth"));
+  ASSERT_EQ(0, strcmp(unit_header.params[10].name, "LFO2 Target"));
+  ASSERT_EQ(0, strcmp(unit_header.params[11].name, "LFO2 Shape"));
+  ASSERT_EQ(0, strcmp(unit_header.params[12].name, "Gate Mode"));
 #else
   /* Plaits layout */
   ASSERT_EQ(0, strcmp(unit_header.params[0].name, "Base Note"));
@@ -368,6 +389,10 @@ TEST(unit_header_param_types) {
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[5].type);
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[6].type);
   ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[7].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[8].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[9].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[10].type);
+  ASSERT_EQ(k_unit_param_type_strings,   unit_header.params[11].type);
 #elif defined(ELEMENTS_RESONATOR_MODES)
   /* Elements layout */
   ASSERT_EQ(k_unit_param_type_midi_note, unit_header.params[0].type);
@@ -413,7 +438,7 @@ TEST(unit_header_unused_params_are_none) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(RINGS_RESONATOR)
-  for (int i = 8; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 12; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -807,7 +832,7 @@ TEST(wrapper_param_out_of_range_ignored) {
 #elif defined(CLOUDS_GRANULAR)
   unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
-  unit_set_param_value(8, 50);   /* id 8 -> default case, should return */
+  unit_set_param_value(12, 50);  /* id 12 -> default case, should return */
 #elif defined(ELEMENTS_RESONATOR_MODES)
   unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
 #else
@@ -1049,6 +1074,50 @@ TEST(rings_param_polyphony) {
   unit_set_param_value(7, 4);
   ASSERT_EQ(9, g_mock.last_param_index);
   ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_arp_mapping) {
+  init_unit();
+  /* Arp: id 8 -> custom OSC_PARAM index 10 */
+  unit_set_param_value(8, 3);
+  ASSERT_EQ(10, g_mock.last_param_index);
+  ASSERT_EQ(3, g_mock.last_param_value);
+  /* Arp Source: id 9 -> custom OSC_PARAM index 11 */
+  unit_set_param_value(9, 1);
+  ASSERT_EQ(11, g_mock.last_param_index);
+  ASSERT_EQ(1, g_mock.last_param_value);
+  /* Arp Rate: id 10 -> custom OSC_PARAM index 12 */
+  unit_set_param_value(10, 5);
+  ASSERT_EQ(12, g_mock.last_param_index);
+  ASSERT_EQ(5, g_mock.last_param_value);
+  /* Arp Octaves: id 11 -> custom OSC_PARAM index 13 */
+  unit_set_param_value(11, 4);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(4, g_mock.last_param_value);
+  teardown_unit();
+}
+
+TEST(rings_param_arp_str_values) {
+  init_unit();
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 0), "Off"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 1), "Up"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 8), "Dn-Up-P"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Chord"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "Octaves"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(10, 3), "1/16"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 1), "1"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 4), "4"));
+  teardown_unit();
+}
+
+TEST(rings_tempo_forwarded_to_osc) {
+  init_unit();
+  /* Host tempo (Q16 BPM) is forwarded to the oscillator via reserved
+   * OSC_PARAM index 63 so the arpeggiator can sync. 128 BPM = 128<<16. */
+  unit_set_tempo(128u << 16);
+  ASSERT_EQ(63, g_mock.last_param_index);
+  ASSERT_EQ(128, g_mock.last_param_value);
   teardown_unit();
 }
 
@@ -1966,6 +2035,9 @@ int main(void) {
   run_test_rings_param_chord();
   run_test_rings_param_model();
   run_test_rings_param_polyphony();
+  run_test_rings_param_arp_mapping();
+  run_test_rings_param_arp_str_values();
+  run_test_rings_tempo_forwarded_to_osc();
 #elif defined(ELEMENTS_RESONATOR_MODES)
   run_test_elements_param_base_note();
   run_test_elements_param_position_scaling();

@@ -1,0 +1,327 @@
+eurorack-opt — forked Mutable Instruments sources
+=================================================
+
+Optimized copies of a few files from the `eurorack/` submodule, used by the
+`clouds` and `clouds_fx` drumlogue units.
+
+`eurorack/` is a submodule this repository does not edit, so the only way to
+change engine code is to fork the file here and take it out of the submodule's
+side of the build. That is a real cost — upstream fixes will not reach these
+copies on their own — so the bar for adding a file is that the change is worth
+more than the maintenance, and that is recorded below with the measurement
+behind it.
+
+All files keep Mutable Instruments' MIT licence and Olivier Gillet's copyright
+notice, with a block underneath saying what was changed. Forked at submodule
+commit **58b9125**.
+
+| File | Change | Affects |
+|------|--------|---------|
+| `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
+| `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
+| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop** | Spectral, stereo |
+| `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
+
+Why forked, and what changed
+----------------------------
+
+### `clouds/dsp/granular_processor.{h,cc}` — reverb and diffuser early-out
+
+Both effects are exactly `out += amount * (wet - out)`, so at `amount == 0`
+their output is bit-identical to their input. Both ran unconditionally, every
+block, whatever the knobs said. Profiled with `gprof` on the port:
+
+| Effect | Share of a block | When the amount is zero |
+|--------|-----------------:|-------------------------|
+| `Reverb::Process` (Granular) | 20.2 % | REVERB knob at 0, no feedback, not frozen |
+| `Reverb::Process` (Stretch) | 21.2 % | same |
+| `Diffuser::Process` (Granular) | 6.6 % | TEXTURE at or below 75 % |
+
+Those are the default settings of both units, so this is the common case, not
+a corner. Skipping is not simply "don't call it", though — the delay lines
+freeze, and content stale by however long the skip lasted would be released
+the moment the amount comes back up. A preset load can take REVERB from 0 to
+full in a single block, so that matters. Each effect handles it differently:
+
+- **Reverb** can be flushed, because it has an input gain. Before idling it
+  runs for 5120 samples with the input muted and both recirculating gains
+  (`reverb_time`, `diffusion`) taken to zero. Measured on the real `Reverb`,
+  that empties every delay line to below -100 dBFS in 143 blocks of 32
+  samples, independent of the reverb time that was in force; 5120 leaves
+  margin over the longest line (4782). Audible output is unchanged during the
+  flush, because the amount is already zero.
+- **Diffuser** has no input gain to mute, so its all-pass states simply
+  freeze. Instead its amount is ramped in over 8192 samples on resume. The
+  chain (126 + 180 + 269 + 444 taps at kap = 0.625) decays to inaudibility in
+  about 0.27 s, so whatever was frozen has gone before the amount is large
+  enough to hear. **This is the only place where output deviates from
+  upstream**, and only for a quarter second after the diffuser resumes.
+
+When the amount is non-zero, both paths are byte-for-byte the original code.
+
+### `stmlib/fft/shy_fft.h` — NEON butterfly
+
+The loop that dominates both transforms, vectorised four butterflies at a
+time, selected by a new `kUseNeon` template parameter on `ShyFFT`. Upstream's
+scalar code is untouched and is still what builds off ARM and what
+`kUseNeon = false` selects, so the differential test has a reference that
+cannot drift away from the original.
+
+Vectorising the existing passes rather than writing a radix-4 kernel from
+scratch was deliberate. The risk in replacing this FFT was never accuracy —
+its round-trip error is 104.5 dB below signal peak against an int16 quantiser
+at 87.1 dB on either side of it — it was the interface: a split real/imag
+spectrum with a particular sign convention, unnormalised in both directions
+with the factor of N made up in `stft.cc`, and an input buffer that may be
+destroyed and aliases the output. Get any of those wrong and Spectral mode,
+whose job is to smear and randomise, still sounds like it is working. Working
+inside the existing passes keeps all of it right by construction; only the
+arithmetic changes.
+
+**Measured on the generated code**, `-O2`, `-mfpu=neon-vfpv4`, from the
+disassembled inner loop:
+
+| | instructions per butterfly |
+|---|---:|
+| upstream scalar | 33 |
+| NEON, four at a time | 37/4 = **9.25** |
+
+3.6x fewer instructions issued. Writing the loop with running pointers rather
+than `base + j` was worth 47 instructions per iteration down to 37 on its own:
+with the index form gcc recomputed eight addresses every pass.
+
+**This is an instruction count, not a speedup**, and the distinction matters
+more here than usual. Cortex-A7's NEON datapath is 64 bits wide, so a
+q-register operation occupies it for two beats — the cycle-level gain will be
+smaller than 3.6x, by how much cannot be determined without the hardware. QEMU
+cannot answer it either, in either direction: it emulates NEON through helper
+calls that cost *more* than the scalar equivalents, so an isolated
+Direct+Inverse benchmark there shows the vectorised version at 0 to 2 % either
+side of scalar, which is an artefact of the emulator and says nothing about
+the SoC. What can be said with confidence is that the work issued went down by
+a factor of 3.6 and the output is unchanged to 135 dB.
+
+Correctness is covered by `make test-clouds-fft`, which runs on the host (both
+paths scalar there, so it only proves the refactor left upstream alone) and
+again on ARM under QEMU, which is the run that exercises the vector code. It
+pins the interface contract against hand-computed expectations rather than
+against the other implementation, so those still hold if someone later swaps
+in a different FFT entirely.
+
+### `clouds/dsp/pvoc/stft.h` — smaller FFT (`kMaxFftSize` 4096 → 512)
+
+This is the one change here that alters what a mode sounds like, and it was
+made because upstream's 4096 hung the hardware.
+
+Upstream computes the whole transform in one `STFT::Buffer()` call from the
+idle loop, where it is not deadline work. This port has no idle loop and runs
+it on the audio thread, so it arrives as a single burst once per hop —
+forward FFT, spectral modifier, inverse FFT, twice over in stereo, inside one
+audio block. Peak cost goes as `(N/2)·log2(N)` while the hop only goes as
+`N`, so a smaller transform cuts the burst by more than it raises the burst
+rate, and the average barely moves.
+
+Measured with `make bench-clouds-spike` (ARM under `qemu-arm`, per 32-sample
+engine block at 32 kHz = a 1.00 ms deadline, two runs per size). Granular is
+there as a reference: it has no burst mechanism at all, so it calibrates the
+harness and the host.
+
+| `kMaxFftSize` | mean | p99 | p99.9 | over deadline | window @ 32 kHz |
+|---|---:|---:|---:|---:|---|
+| 4096 (upstream) | 11.1% | 298% | 380-463% | **3.12%** | 128 ms, 7.8 Hz bins |
+| 2048 | 10.3% | 147% | 168-178% | **6.25%** | 64 ms, 15.6 Hz |
+| 1024 | 9.9% | 74-79% | 94-96% | 0.01-0.05% | 32 ms, 31.2 Hz |
+| **512 (default)** | **9.2%** | **35-44%** | **42-50%** | **0.00%** | 16 ms, 62.5 Hz |
+| *Granular, for reference* | *15.1%* | *22-24%* | *28-30%* | *0.00-0.01%* | — |
+
+Two things to read out of that. The over-deadline column at 4096 and 2048 is
+*exactly* 1/32 and 1/16 in every run — that is structural, one block per hop,
+not noise. And 2048 is **worse** than 4096 by that measure: halving the
+transform did not bring the burst under the deadline, it just doubled how
+often it missed. The obvious "one step down" would have looked like progress
+on the mean while making the actual failure twice as frequent.
+
+The table above is engine-level. The size was chosen on the end-to-end
+numbers, per whole render callback, because that is the deadline that exists
+— and the two units do not agree:
+
+| | Spectral p99.9 | over deadline |
+|---|---:|---:|
+| `clouds` synth @ 1024 | 79% | 0.05% |
+| `clouds` synth @ 512 | 60% | 0.00% |
+| `clouds_fx` @ 1024 | 126% | **0.93%** |
+| `clouds_fx` @ 512 | 75-82% | 0.00% |
+
+**1024 is enough for the synth and not for the FX.** CloudsFX runs stereo
+resampling in both directions, dry path included, so less of its 64-frame
+buffer is left over for the burst; at 1024 it still missed 0.93% of renders,
+which at ~750 renders a second is about seven dropouts a second. 512 clears
+both, and puts the FX's Spectral tail alongside its other modes (Granular
+48-51%, Stretch 51-54%) instead of above them.
+
+A synth-only build can have the longer window back — one line, and nothing
+else depends on it:
+
+```c
+// eurorack-opt/clouds/dsp/pvoc/stft.h
+#define CLOUDS_FFT_SIZE 1024
+```
+
+Set it in the header, not with `-D` — the value has to reach every
+translation unit or `sizeof(GranularProcessor)` disagrees between objects,
+and the `CLOUDS_OPT_ACTIVE` guard cannot catch that because both sides are
+this same header.
+
+Lowering `kMaxFftSize` is deliberate, rather than the more obvious route of
+passing a smaller `largest_fft_size` to `PhaseVocoder::Init()`. `STFT::Buffer()`
+switches to `fft_->Direct(in, out, num_passes)` the moment
+`fft_size != FFT::max_size` — a runtime-sized path that has never executed in
+this port and that the NEON butterfly does not cover, so that route would
+activate untested code and throw away the vectorisation in the same move.
+Keeping the two equal is why `granular_processor.cc` also had its literal
+`4096` replaced with `kMaxFftSize`; the two must not drift apart.
+
+**It also fixes POSITION in Spectral mode, by accident.** `num_textures` is
+`min(free buffer space / texture_size, kMaxNumTextures)` and
+`FrameTransformation` reserves one of them for phases, so at 4096 the port
+got 2 textures — one usable magnitude buffer. `ReplayMagnitudes` computes
+`index = position * (num_textures_ - 1)`, which with one texture is always
+zero: **the POSITION knob did nothing at all in Spectral**. At 512 the
+allocation reaches the `kMaxNumTextures = 7` cap, so POSITION scans six
+magnitude textures, as upstream intends.
+
+Sonically, 512 is a 16 ms window with 62.5 Hz bins against 4096's 128 ms and
+7.8 Hz: much tighter, far less smeared, more transient detail, and very
+little of the long frozen-pad character the mode used to have. Different, not
+worse — but different, and worth knowing before wondering why a patch does
+not sound like it used to. This is the real price of the fix, and it is paid
+in Spectral only; the other three modes are untouched.
+
+### `clouds/dsp/pvoc/phase_vocoder.{h,cc}` — one channel per call, spread across the hop
+
+The FFT-size fix above attacks the size of the once-per-hop burst. This one
+attacks the fact that it is *one* burst: upstream's `Buffer()` loops over the
+channels, so in stereo a forward FFT, the spectral modifier and an inverse
+run **twice, back to back, in a single audio block**. Upstream can afford
+that because it calls `Buffer()` from the main idle loop, where it is not
+deadline work. This port has no idle loop and calls it from the audio thread.
+
+Serving one channel per call halves the spike. Where the two calls land
+matters more than it looks:
+
+| CloudsFX, Spectral, p99.9 per render | defaults | reverb 60 % + texture 90 % |
+|---|---:|---:|
+| upstream scheduling | 95–111 % (0.05–0.53 % over) | 101–111 % (0.10–0.53 % over) |
+| one channel per call, adjacent blocks | 85–100 % (0.05–0.08 % over) | 107–121 % (0.62–0.97 % over) |
+| one channel per call, spread across the hop | **63 %** (0.00 % over) | **69 %** (0.00 % over) |
+
+Adjacent blocks barely helped, and the reason is a mismatch of granularity.
+The deadline that exists is one 64-frame host render; the engine runs at
+32 kHz, so a render covers 1.33 audio blocks. Two transforms one block apart
+still share a render about a third of the time. Half a hop apart they never
+do — and a hop is 128 samples at `kMaxFftSize` 512, so there is room to
+spare. `Init()` computes the spacing as `hop_blocks / num_channels`.
+
+On the synth the same change takes Spectral's p99.9 from 84 % of deadline to
+44 %; at the engine level, from ~71 % to 36 %, which puts it below Stretch
+(38 %) rather than at twice everything else.
+
+**What this does not buy is a longer window.** 1024 with the split still
+misses 1.12 % of renders on the FX, so `CLOUDS_FFT_SIZE` stays at 512 and the
+sonic cost above stands. The split is margin, not headroom to spend: roughly
+a factor of two between Spectral and its deadline on both units, on a mode
+whose burst was hanging the hardware three commits ago. (The synth alone
+clears 1024 comfortably — p99.9 90 %, no misses — which is what makes the
+synth-only override above worth keeping.)
+
+Steady-state output is **bit-identical** to upstream's scheduling, not merely
+close, and `make test-clouds-pvoc-rr` pins that: the same rendering compiled
+with `CLOUDS_PVOC_ROUND_ROBIN` 1 and 0, compared sample for sample at every
+FFT size from 256 to 4096, stereo and mono, hi-fi and lo-fi. The deferral is
+exact because `STFT`'s analysis ring is `fft_size + hop_size` long while
+`Buffer()` reads `fft_size` of it — exactly one hop of slack between the
+write pointer and the window being transformed, of which spreading uses half.
+
+Two details are worth knowing before touching this code:
+
+- **The channel order is load-bearing.** `FrameTransformation` writes only the
+  lowest `(fft_size / 2) - kHighFrequencyTruncation` bins of `ifft_in`, and
+  `ifft_in` is scratch *shared by both channels*, so every transform inherits
+  its top 16 bins from whichever transform ran last. That is upstream's
+  behaviour, not something introduced here, but it means a rotation that comes
+  up in the opposite phase feeds each channel the other one's residue and
+  changes the output. The turn therefore advances only when a transform
+  actually runs — an earlier version advanced on idle calls too, and the
+  output then depended on whether Spectral was entered by `Init()` or by a
+  mode change, which is how this was found.
+- **Transitions can land in the gap.** FREEZE engaging, or a mode change
+  reallocating the workspace, can arrive between the two channels' transforms
+  and leave them one frame apart in what they captured. At 512 the gap is two
+  blocks and the test measures no difference at all; it is visible only at
+  2048 and 4096, where the gap is 8 or 16 blocks, and then only as a fraction
+  of a percent of level.
+
+### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
+
+One line: the FFT's twiddle generator, `stmlib::RotationPhasor` →
+`stmlib::LutPhasor`. Both are stmlib, both produce the same sequence
+`cos(k·π/2^pass)`. `RotationPhasor` advances by complex multiplication — four
+multiplies and two adds per butterfly group — while `LutPhasor` walks a table
+built once in `Init()`. It is also the more accurate of the two, since
+repeated rotation drifts.
+
+Costs 8176 bytes of BSS for the table (`num_passes` = 12 at `kMaxFftSize`
+4096), against the 184 KB of sample buffers each unit already reserves.
+Measured under `qemu-arm` with Granular mode as a control for run-to-run
+noise, the Spectral/Granular cost ratio went 1.24–1.33 → 1.13–1.16 across
+three paired runs: roughly half of the FFT's excess cost.
+
+Build wiring — read this before touching it
+-------------------------------------------
+
+Three of the four files are **headers**, and two of them change `sizeof` of
+types the port layer instantiates (`GranularProcessor` directly; `FFT`, hence
+`PhaseVocoder`, hence `GranularProcessor` again). A build where some
+translation units see these headers and others see the submodule's links
+without complaint and then corrupts memory at run time.
+
+So the rule is all-or-nothing, and it is enforced:
+
+1. `eurorack-opt/` must come **before** `eurorack/` on the include path.
+2. `eurorack-opt/clouds/dsp/granular_processor.cc` replaces the submodule's in
+   the source list — the submodule's must not also be compiled. (`shy_fft.h`
+   and `stft.h` are headers, so they need no source-list change, only the
+   include order.)
+3. The build defines `CLOUDS_OPT_ENGINE`. These headers define
+   `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if
+   the first is set without the second, so a half-configured build fails at
+   compile time instead of at run time.
+
+Wired up in `Makefile` (`CLOUDS_OPT_FLAGS`, `CLOUDS_FX_ENGINE`),
+`osc_clouds.mk`, `makefile.inc` (`DINCDIR`, which is why the entry goes
+*before* the `eurorack` one rather than in `UINCDIR`) and
+`generate_sdk_projects.sh` (both the generic template and the hand-written
+`clouds_fx` config). Re-run `./generate_sdk_projects.sh` after changing that
+script.
+
+Re-syncing when the submodule moves
+-----------------------------------
+
+```
+git -C eurorack log --oneline 58b9125..HEAD -- clouds/dsp/granular_processor.h \
+    clouds/dsp/granular_processor.cc clouds/dsp/pvoc/stft.h stmlib/fft/shy_fft.h
+```
+
+If that is empty, nothing to do. If not, diff upstream against the fork and
+re-apply the changes above — they are small and each is marked with a comment
+explaining what it is for. Then re-run `make test-all` and `make test-arm`.
+
+The one change with a behavioural signature to check afterwards is the
+diffuser ramp: `make test-clouds-synth` covers all four modes, and
+`docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md` has the numbers to compare against.
+`make test-clouds-fft` and `make test-clouds-engine-opt` are the two that
+compare fork against original directly, so run both.
+
+Note that `shy_fft.h` is a *stmlib* file, not a Clouds one, so upstream churn
+there could affect anything else that uses stmlib's FFT. Nothing else in this
+repo does today.

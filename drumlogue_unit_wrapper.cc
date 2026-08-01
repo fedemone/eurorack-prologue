@@ -36,6 +36,7 @@
 #include "runtime.h"
 #include "unit.h"
 #include "attributes.h"
+#include "drumlogue_fpu.h"
 
 /* ===========================================================================
  * Module State
@@ -205,6 +206,11 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     return;
   }
 
+  /* Flush denormals for the whole render.  Every decaying tail in these
+   * engines — reverb, filter states, parameter smoothers — lands in the
+   * denormal range once a note stops.  See drumlogue_fpu.h. */
+  const uint32_t fpscr = fpu_begin_audio();
+
   /* Advance internal LFO1 and feed shape_lfo to the adapter.
    * Frequency range matches LFO2: param/600 per block of 24 samples at 48kHz,
    * giving 0-3.3 Hz at 0-100%.  Here we compute per render call. */
@@ -279,6 +285,8 @@ void unit_render(const float *in, float *out, uint32_t frames) {
     remaining -= n;
   }
 #endif
+
+  fpu_end_audio(fpscr);
 }
 
 /* ===========================================================================
@@ -628,6 +636,22 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = (user_osc_param_id_t)9;
       osc_value = (uint16_t)value;
       break;
+    case 8: /* Arp: 0-8 (custom OSC_PARAM index 10) */
+      osc_id    = (user_osc_param_id_t)10;
+      osc_value = (uint16_t)value;
+      break;
+    case 9: /* Arp Source: 0-1 (custom OSC_PARAM index 11) */
+      osc_id    = (user_osc_param_id_t)11;
+      osc_value = (uint16_t)value;
+      break;
+    case 10: /* Arp Rate: 0-5 (custom OSC_PARAM index 12) */
+      osc_id    = (user_osc_param_id_t)12;
+      osc_value = (uint16_t)value;
+      break;
+    case 11: /* Arp Octaves: 1-4 (custom OSC_PARAM index 13) */
+      osc_id    = (user_osc_param_id_t)13;
+      osc_value = (uint16_t)value;
+      break;
     default:
       return;
   }
@@ -838,6 +862,27 @@ static const char * const s_rings_poly_names[] = {
 };
 #define NUM_RINGS_POLY 4
 
+static const char * const s_rings_arp_names[] = {
+  "Off", "Up", "Down", "Up-Dn", "Dn-Up",
+  "Up-P-Dn", "Up-Dn-P", "Dn-P-Up", "Dn-Up-P"
+};
+#define NUM_RINGS_ARP 9
+
+static const char * const s_rings_arp_src_names[] = {
+  "Chord", "Octaves"
+};
+#define NUM_RINGS_ARP_SRC 2
+
+static const char * const s_rings_arp_rate_names[] = {
+  "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32"
+};
+#define NUM_RINGS_ARP_RATE 6
+
+static const char * const s_rings_arp_oct_names[] = {
+  "1", "2", "3", "4"
+};
+#define NUM_RINGS_ARP_OCT 4
+
 #elif defined(ELEMENTS_RESONATOR_MODES)
 /* ---- Elements LFO target names ---- */
 static const char * const s_elements_lfo_target_names[] = {
@@ -918,6 +963,22 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 7: /* Polyphony */
       if (value >= 1 && value <= NUM_RINGS_POLY)
         return s_rings_poly_names[value - 1];
+      break;
+    case 8: /* Arp */
+      if (value >= 0 && value < NUM_RINGS_ARP)
+        return s_rings_arp_names[value];
+      break;
+    case 9: /* Arp Source */
+      if (value >= 0 && value < NUM_RINGS_ARP_SRC)
+        return s_rings_arp_src_names[value];
+      break;
+    case 10: /* Arp Rate */
+      if (value >= 0 && value < NUM_RINGS_ARP_RATE)
+        return s_rings_arp_rate_names[value];
+      break;
+    case 11: /* Arp Octaves */
+      if (value >= 1 && value <= NUM_RINGS_ARP_OCT)
+        return s_rings_arp_oct_names[value - 1];
       break;
   }
 #elif defined(ELEMENTS_RESONATOR_MODES)

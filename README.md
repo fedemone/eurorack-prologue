@@ -3,6 +3,38 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
+> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Spectral mode has hung the instrument
+>
+> **Seen on hardware:** **Mode 3 (Spectral)** on the `clouds` synth crackled
+> and, after a few seconds of continuous use, **froze the whole drumlogue —
+> the power cable had to be pulled.** `clouds_fx` no longer crashes, but its
+> CPU cost makes it hard to use in practice, and it was unstable in Spectral
+> and at Position 100% + Density 100%.
+>
+> The cause is measured, and it is **not** memory corruption: the phase
+> vocoder's FFT ran on the audio thread — where the original firmware ran it
+> in its idle loop — as one burst per hop costing about 4x a whole block's
+> budget, missing the deadline on 3.12% of blocks for as long as Spectral was
+> selected.
+>
+> **Two changes address it.** The FFT was shrunk from 4096 to 512 points, and
+> the stereo pair's two transforms — which upstream runs back to back in one
+> block — were split apart so they never land in the same host render.
+> Together they remove the overrun on both units in every measurement
+> available here: no render misses its deadline, and Spectral now costs
+> *less* than the modes that already work rather than several times more.
+> Spectral sounds markedly tighter and less smeared as a result — a 16 ms
+> analysis window instead of 128 ms — which is the real price; the split
+> itself is free, and leaves steady-state output bit-identical. **Neither has
+> been re-tested on hardware.** Until it has,
+> treat Spectral as suspect and do not use either unit in a live set or
+> anywhere an unrecoverable freeze would cost you something.
+>
+> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware and are
+> unaffected by the change. So is every other oscillator in this repository.
+> Full analysis and measurements:
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+
 **Platforms supported:**
 - Korg prologue
 - Korg minilogue xd
@@ -194,7 +226,7 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
 | 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
 
-**Parameters (8):**
+**Parameters (12):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -203,21 +235,53 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
 | 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
 | 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for sympathetic models (0-10) |
-| 6 | Model | Resonator type (0-5, see table above) |
+| 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-10) |
+| 6 | Model | Resonator type (0-5, see table above; default 4 = Sympathetic Quantized) |
 | 7 | Polyphony | Number of voices (1-4) |
+| 8 | Arp | Arpeggiator pattern: Off, Up, Down, Up-Dn, Dn-Up, Up-P-Dn, Up-Dn-P, Dn-P-Up, Dn-Up-P |
+| 9 | Arp Src | Arp note source: Chord (steps the selected Chord's tones) or Octaves (steps octaves of the root) |
+| 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
+| 11 | Arp Oct | Octave span of the sequence (1-4) |
+
+**Arpeggiator:** Rings sounds one held note at a time, so the built-in arpeggiator
+builds a sequence of pitches and re-strums the resonator step-by-step, synced to the
+drumlogue's tempo. The `Arp Src` knob picks what the sequence is built from — the tones
+of the currently-selected `Chord` (so the Chord knob is musically useful on *every*
+model, not just Sympathetic Quantized) or plain octaves of the root. `Arp Oct` spreads
+the sequence across up to four octaves. The `-P-` patterns insert a silent rest step,
+letting the resonance ring through the gap. Set `Arp` to `Off` for normal single-note
+playing. (Tempo comes from the host clock; if a platform never reports a tempo the arp
+runs at 120 BPM.)
+
+**Output level:** The mono mixdown applies +3 dB of make-up gain overall, plus a further
++6 dB for the two sympathetic-string models (Sympathetic String and Sympathetic
+Quantized), which are inherently quieter than the Modal/String/FM/Reverb models — so the
+default patch sits at a comparable level to the others. Peaks are still clamped, so the
+extra gain can't clip the output.
 
 **Sound design tips:**
-- Start with Model 0 (Modal) and sweep Structure for metallic to harmonic
+- The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
+- Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
+- Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
 - Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord parameter only affects sympathetic models (1 and 4)
+- Chord only affects Model 4 (Sympathetic Quantized) *as a resonator voicing*; the arpeggiator, however, uses the Chord selection on any model to build its note sequence
 
 For more information please read the excellent [Mutable Instruments Rings documentation](https://mutable-instruments.net/modules/rings/manual/).
 
 Clouds (based on Clouds)
 ----
 *Granular audio processor*
+
+> **⚠ Warning — Mode 3 (Spectral) froze the drumlogue at the previous FFT
+> size.** On hardware, Spectral crackled and then locked the instrument up
+> after a few seconds, recoverable only by unplugging the power. The cause was
+> a once-per-hop FFT burst on the audio thread costing ~4x a whole block's
+> budget. The FFT is now 512 points instead of 4096, and the stereo pair's two
+> transforms are spread across the hop rather than run back to back, which
+> together remove the overrun under measurement but **have not been re-tested
+> on hardware**. Modes 0-2 were unaffected throughout. See
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 Based on Mutable Instruments **Clouds**, a granular audio processor with four playback modes. Transforms incoming audio or internal oscillator into textural clouds, time-stretched drones, delays, and spectral freezes.
 
@@ -241,7 +305,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
 | 1 | Position | Where in the buffer to read grains (0-100%) |
 | 2 | Size | Grain length / buffer region (0-100%) |
-| 3 | Density | Grain rate / overlap amount (0-100%) |
+| 3 | Density | Grain rate / overlap — sparse individual grains to a dense cloud (0-100%) |
 | 4 | Texture | Grain window shape / filtering (0-100%) |
 | 5 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
 | 6 | Feedback | Amount of output fed back into input (0-100%) |
@@ -256,13 +320,78 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
 
 **Sound design tips:**
+- Mode 0 (Granular): Density runs the grain scheduler, from about one grain at a time up to roughly 18 grains. The knob is linear in grain count — the engine's own law is cubic, which put almost all the range and almost all the CPU in the top fifth of the travel, so it is inverted here and capped where the drumlogue can still pay for it. It remains the main CPU control (about 2x from 0% to 100%). Position feeds from the recording buffer, so a fresh voice takes a moment to fill before higher Position settings have material to granularize
 - Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
+- Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. **Spectral's burst is what hung the instrument** — its average cost is only ~10% of the block budget, but nearly all of it landed in one block per hop, measuring ~4x the budget for that block. Shrinking the FFT from 4096 to 512 points brought that under the deadline; Stretch's burst is the correlator, not the FFT, and is untouched. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
+- The engine runs at Clouds' native 32 kHz, converted to and from the drumlogue's 48 kHz at the edges. Size, delay times and the buffer's capacity are therefore 1.5x longer in real time than earlier builds — that is what the hardware sounds like — and the buffer takes 1.5x longer to fill, so give a fresh voice a moment before high Position settings have material. Pitch is unchanged. The top end rolls off above 13 kHz, roughly like Clouds' own codec
+- Reverb at 0% and Texture at or below 75% are now genuinely free: the engine used to run its reverb and diffuser every block whatever the knobs said, and the fork in `eurorack-opt/` skips them when their amount is zero. Together with the 32 kHz change that is about a third off every mode. Turning Reverb up from 0 starts the tail from silence rather than releasing the history the stock engine had been quietly accumulating
+- Mode 3 (Spectral) now runs a 512-point FFT instead of 4096, so its analysis window is 16 ms rather than 128 ms at the engine's 32 kHz: much tighter and more transient, with little of the long smeared freeze left. This was done to keep the per-hop FFT burst inside the audio deadline — at 4096 it hung the instrument, and 1024 was enough for the synth but not for CloudsFX. Two side effects worth knowing: **Position now works in Spectral**, where it previously did nothing at all (the old FFT size left room for only one magnitude texture, and Position indexes between textures), and the whole mode got slightly cheaper on average as well. In stereo the two channels' transforms are also spread across the hop instead of running back to back, which halves the remaining peak without changing the sound at all. A synth-only build can raise `CLOUDS_FFT_SIZE` to 1024 in `eurorack-opt/clouds/dsp/pvoc/stft.h` and get the longer window back — with the split in place it clears the synth's deadline comfortably
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
-- Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
 
 For more information please read the excellent [Mutable Instruments Clouds documentation](https://mutable-instruments.net/modules/clouds/manual/).
+
+CloudsFX (Clouds as an insert effect)
+----
+*Granular delay/texture effect (drumlogue only)*
+
+> **⚠ Warning — usable only with care.** Hardware testing found the crash
+> **fixed** (the unit no longer silences the audio interface), but the CPU
+> cost is high enough that the unit is hard to use in practice, and the output
+> was unstable in **Mode 3 (Spectral)** and at **Position 100% + Density
+> 100%**. CloudsFX builds against the same engine fork as the synth, so it
+> picks up both Spectral fixes described at the top of this README — and the
+> second one, splitting the stereo pair's transforms across the hop, was
+> driven by this unit: it is the one whose deadline the FFT could not fit
+> inside. Untested on hardware, as there. The Position/Density instability is
+> a separate, undiagnosed issue: that setting measures 15.9% mean with zero
+> deadline misses, so the FFT burst does not explain it. Measurements in
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+>
+> Changing Mode, Quality or resetting the unit mutes it for 2-4 blocks while
+> the engine is rebuilt; that is by design.
+>
+> CloudsFX now matches the synth: the same grain-linear Density mapping and
+> the same 32 kHz engine. It adds about 2.2 ms of latency, dry included —
+> passing the dry signal round the conversion would put it ahead of the wet
+> path and comb-filter the mix.
+
+The synth `clouds` above has to invent an input — an internal sawtooth or a
+loaded sample — because a drumlogue **synth** unit's render callback ignores
+audio input. `CloudsFX` is the same Clouds engine built as a **delfx** unit
+instead, so it granulates the **incoming FX-bus audio**: route any drumlogue
+part through it and the grains, stretches, delays and spectral freezes are
+made from *that* signal. Because the input is now real, Freeze, Feedback,
+Dry/Wet and the Looping-Delay / Stretch modes all become genuinely useful.
+
+It is a **drumlogue-only** unit (delfx units don't exist on the
+prologue-class platforms) and is built via the SDK project `clouds_fx`
+(`./build_drumlogue.sh clouds_fx`).
+
+**Parameters (11):** identical to the Clouds synth, minus everything that
+fed an internal source — no **Base Note**, and no **SampleBank / SampleNum /
+SmplStart / SmplEnd**:
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | Position | Where in the buffer to read grains (0-100%) |
+| 1 | Size | Grain length / buffer region (0-100%) |
+| 2 | Density | Grain rate / overlap — sparse individual grains to a dense cloud (0-100%) |
+| 3 | Texture | Grain window shape / filtering (0-100%) |
+| 4 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
+| 5 | Feedback | Amount of output fed back into input (0-100%) |
+| 6 | Dry/Wet | Mix between the dry input and the processed output (0-100%, default 50%) |
+| 7 | Reverb | Built-in reverb amount (0-100%) |
+| 8 | Freeze | Freeze the audio buffer (on/off) |
+| 9 | Mode | Playback mode (0-3: Granular / Stretch / Delay / Spectral) |
+| 10 | Quality | Audio quality / stereo mode (0-3) |
+
+**Sound design tips:**
+- Mode 2 (Looping Delay) + Feedback = a pitch-shiftable, freezable delay on the incoming audio
+- Mode 1 (Stretch) + Freeze on = infinite sustain of whatever was playing when you froze
+- Dry/Wet defaults to 50% (an insert-FX default); turn it fully wet for pure granular textures
+- Input/output levels are conservative and clip-safe; on hardware you can trim with the drumlogue's own FX send/return
 
 Mussola (Vocal Synthesis)
 ----
@@ -499,7 +628,115 @@ PLATFORM=prologue make -f osc_fm.mk
 
 # Run host-side tests (no Docker/ARM needed)
 make test-all
+
+# Clouds-specific suites (also part of test-all)
+make test-clouds-synth          # real engine behind OSC_*: pitch across the
+                                # 48/32 kHz boundary, all modes x qualities
+make test-clouds-fx             # FX bus in -> engine -> out, dry and wet
+make test-clouds-fx-reconfig    # render thread vs control thread doing
+                                # Mode/Quality/reset (the park handshake)
+make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
+                                # engine, compared sample for sample
+make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
+                                # call vs upstream's loop, sample for sample
+                                # at every FFT size from 256 to 4096
+
+# Run the shipped .drmlgunit binaries on emulated ARM
+make test-arm
+
+# Per-block cost distribution on emulated ARM: mean, worst block and the
+# fraction of blocks over deadline, per mode.  This is what identified the
+# Spectral freeze -- Spectral's mean is low, its worst block is ~4x budget
+make bench-clouds-spike
 ```
+
+**Testing the real unit binaries (`make test-arm`):**
+
+`make test-all` links the port layer into an x86 host binary. That catches
+logic bugs, but it cannot catch anything that only exists in the artifact the
+drumlogue actually loads. `make test-arm` cross-compiles the real
+`.drmlgunit` files and drives them through the SDK ABI under QEMU, checking
+the ARM/NEON paths, parameter sweeps, partial buffers, stack usage, the
+UI/preset callbacks over their whole declared range, cross-unit isolation,
+and — see below — control-thread callbacks racing `unit_render()`.
+
+```bash
+apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
+git submodule update --init logue-sdk
+make test-arm                          # defaults to clouds clouds_fx mo2_va rings
+make test-arm ARM_UNITS="rings mussola"
+```
+
+The target skips itself with a message if the toolchain, QEMU, or the SDK
+submodule is missing, so it is safe to run anywhere.
+
+**Cross-unit isolation (`drumlogue/unit_exports.map`):**
+
+The drumlogue loads every unit in `Units/` into one address space. All the
+units here are built from the same port layer, so they all define
+`OSC_CYCLE`, `osc_adapter_*` and the eurorack DSP under the same names. When
+those are exported, the dynamic linker binds every unit's internal calls to
+whichever unit was loaded first — so the second unit onwards silently renders
+the first unit's engine, and any unit's parameter changes are applied to the
+first unit's engine. Where the two units disagree on buffer geometry (this
+repo mixes `OSC_NATIVE_BLOCK_SIZE` 24 and 32) the mismatch becomes an
+out-of-bounds write.
+
+Every project's `config.mk` therefore links with
+`--version-script=drumlogue/unit_exports.map`, which exports only the
+callbacks the firmware looks up with `dlsym()`. `make test-arm` asserts that
+no unit exports anything else.
+
+**Control thread vs audio thread:**
+
+The drumlogue calls `unit_set_param_value()`, `unit_reset()`, `unit_suspend()`
+and `unit_resume()` from its control thread while `unit_render()` runs on the
+audio thread. Anything a control callback does that re-seats state the
+renderer is reading is a race, and two of them were real crashes:
+
+- `unit_reset()` on CloudsFX used to re-initialize the engine inline, which
+  rewrites the buffer pointers, heads and contents that `Process()` reads.
+- `osc_adapter_reset()` used to clear the render cursor pair inline. Landing
+  between the renderer's `n = min(need, avail)` and its `avail -= n` underflows
+  `avail` to ~2^32, after which the read position walks further off the end of
+  `s_render_buf` every block until it faults.
+
+`osc_adapter_reset()` now latches a request that the audio thread applies at
+the top of its next render, which is also where the Clouds synth applies
+Mode/Quality changes — those switch the engine between its 16-bit and 8-bit
+buffers, and only the following `Prepare()` sets the matching buffer up.
+`make test-arm` runs a control thread hammering all four callbacks against
+4000 rendered blocks per unit; the pre-fix `unit_reset()` segfaults under it.
+
+Deferring to the audio thread only works when the deferred work is small,
+though, and CloudsFX's was not: a reallocating `Prepare()` clears ~180 KB,
+which trades a data race for a blown deadline. CloudsFX therefore does the
+opposite — the control thread asks the renderer to stand down, waits for it to
+acknowledge, reconfigures the engine itself, and hands it back. The renderer
+never blocks and never reallocates; it emits silence for the two to four
+blocks the handover takes. `make test-clouds-fx-reconfig` drives that from two
+real threads at three buffer sizes. The protocol, including why the park
+transition has to be a compare-exchange and why the wait needs two different
+timeouts, is written up in
+[docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+
+**Forked engine sources (`eurorack-opt/`):**
+
+`eurorack/` is a submodule this repo does not edit, so the two engine changes
+that were worth making live in `eurorack-opt/`, which shadows the submodule on
+the include path: an early-out for the reverb and diffuser when their amount
+is zero (about a quarter of a block, at both units' default settings), and a
+one-line switch to LUT twiddle factors in the FFT. `make test-clouds-engine-opt`
+compiles the same rendering against both engines and compares it sample for
+sample, because "this optimisation is inaudible" is a claim worth checking
+rather than asserting.
+
+Two of the forked files are headers that change `sizeof(GranularProcessor)`,
+so the fork is all-or-nothing: `eurorack-opt` must precede `eurorack` on the
+include path, and `clouds-granular.cc`/`clouds-fx.cc` `#error` if the build
+says it wants the fork but the headers say otherwise. See
+[eurorack-opt/README.md](eurorack-opt/README.md) for the wiring and for how to
+re-sync when the submodule moves.
 
 **Build outputs:**
 - `.prlgunit` files for prologue

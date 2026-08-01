@@ -67,6 +67,21 @@
  *    id 14: SmplStart   (0-1000 ‰)   -> custom OSC_PARAM index 13
  *    id 15: SmplEnd     (0-1000 ‰)   -> custom OSC_PARAM index 14
  *
+ *  CloudsFX insert effect (clouds-fx.cc, delfx unit — CLOUDS_FX):
+ *    Same controls as the Clouds synth, minus Base Note and the four
+ *    sample params — the audio to granulate arrives on the FX bus.
+ *    id 0:  Position    (0-100%)     -> clouds_fx_set_param id 0
+ *    id 1:  Size        (0-100%)     -> clouds_fx_set_param id 1
+ *    id 2:  Density     (0-100%)     -> clouds_fx_set_param id 2
+ *    id 3:  Texture     (0-100%)     -> clouds_fx_set_param id 3
+ *    id 4:  Pitch       (-24..+24)   -> clouds_fx_set_param id 4 (semitones)
+ *    id 5:  Feedback    (0-100%)     -> clouds_fx_set_param id 5
+ *    id 6:  Dry/Wet     (0-100%)     -> clouds_fx_set_param id 6
+ *    id 7:  Reverb      (0-100%)     -> clouds_fx_set_param id 7
+ *    id 8:  Freeze      (on/off)     -> clouds_fx_set_param id 8
+ *    id 9:  Mode        (strings)    -> clouds_fx_set_param id 9
+ *    id 10: Quality     (strings)    -> clouds_fx_set_param id 10
+ *
  *  Mussola vocal synth (mussola.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
  *    id 1:  Phoneme     (0-100%)     -> k_user_osc_param_shape
@@ -105,13 +120,23 @@
 
 const __unit_header unit_header_t unit_header = {
     .header_size = sizeof(unit_header_t),
+#if defined(CLOUDS_FX)
+    /* CloudsFX is an insert/delay effect: it processes the FX-bus audio
+     * input, which synth units ignore.  It must therefore be a delfx unit. */
+    .target = UNIT_TARGET_PLATFORM | k_unit_module_delfx,
+#else
     .target = UNIT_TARGET_PLATFORM | k_unit_module_synth,
+#endif
     .api = UNIT_API_VERSION,
     .dev_id = 0x46654465U,    /* 'FeDe' - https://github.com/fedemone/logue-sdk */
 
     /* Per-oscillator unit ID and display name (max 13 chars).
      * Struct field order: unit_id, version, name — must stay in order. */
-#if defined(MUSSOLA_VOCAL)
+#if defined(CLOUDS_FX)
+    .unit_id = 0x434C4458U,   /* 'CLDX' */
+    .version = 0x00010000U,
+    .name = "CloudsFX",
+#elif defined(MUSSOLA_VOCAL)
     .unit_id = 0x4D555353U,   /* 'MUSS' */
     .version = 0x00010000U,
     .name = "Mussola",
@@ -194,7 +219,64 @@ const __unit_header unit_header_t unit_header = {
 #endif
     .num_presets = 0,
 
-#if defined(MUSSOLA_VOCAL)
+#if defined(CLOUDS_FX)
+    /* ================================================================
+     * CloudsFX insert effect (clouds-fx.cc, delfx unit)
+     *
+     * Same controls as the Clouds synth, minus everything that fed an
+     * internal source: no Base Note, no SampleBank/SampleNum/SmplStart/
+     * SmplEnd — the audio to granulate comes from the FX bus instead.
+     *
+     * 11 params: Position, Size, Density, Texture, Pitch, Feedback,
+     *            Dry/Wet, Reverb, Freeze, Mode, Quality
+     * ================================================================ */
+    .num_params = 11,
+    .params = {
+        // Page 1
+        /* id 0: Position (granular buffer position) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Position"}},
+        /* id 1: Size (grain size / buffer region) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Size"}},
+        /* id 2: Density (grain density / overlap) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Density"}},
+        /* id 3: Texture (grain window shape / filter) */
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Texture"}},
+
+        // Page 2
+        /* id 4: Pitch (pitch shift in semitones, 24 = 0) */
+        {0, 48, 24, 24, k_unit_param_type_none, 0, 0, 0, {"Pitch"}},
+        /* id 5: Feedback (feedback amount) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Feedback"}},
+        /* id 6: Dry/Wet (output mix; 50% default for an insert FX) */
+        {0, 100, 0, 50, k_unit_param_type_drywet, 0, 0, 0, {"Dry/Wet"}},
+        /* id 7: Reverb (reverb amount) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Reverb"}},
+
+        // Page 3
+        /* id 8: Freeze (freeze buffer) */
+        {0, 1, 0, 0, k_unit_param_type_onoff, 0, 0, 0, {"Freeze"}},
+        /* id 9: Mode (Granular/Stretch/Delay/Spectral) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Mode"}},
+        /* id 10: Quality (stereo/mono, hi/lo fidelity) */
+        {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Quality"}},
+
+        // Pages 3-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(MUSSOLA_VOCAL)
     /* ================================================================
      * Mussola vocal synth (mussola.cc)
      *
@@ -332,10 +414,10 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Rings oscillators (rings-resonator.cc)
      *
-     * 8 params: Base Note, Position, Structure, Brightness, Damping,
-     *           Chord, Model, Polyphony
+     * 12 params: Base Note, Position, Structure, Brightness, Damping,
+     *            Chord, Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct
      * ================================================================ */
-    .num_params = 8,
+    .num_params = 12,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -352,16 +434,26 @@ const __unit_header unit_header_t unit_header = {
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Damping"}},
         /* id 5: Chord (chord type for sympathetic strings) */
         {0, 10, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
-        /* id 6: Model (resonator type: Modal/SympStr/String/FM/...) */
-        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
+        /* id 6: Model (resonator type: Modal/SympStr/String/FM/...).
+         * Default 4 = SympStrQ so the Chord parameter is effective on load
+         * (Chord only affects the quantized sympathetic-strings model). */
+        {0, 5, 4, 4, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
         /* id 7: Polyphony (number of voices 1-4) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Polyphony"}},
 
+        // Page 3
+        /* id 8: Arp (Off + 8 patterns: Up/Down/Up-Dn/Dn-Up + 4 pause vars).
+         * Rings is monophonic here, so the arp steps the selected note
+         * source (Chord tones or octaves) and re-strums the resonator. */
+        {0, 8, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Arp"}},
+        /* id 9: Arp Src (0 = Chord tones, 1 = Octaves of the root) */
+        {0, 1, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Arp Src"}},
+        /* id 10: Arp Rate (tempo-synced step: 1/4..1/32, incl. triplets) */
+        {0, 5, 3, 3, k_unit_param_type_strings, 0, 0, 0, {"Arp Rate"}},
+        /* id 11: Arp Oct (span the sequence across 1-4 octaves) */
+        {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Arp Oct"}},
+
         // Pages 3-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
@@ -426,6 +518,68 @@ const __unit_header unit_header_t unit_header = {
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
 
         // Pages 5-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+    }
+
+#elif defined(OSC_STRING)
+    /* ================================================================
+     * String oscillator (macro-oscillator2.cc, OSC_STRING)
+     *
+     * Same 13-param layout as the other Plaits engines, but the String
+     * engine routes Param 2 to the output limiter as an *attenuation*
+     * (pre_gain = 1 - Param2): 0 % = full level, 100 % = silence.  The
+     * generic Plaits table below defaults Param 2 to 50, which halves the
+     * String's level (and 100 % mutes it entirely) — the cause of "String
+     * makes no / too little sound".  Give String its own table so the
+     * knob is named "Attenuate" and defaults to 0 (full level).
+     * ================================================================ */
+    .num_params = 13,
+    .params = {
+        // Page 1
+        /* id 0: Base Note (MIDI note for gate trigger) */
+        {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
+        /* id 1: Shape (morph) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
+        /* id 2: Shift-Shape (timbre / exciter) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"ShiftShape"}},
+        /* id 3: Harmonics (string structure / inharmonicity) */
+        {0, 100, 50, 50, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
+
+        // Page 2
+        /* id 4: Attenuate (0 = full level, 100 = silent) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Attenuate"}},
+        /* id 5: LFO Target (which param the shape LFO modulates) */
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
+        /* id 6: LFO1 Shape (waveshape for shape LFO modulation) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        /* id 7: LFO1 Rate (internal shape LFO frequency) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
+
+        // Page 3
+        /* id 8: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 9: LFO2 Depth */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
+        /* id 10: LFO2 Target (which param LFO2 modulates) */
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
+        /* id 11: LFO2 Shape (waveform for LFO2) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+
+        // Page 4
+        /* id 12: Gate Mode (envelope/gate behavior) */
+        {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+
+        // Pages 5-6: blank
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},

@@ -32,10 +32,10 @@ CSRC = $(PROJROOT)/header.c
 CXXSRC  = $(PROJROOT)/drumlogue_unit_wrapper.cc
 CXXSRC += $(PROJROOT)/drumlogue_osc_adapter.cc
 CXXSRC += $(PROJROOT)/clouds-granular.cc
-CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/granular_processor.cc
+CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/granular_processor.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/correlator.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/mu_law.cc
-CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/phase_vocoder.cc
+CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/pvoc/phase_vocoder.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/frame_transformation.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/stft.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/resources.cc
@@ -46,20 +46,37 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 ##############################################################################
 # Include paths
 #
-# - drumlogue/   : userosc.h compatibility header
-# - eurorack/    : Mutable Instruments source headers
-# - repo root    : drumlogue_osc_adapter.h
+# - drumlogue/    : userosc.h compatibility header
+# - eurorack-opt/ : forked/optimized MI headers, and so it MUST precede
+#                   eurorack/ -- it shadows a few of the submodule's headers
+#                   and a build where only some objects see them is corrupt.
+#                   Listed for every project, not just the ones forking today,
+#                   so the ordering rule holds by construction.
+# - eurorack/     : Mutable Instruments source headers
+# - repo root     : drumlogue_osc_adapter.h
 #
 # SDK common/ headers (runtime.h, unit.h, attributes.h) are added
 # automatically by the SDK Makefile via DINCDIR.
 #
 
 UINCDIR  = $(PROJROOT)/drumlogue
+UINCDIR += $(PROJROOT)/eurorack-opt
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
+
+##############################################################################
+# Linker options
+#
+# Export only the drumlogue unit ABI.  Without this every unit exports its
+# whole port layer (OSC_CYCLE, osc_adapter_*, the eurorack DSP, ...), and
+# since the drumlogue loads all installed units into one address space the
+# first unit loaded hijacks the identically-named symbols of every unit
+# loaded after it.  See drumlogue/unit_exports.map for the details.
+
+USE_LDOPT = --version-script=$(PROJROOT)/drumlogue/unit_exports.map
 
 ##############################################################################
 # Libraries
@@ -74,6 +91,6 @@ ULIBS += -lc
 # Defines
 #
 
-UDEFS  = -DCLOUDS_GRANULAR -DSTM32F401xC -DSTM32F401xx
+UDEFS  = -DCLOUDS_GRANULAR -DCLOUDS_OPT_ENGINE -DSTM32F401xC -DSTM32F401xx
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=32
 UDEFS += -DBLOCKSIZE=32

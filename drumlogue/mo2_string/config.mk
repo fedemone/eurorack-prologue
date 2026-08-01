@@ -42,20 +42,37 @@ CXXSRC += $(PROJROOT)/eurorack/stmlib/utils/random.cc
 ##############################################################################
 # Include paths
 #
-# - drumlogue/   : userosc.h compatibility header
-# - eurorack/    : Mutable Instruments source headers
-# - repo root    : drumlogue_osc_adapter.h
+# - drumlogue/    : userosc.h compatibility header
+# - eurorack-opt/ : forked/optimized MI headers, and so it MUST precede
+#                   eurorack/ -- it shadows a few of the submodule's headers
+#                   and a build where only some objects see them is corrupt.
+#                   Listed for every project, not just the ones forking today,
+#                   so the ordering rule holds by construction.
+# - eurorack/     : Mutable Instruments source headers
+# - repo root     : drumlogue_osc_adapter.h
 #
 # SDK common/ headers (runtime.h, unit.h, attributes.h) are added
 # automatically by the SDK Makefile via DINCDIR.
 #
 
 UINCDIR  = $(PROJROOT)/drumlogue
+UINCDIR += $(PROJROOT)/eurorack-opt
 UINCDIR += $(PROJROOT)/eurorack
 UINCDIR += $(PROJROOT)
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/CMSIS/CM3_f4xx
 UINCDIR += $(PROJROOT)/eurorack/stmlib/third_party/STM/STM32F4xx_StdPeriph_Driver/inc
+
+##############################################################################
+# Linker options
+#
+# Export only the drumlogue unit ABI.  Without this every unit exports its
+# whole port layer (OSC_CYCLE, osc_adapter_*, the eurorack DSP, ...), and
+# since the drumlogue loads all installed units into one address space the
+# first unit loaded hijacks the identically-named symbols of every unit
+# loaded after it.  See drumlogue/unit_exports.map for the details.
+
+USE_LDOPT = --version-script=$(PROJROOT)/drumlogue/unit_exports.map
 
 ##############################################################################
 # Libraries

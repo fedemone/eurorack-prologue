@@ -42,6 +42,7 @@ ALL_PROJECTS=(
     elements_full
     rings
     clouds
+    clouds_fx
     mussola
 )
 
@@ -207,6 +208,7 @@ list_projects() {
     echo ""
     echo "  Clouds-based (block size 32):"
     echo "    clouds                   - Texture Synthesizer (granular/stretch/delay/spectral)"
+    echo "    clouds_fx                - CloudsFX insert effect (granulates FX-bus audio, delfx)"
     echo ""
     echo "  Mussola (block size 24):"
     echo "    mussola                  - Abstract Vocal Synth (SpeechEngine, multi-voice)"
