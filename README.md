@@ -584,6 +584,20 @@ Known Issues
 
 * When first selecting the oscillator in the multi-engine, all values default to their minimum values, however the display seems to default to 0. For bipolar values it means the display might still show 0% while internally in the oscillator the value is -100%.
 
+* **Clouds reads one element past `lut_window`** (upstream). `Grain::RenderEnvelope()`
+  calls `Interpolate(lut_window, gain, 4096.0f)`, and the table has 4097
+  entries, so a grain envelope phase landing exactly on 1.0 reads
+  `lut_window[4097]`. It is arithmetically harmless — an integral index of N
+  means a fractional part of zero, so the stray element is multiplied by zero
+  — and the table is followed by more `.rodata`, so it reads neighbouring
+  table data rather than faulting. Left alone deliberately: fixing it means
+  touching the Clouds engine fork, and both Clouds units are already awaiting
+  hardware re-testing after the Spectral changes; adding an unrelated engine
+  edit now would muddy that result. Rings had three of the same overrun
+  (`lut_stiffness`, `lut_4_decades`, `lut_fm_frequency_quantizer`, reachable
+  at Structure or Damping 100%) and those *are* fixed, in the port rather than
+  the engine — see `kLutSafeMax` in `rings-resonator.cc`.
+
 Building
 ====
 
@@ -648,6 +662,11 @@ make test-arm
 # fraction of blocks over deadline, per mode.  This is what identified the
 # Spectral freeze -- Spectral's mean is low, its worst block is ~4x budget
 make bench-clouds-spike
+
+# Per-render cost of whole units, through the drumlogue ABI, on emulated ARM.
+# bench-clouds-spike benches the Clouds engine; this benches units, which is
+# the only scale on which two different units can be compared
+make bench-units ARM_UNITS="mo2_va mussola rings clouds clouds_fx"
 ```
 
 **Testing the real unit binaries (`make test-arm`):**
@@ -657,8 +676,14 @@ logic bugs, but it cannot catch anything that only exists in the artifact the
 drumlogue actually loads. `make test-arm` cross-compiles the real
 `.drmlgunit` files and drives them through the SDK ABI under QEMU, checking
 the ARM/NEON paths, parameter sweeps, partial buffers, stack usage, the
-UI/preset callbacks over their whole declared range, cross-unit isolation,
-and — see below — control-thread callbacks racing `unit_render()`.
+UI/preset callbacks over their whole declared range, parameter values outside
+the declared range, the note/gate/tempo/expression callbacks, cross-unit
+isolation, and — see below — control-thread callbacks racing `unit_render()`.
+
+Load more than one unit at a time when running it. Several of the faults it
+has caught only exist between units — the address space is shared, so whether
+a stray write lands on a mapped page depends on what else is loaded, and a
+unit that passes alone can segfault the moment a second one is present.
 
 ```bash
 apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
@@ -692,8 +717,20 @@ no unit exports anything else.
 The drumlogue calls `unit_set_param_value()`, `unit_reset()`, `unit_suspend()`
 and `unit_resume()` from its control thread while `unit_render()` runs on the
 audio thread. Anything a control callback does that re-seats state the
-renderer is reading is a race, and two of them were real crashes:
+renderer is reading is a race, and three of them were real crashes:
 
+- **Rings' `Polyphony`** went straight into `Part::set_polyphony()` from the
+  parameter callback. `Part::Process()` reads `polyphony_` twice and derives
+  an array index from the second read: the voice loop runs to `polyphony_`,
+  and inside it `RenderStringVoice()` computes
+  `num_strings = 2 * kMaxPolyphony / polyphony_` and then
+  `string_[voice + string * polyphony_]`, into an eight-element array. Those
+  agree only while `polyphony_` holds still. Lower it between the loop bound
+  and the divide — one parameter push while a note is sounding, which is
+  exactly what the firmware does when a unit is selected or a project is
+  recalled — and at 4 → 1 the index reaches `string_[10]` and is *written*
+  to. A wild write on the audio thread, into the address space every loaded
+  unit shares. `Model` had the same shape.
 - `unit_reset()` on CloudsFX used to re-initialize the engine inline, which
   rewrites the buffer pointers, heads and contents that `Process()` reads.
 - `osc_adapter_reset()` used to clear the render cursor pair inline. Landing
@@ -701,12 +738,25 @@ renderer is reading is a race, and two of them were real crashes:
   `avail` to ~2^32, after which the read position walks further off the end of
   `s_render_buf` every block until it faults.
 
-`osc_adapter_reset()` now latches a request that the audio thread applies at
-the top of its next render, which is also where the Clouds synth applies
-Mode/Quality changes — those switch the engine between its 16-bit and 8-bit
-buffers, and only the following `Prepare()` sets the matching buffer up.
-`make test-arm` runs a control thread hammering all four callbacks against
-4000 rendered blocks per unit; the pre-fix `unit_reset()` segfaults under it.
+Rings' `Model`/`Polyphony` and `osc_adapter_reset()`'s flush now latch a
+request that the audio thread applies at the top of its next render, which is
+also where the Clouds synth applies Mode/Quality changes — those switch the
+engine between its 16-bit and 8-bit buffers, and only the following
+`Prepare()` sets the matching buffer up. `make test-arm` runs a control thread
+hammering all four callbacks against 4000 rendered blocks per unit; the
+pre-fix `unit_reset()` and the pre-fix Rings `Polyphony` both segfault under
+it, the latter only when a second unit is loaded alongside.
+
+Rings' latch also stops the reconfiguration being paid twice. The firmware
+pushes a value for every parameter slot whenever a unit is loaded, and
+`Part::set_polyphony()` marks the part dirty whether or not the value changed
+— so the default push bought a full `ConfigureResonators()`, which for the
+string models re-initializes all eight strings and clears ~96 KB of delay
+line. `OSC_INIT` now spends that once on the control thread instead, by
+rendering and discarding a single block; the first audio block after the unit
+is selected went from 356% of its deadline to 145% under
+`make bench-units`, the remainder being the page faults any freshly
+`dlopen()`ed unit pays.
 
 Deferring to the audio thread only works when the deferred work is small,
 though, and CloudsFX's was not: a reallocating `Prepare()` clears ~180 KB,
@@ -719,6 +769,39 @@ real threads at three buffer sizes. The protocol, including why the park
 transition has to be a compare-exchange and why the wait needs two different
 timeouts, is written up in
 [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+
+**What a unit owes the instrument (`drumlogue_guards.h`):**
+
+Three guarantees the wrappers now enforce for every unit, because getting any
+of them wrong takes down more than the unit that got it wrong:
+
+- **No non-finite sample leaves `unit_render()`.** The drumlogue mixes every
+  part through shared send effects, and a reverb or delay is an IIR with
+  feedback: one NaN reaching its delay line makes every later output of that
+  effect NaN, forever, whatever is fed in afterwards. A unit that emits one
+  bad block does not cost one bad block of audio — it silences the whole
+  instrument, and *keeps* it silent after the user has moved to a different
+  unit, which reads exactly like the audio engine having crashed. The last
+  thing a render does is drop non-finite samples, so the unit goes quiet
+  instead. This is containment, not a cure: an engine whose filter state has
+  latched NaN keeps producing it, and recovering that is the engine's own
+  business (`mussola.cc` re-initializes the offending voice).
+- **Parameter values are held to the range the header declares.**
+  `unit_set_param_value()` takes an `int32_t` and the firmware pushes a value
+  for every one of the 24 slots. The mappings cast it to `uint16_t`, so an
+  out-of-range value does not arrive small — it arrives *large*: −100 becomes
+  65436, and mussola's LFO Rate exponentiates its argument into a frequency,
+  which at 65436 is `+inf`, an infinite LFO phase, a NaN sine and NaN output
+  from then on.
+- **The target check does not read `unit_header`.** That is the one data
+  symbol `unit_exports.map` must keep exported, every drumlogue unit defines
+  it, and they all share one dynamic scope — so `unit_header.target` read from
+  inside `unit_init()` binds to the *first-loaded* unit's header. An FX unit
+  loaded after a synth then compares delfx against synth, fails its own target
+  check, and never initializes. The shipped binaries escape this only because
+  the SDK builds with `-flto` and the constant gets folded before a relocation
+  is emitted; a non-LTO build of the same sources reproduces it exactly.
+  `header.c` and both wrappers now use one `UNIT_OWN_TARGET` constant.
 
 **Forked engine sources (`eurorack-opt/`):**
 

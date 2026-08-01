@@ -17,6 +17,8 @@
  *   - unit_init/reset/param defaults/resume succeed
  *   - rendering is finite and in range while idle and while sounding
  *   - every parameter can be swept across its full range while rendering
+ *   - parameter values *outside* the declared range leave the output finite
+ *   - the note/gate/tempo/bend/pressure callbacks leave the output finite
  *   - partial buffers (frames < frames_per_buffer) are handled
  *   - peak stack usage of unit_render stays well inside an audio thread stack
  *
@@ -48,6 +50,12 @@ typedef void (*void_f)(void);
 typedef void (*render_f)(const float *, float *, uint32_t);
 typedef void (*setp_f)(uint8_t, int32_t);
 typedef void (*noteon_f)(uint8_t, uint8_t);
+typedef void (*noteoff_f)(uint8_t);
+typedef void (*gateon_f)(uint8_t);
+typedef void (*tempo_f)(uint32_t);
+typedef void (*bend_f)(uint16_t);
+typedef void (*pressure_f)(uint8_t);
+typedef void (*aftertouch_f)(uint8_t, uint8_t);
 typedef int32_t (*getp_f)(uint8_t);
 typedef const char *(*getstr_f)(uint8_t, int32_t);
 typedef const uint8_t *(*getbmp_f)(uint8_t, int32_t);
@@ -62,6 +70,14 @@ typedef struct {
   render_f render;
   setp_f setp;
   noteon_f noteon;
+  noteoff_f noteoff;
+  gateon_f gateon;
+  void_f gateoff;
+  void_f all_note_off;
+  tempo_f set_tempo;
+  bend_f pitch_bend;
+  pressure_f channel_pressure;
+  aftertouch_f aftertouch;
   getp_f getp;
   getstr_f getstr;
   getbmp_f getbmp;
@@ -148,6 +164,14 @@ static int load_unit(const char *path) {
   u->render = (render_f)dlsym(h, "unit_render");
   u->setp = (setp_f)dlsym(h, "unit_set_param_value");
   u->noteon = (noteon_f)dlsym(h, "unit_note_on");
+  u->noteoff = (noteoff_f)dlsym(h, "unit_note_off");
+  u->gateon = (gateon_f)dlsym(h, "unit_gate_on");
+  u->gateoff = (void_f)dlsym(h, "unit_gate_off");
+  u->all_note_off = (void_f)dlsym(h, "unit_all_note_off");
+  u->set_tempo = (tempo_f)dlsym(h, "unit_set_tempo");
+  u->pitch_bend = (bend_f)dlsym(h, "unit_pitch_bend");
+  u->channel_pressure = (pressure_f)dlsym(h, "unit_channel_pressure");
+  u->aftertouch = (aftertouch_f)dlsym(h, "unit_aftertouch");
   u->getp = (getp_f)dlsym(h, "unit_get_param_value");
   u->getstr = (getstr_f)dlsym(h, "unit_get_param_str_value");
   u->getbmp = (getbmp_f)dlsym(h, "unit_get_param_bmp_value");
@@ -267,6 +291,136 @@ static void exercise_unit(unit_t *u) {
       if (!isfinite(out[i])) nonfinite = 1;
   }
   CHECK(!nonfinite, "%s: partial buffers are finite", u->hdr->name);
+}
+
+/* ---- out-of-range parameter values ------------------------------------
+ *
+ * `unit_set_param_value()` takes an int32_t and the firmware pushes a value
+ * for every one of the 24 slots, so what a unit receives is not guaranteed to
+ * be inside the range it declared — a project recalled against a different
+ * unit's slot layout is the obvious way to be handed someone else's number.
+ * The units here cast that int32_t to uint16_t on the way to OSC_PARAM, so an
+ * out-of-range value does not arrive small, it arrives huge: -100 becomes
+ * 65436, and a parameter that exponentiates its argument turns that into
+ * +inf and every later sample into NaN.
+ *
+ * NaN is the failure that does not stay local.  The drumlogue's send effects
+ * are IIRs with feedback, so one NaN block silences the instrument until the
+ * effect is rebuilt — including after the user has moved to another unit,
+ * which is why this is worth a test of its own rather than a shrug about the
+ * firmware clamping.  See drumlogue_guards.h.
+ * ---------------------------------------------------------------------- */
+
+static int s_oor_phase;
+
+static int render_finite(unit_t *u, int blocks) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  int ok = 1;
+  for (int b = 0; b < blocks; ++b) {
+    fill_input(in, s_oor_phase);
+    s_oor_phase += FRAMES;
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES * 2; ++i)
+      if (!isfinite(out[i])) ok = 0;
+  }
+  return ok;
+}
+
+static void set_all_params(unit_t *u, int which) {
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    u->setp((uint8_t)p, which ? u->hdr->params[p].max : u->hdr->params[p].init);
+}
+
+static void probe_param_out_of_range(unit_t *u) {
+  static const int32_t kWild[] = {-100000, -1024, -257, -128, -1,
+                                  256,     1024,  65535, 65536, 100000};
+  const size_t nwild = sizeof(kWild) / sizeof(*kWild);
+  int nonfinite = 0;
+
+  if (u->is_synth && u->noteon) u->noteon(60, 100);
+
+  /* Every slot holding the same wild value: a project recalled against a
+   * different unit's slot layout, in its crudest form. */
+  for (size_t k = 0; k < nwild; ++k) {
+    for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
+      u->setp((uint8_t)p, kWild[k]);
+    if (!render_finite(u, 24)) nonfinite = 1;
+    set_all_params(u, 0);
+    (void)render_finite(u, 4);
+  }
+
+  /* One wild value at a time, against a background of every other parameter at
+   * its maximum.  The background matters: a bad value often only shows through
+   * a feature that is off at the defaults — mussola's LFO Rate, for instance,
+   * is exponentiated into a frequency, but nothing reads that frequency until
+   * LFO Shape and LFO Depth are non-zero. */
+  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p) {
+    for (size_t k = 0; k < nwild; ++k) {
+      set_all_params(u, 1);
+      if (u->is_synth && u->noteon) u->noteon(60, 100);
+      u->setp((uint8_t)p, kWild[k]);
+      /* A stuck LFO or filter state takes a few blocks to show, and what is
+       * being checked is the state left behind, not the block it landed in. */
+      if (!render_finite(u, 16)) nonfinite = 1;
+    }
+  }
+
+  /* Back to a known state, and confirm the unit still works afterwards. */
+  set_all_params(u, 0);
+  if (u->is_synth && u->noteon) u->noteon(60, 100);
+  if (!render_finite(u, 200)) nonfinite = 1;
+
+  CHECK(!nonfinite, "%s: out-of-range parameter values stay finite",
+        u->hdr->name);
+}
+
+/* ---- note / gate / tempo / expression callbacks ------------------------
+ *
+ * Everything the firmware can call that is not a parameter.  unit_set_tempo()
+ * in particular reaches real DSP state — the Rings arpeggiator derives its
+ * step length from it — and nothing else in this file calls it.
+ * ---------------------------------------------------------------------- */
+
+static void probe_event_callbacks(unit_t *u) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  static const uint32_t kTempos[] = {0, 1, 20u << 16, 120u << 16, 480u << 16,
+                                     0xFFFFFFFFu};
+  int nonfinite = 0;
+  int phase = 0;
+  unsigned seed = 7;
+
+  for (int step = 0; step < 400; ++step) {
+    seed = seed * 1103515245u + 12345u;
+    const unsigned r = seed >> 16;
+    switch (r % 8) {
+      case 0: if (u->noteon) u->noteon(r % 128, 1 + r % 127); break;
+      case 1: if (u->noteoff) u->noteoff(r % 128); break;
+      case 2: if (u->gateon) u->gateon(1 + r % 127); break;
+      case 3: if (u->gateoff) u->gateoff(); break;
+      case 4: if (u->all_note_off) u->all_note_off(); break;
+      case 5:
+        if (u->set_tempo)
+          u->set_tempo(kTempos[r % (sizeof(kTempos) / sizeof(*kTempos))]);
+        break;
+      case 6: if (u->pitch_bend) u->pitch_bend(r % 0x4000); break;
+      case 7:
+        if (u->channel_pressure) u->channel_pressure(r % 128);
+        if (u->aftertouch) u->aftertouch(r % 128, r % 128);
+        break;
+    }
+    fill_input(in, phase);
+    phase += FRAMES;
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES * 2; ++i)
+      if (!isfinite(out[i])) nonfinite = 1;
+  }
+
+  if (u->set_tempo) u->set_tempo(120u << 16);
+  if (u->all_note_off) u->all_note_off();
+  CHECK(!nonfinite, "%s: note/gate/tempo/expression callbacks stay finite",
+        u->hdr->name);
 }
 
 /* ---- UI / preset surface ----------------------------------------------
@@ -539,6 +693,12 @@ int main(int argc, char **argv) {
 
   printf("\n=== Density / grain scheduling ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_density(&s_units[i]);
+
+  printf("\n=== Out-of-range parameter values ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_param_out_of_range(&s_units[i]);
+
+  printf("\n=== Note / gate / tempo / expression callbacks ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_event_callbacks(&s_units[i]);
 
   printf("\n=== UI / preset callbacks ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_ui_surface(&s_units[i]);

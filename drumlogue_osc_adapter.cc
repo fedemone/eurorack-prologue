@@ -115,10 +115,13 @@ void osc_adapter_init(uint32_t platform, uint32_t api_version) {
 }
 
 void osc_adapter_teardown(void) {
+  /* Control thread, and the audio thread may still be inside a render that
+   * started before `initialized` went false — so the cursor pair is not ours
+   * to write here, for exactly the reason osc_adapter_reset() does not write
+   * it either.  Latch the flush; whoever renders next applies it, and
+   * osc_adapter_init() resets the pair outright before any render can run. */
   s_adapter.initialized = false;
-  s_render_rd     = 0;
-  s_render_avail  = 0;
-  s_flush_pending = 0;
+  s_flush_pending = 1;
 }
 
 void osc_adapter_reset(void) {

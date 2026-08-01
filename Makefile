@@ -318,6 +318,32 @@ test-arm:
 	$(QEMU_ARM) -L $(ARM_SYSROOT) ./test_drmlgunit_arm \
 	    $(foreach u,$(ARM_UNITS),drumlogue/$(u)/build/$(u).drmlgunit)
 
+# Benchmark: per-render cost distribution for the shipped .drmlgunit binaries,
+# measured through the drumlogue ABI at the buffer size the firmware asks for.
+# bench-clouds-spike benches the Clouds engine; this benches whole units, which
+# is the only scale on which two different units can be compared.
+# Usage: make bench-units [ARM_UNITS="rings mussola"] [BENCH_FRAMES=64]
+BENCH_FRAMES  ?= 64
+BENCH_RENDERS ?= 3000
+
+.PHONY: bench-units
+bench-units:
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP bench-units: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
+	@test -d $(SDK_COMMON) || \
+	    { echo "SKIP bench-units: run 'git submodule update --init logue-sdk'"; exit 0; }
+	@for u in $(ARM_UNITS); do \
+	    $(MAKE) -C drumlogue/$$u CROSS_COMPILE=arm-linux-gnueabihf- \
+	        USER_ID=0 GROUP_ID=0 \
+	        USE_COPT="$(ARM_UNIT_OPT)" \
+	        USE_CXXOPT="$(ARM_UNIT_OPT) -fno-threadsafe-statics" >/dev/null || exit 1; \
+	done
+	$(ARM_CC) -std=gnu11 -O2 -march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard \
+	    -I$(SDK_COMMON) bench_units.c -o bench_units_arm -ldl -lm
+	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_units_arm \
+	    -f $(BENCH_FRAMES) -n $(BENCH_RENDERS) \
+	    $(foreach u,$(ARM_UNITS),drumlogue/$(u)/build/$(u).drmlgunit)
+
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio
 # Usage: make bench
