@@ -37,6 +37,7 @@
 #include "unit.h"
 #include "attributes.h"
 #include "drumlogue_fpu.h"
+#include "drumlogue_guards.h"
 
 /* ===========================================================================
  * Module State
@@ -83,8 +84,11 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   if (!desc)
     return k_unit_err_undef;
 
-  /* Validate target platform (must match our header exactly) */
-  if (desc->target != unit_header.target)
+  /* Validate target platform (must match our header exactly).  Compared
+   * against the constant rather than unit_header.target: that read is
+   * interposable across the units sharing the address space.  See
+   * drumlogue_guards.h. */
+  if (desc->target != UNIT_OWN_TARGET)
     return k_unit_err_target;
 
   /* Validate API version (require 2.0.0+) */
@@ -286,6 +290,11 @@ void unit_render(const float *in, float *out, uint32_t frames) {
   }
 #endif
 
+  /* Nothing non-finite leaves the unit: a NaN reaching the drumlogue's send
+   * effects latches in their feedback lines and silences the instrument for
+   * good.  See drumlogue_guards.h. */
+  unit_drop_nonfinite(out, frames);
+
   fpu_end_audio(fpscr);
 }
 
@@ -431,6 +440,11 @@ static void set_base_note(int32_t value) {
 __unit_callback
 void unit_set_param_value(uint8_t id, int32_t value) {
   if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return;
+
+  /* The firmware pushes a value for every slot, and the mappings below cast
+   * to uint16_t — so an out-of-range value does not arrive small, it arrives
+   * huge.  Hold it to what the header declared.  See drumlogue_guards.h. */
+  value = unit_param_clamp(id, value);
 
   s_state.param_values[id] = value;
 

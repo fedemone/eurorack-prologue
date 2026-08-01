@@ -28,6 +28,7 @@
 #include "unit.h"
 #include "attributes.h"
 #include "drumlogue_fpu.h"
+#include "drumlogue_guards.h"
 
 /* CloudsFX engine entry points (clouds-fx.cc) */
 extern "C" {
@@ -64,8 +65,12 @@ int8_t unit_init(const unit_runtime_desc_t *desc) {
   if (!desc)
     return k_unit_err_undef;
 
-  /* Validate target platform (must match our header exactly: delfx) */
-  if (desc->target != unit_header.target)
+  /* Validate target platform (must match our header exactly: delfx).
+   * Compared against the constant rather than unit_header.target: that read
+   * is interposable across the units sharing the address space, and an FX
+   * unit loaded after a synth is exactly when it goes wrong.  See
+   * drumlogue_guards.h. */
+  if (desc->target != UNIT_OWN_TARGET)
     return k_unit_err_target;
 
   if (desc->api < k_unit_api_2_0_0)
@@ -139,6 +144,9 @@ void unit_render(const float *in, float *out, uint32_t frames) {
    * parameter smoothers decay straight into them.  See drumlogue_fpu.h. */
   const uint32_t fpscr = fpu_begin_audio();
   clouds_fx_process(in, out, frames);
+  /* An FX unit sits directly on the bus a NaN would poison, so this matters
+   * here even more than on a synth.  See drumlogue_guards.h. */
+  unit_drop_nonfinite(out, frames);
   fpu_end_audio(fpscr);
 }
 
@@ -181,6 +189,9 @@ __unit_callback void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
 __unit_callback
 void unit_set_param_value(uint8_t id, int32_t value) {
   if (!s_state.initialized || id >= UNIT_MAX_PARAM_COUNT) return;
+  /* Hold the value to the range the header declared.  See
+   * drumlogue_guards.h. */
+  value = unit_param_clamp(id, value);
   s_state.param_values[id] = value;
   clouds_fx_set_param(id, value);
 }

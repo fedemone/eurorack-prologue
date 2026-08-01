@@ -115,18 +115,17 @@
  */
 
 #include "unit.h"
+#include "drumlogue_guards.h"
 
 // ---- Unit header definition  ----------------------------------------------------------------
 
 const __unit_header unit_header_t unit_header = {
     .header_size = sizeof(unit_header_t),
-#if defined(CLOUDS_FX)
-    /* CloudsFX is an insert/delay effect: it processes the FX-bus audio
-     * input, which synth units ignore.  It must therefore be a delfx unit. */
-    .target = UNIT_TARGET_PLATFORM | k_unit_module_delfx,
-#else
-    .target = UNIT_TARGET_PLATFORM | k_unit_module_synth,
-#endif
+    /* UNIT_OWN_TARGET picks delfx for CloudsFX (an insert effect: it processes
+     * the FX-bus audio input, which synth units ignore) and synth for
+     * everything else.  The wrappers validate against the same macro rather
+     * than reading it back out of this struct; see drumlogue_guards.h. */
+    .target = UNIT_OWN_TARGET,
     .api = UNIT_API_VERSION,
     .dev_id = 0x46654465U,    /* 'FeDe' - https://github.com/fedemone/logue-sdk */
 

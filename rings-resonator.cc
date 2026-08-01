@@ -60,9 +60,57 @@ uint16_t p_values[k_num_user_osc_param_id] = {0};
 float shape = 0, shiftshape = 0;
 float shape_lfo = 0;
 
-/* Custom param indices beyond standard user_osc_param_id_t range */
+/* Model and Polyphony are latched here and applied on the audio thread.
+ *
+ * OSC_PARAM runs on the drumlogue's control thread, and Part::set_polyphony()
+ * / Part::set_model() re-seat state that Part::Process() is reading on the
+ * audio thread.  Polyphony is the dangerous one, because Process() reads it
+ * twice and derives an array index from the second read:
+ *
+ *     for (voice = 0; voice < polyphony_; ++voice)      // part.cc
+ *         ...
+ *         num_strings = 2 * kMaxPolyphony / polyphony_; // RenderStringVoice
+ *         i = voice + string * polyphony_;
+ *         String& s = string_[i];                       // string_[8]
+ *
+ * Those agree only as long as polyphony_ holds still.  Lower it between the
+ * loop bound and the divide — one parameter push while a note is sounding —
+ * and `i` runs past the end of string_[]: at polyphony_ 4 -> 1, voice 3 with
+ * num_strings 8 indexes string_[10] and *writes* to it.  That is a wild write
+ * on the audio thread, into an address space shared with every other loaded
+ * unit, and it is what took the audio engine down when Rings was selected.
+ *
+ * Latching the request and applying it at the top of OSC_CYCLE, before
+ * Part::Process() is entered, means the pair can only change between blocks.
+ * This is the same treatment clouds-granular.cc gives Mode and Quality, and
+ * for the same reason. */
+static volatile int32_t pending_model_     = RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
+static volatile int32_t pending_polyphony_ = 1;
+
+/* What the Part is currently configured for; audio thread only. */
 static uint16_t model_value = RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
 static uint16_t polyphony_value = 1;
+
+/* Rings reads its lookup tables with stmlib's Interpolate(table, x, N), which
+ * touches table[floor(x*N)] *and the element after it*.  The tables have N+1
+ * entries, so x must stay below 1.0: at exactly 1.0 the second read is one
+ * past the end.  Three of them are reachable from the panel — lut_stiffness
+ * and lut_4_decades from Structure and Damping in Resonator::ComputeFilters(),
+ * lut_fm_frequency_quantizer from Structure again in FMVoice::Process() — and
+ * Structure or Damping at 100% is one knob position, not a corner case.
+ *
+ * The overrun is benign arithmetically (the interpolation weight on the stray
+ * element is zero, since an integral index of N means a fractional part of
+ * zero) and the tables happen to be followed by more .rodata, so it reads
+ * neighbouring table data rather than faulting.  It is still a read past the
+ * end of an array on the audio thread, and the cost of not doing it is one
+ * 4096th of a knob's travel. */
+static const float kLutSafeMax = 1.0f - 1.0f / 4096.0f;
+
+static inline float clip_lut01f(float x) {
+  x = clip01f(x);
+  return (x > kLutSafeMax) ? kLutSafeMax : x;
+}
 
 /* ======================================================================
  * Arpeggiator
@@ -257,8 +305,12 @@ void OSC_INIT(uint32_t platform, uint32_t api)
    * parameter is effective out of the box.  Chord only affects this model
    * in the Rings DSP (Modal/String/FM ignore it), so defaulting to Modal
    * made the Chord knob appear to do nothing. */
-  part_.set_model(RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED);
-  part_.set_polyphony(1);
+  model_value        = RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
+  polyphony_value    = 1;
+  pending_model_     = model_value;
+  pending_polyphony_ = polyphony_value;
+  part_.set_model(static_cast<ResonatorModel>(model_value));
+  part_.set_polyphony(polyphony_value);
 
   patch_.structure  = 0.5f;
   patch_.brightness = 0.5f;
@@ -284,6 +336,21 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   arp_reset();
 
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
+
+  /* Part::Init() leaves the part dirty, and Part::ConfigureResonators() —
+   * which for the string models re-initializes all eight strings, clearing
+   * ~96 KB of delay line — runs from inside Part::Process().  Left alone that
+   * lands on the first audio block after the unit is selected, on top of the
+   * page faults a freshly dlopen()ed unit already pays there.  Same shape as
+   * the Clouds first-Prepare() problem, same treatment: spend it here, on the
+   * control thread, by rendering one block into the scratch buffers and
+   * throwing it away.  The parameter pushes that follow are what would
+   * otherwise dirty it again, and they carry the defaults set just above, so
+   * the latch below sees no change and costs nothing. */
+  part_.Process(performance_state_, patch_,
+                in_buffer_, out_buffer_, aux_buffer_, kMaxBlockSize);
+  std::fill(&out_buffer_[0], &out_buffer_[kMaxBlockSize], 0.0f);
+  std::fill(&aux_buffer_[0], &aux_buffer_[kMaxBlockSize], 0.0f);
 }
 
 void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t frames)
@@ -292,16 +359,32 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
   shape_lfo = q31_to_f32(params->shape_lfo);
 
+  /* Apply latched engine reconfiguration here, on the audio thread, before
+   * anything reads polyphony_ or model_.  See pending_* above. */
+  {
+    const int32_t want_model     = pending_model_;
+    const int32_t want_polyphony = pending_polyphony_;
+    if (want_model != (int32_t)model_value) {
+      model_value = (uint16_t)want_model;
+      part_.set_model(static_cast<ResonatorModel>(want_model));
+    }
+    if (want_polyphony != (int32_t)polyphony_value) {
+      polyphony_value = (uint16_t)want_polyphony;
+      part_.set_polyphony(want_polyphony);
+    }
+  }
+
   /* Pitch from adapter (note.fraction encoding) */
   performance_state_.note =
       ((float)(params->pitch >> 8)) +
       ((params->pitch & 0xFF) * k_note_mod_fscale);
 
-  /* Patch parameters */
+  /* Patch parameters.  Structure and Damping index lookup tables one element
+   * wider than their own top value; see kLutSafeMax. */
   patch_.position   = clip01f(shape);
-  patch_.structure  = clip01f(shiftshape);
+  patch_.structure  = clip_lut01f(shiftshape);
   patch_.brightness = clip01f(p_values[k_user_osc_param_id1] * 0.01f);
-  patch_.damping    = clip01f(p_values[k_user_osc_param_id2] * 0.01f);
+  patch_.damping    = clip_lut01f(p_values[k_user_osc_param_id2] * 0.01f);
 
   /* Chord from param */
   performance_state_.chord = p_values[k_user_osc_param_id3];
@@ -403,17 +486,17 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       shiftshape = param_val_to_f32(value);
       break;
 
-    /* Custom params passed by the wrapper */
+    /* Custom params passed by the wrapper.  Both reconfigure the Part, so
+     * they are only latched here and applied by OSC_CYCLE on the audio
+     * thread — see pending_* at the top of this file. */
     case 8: /* Model (0-5) */
-      model_value = value;
       if (value < RESONATOR_MODEL_LAST)
-        part_.set_model(static_cast<ResonatorModel>(value));
+        pending_model_ = value;
       break;
 
     case 9: /* Polyphony (1-4) */
-      polyphony_value = value;
       if (value >= 1 && value <= kMaxPolyphony)
-        part_.set_polyphony(value);
+        pending_polyphony_ = value;
       break;
 
     case 10: /* Arp Mode (0 = Off, 1..8 patterns) */
