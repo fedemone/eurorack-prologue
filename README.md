@@ -3,37 +3,39 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
-> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Spectral mode has hung the instrument
+> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is CPU-marginal
 >
-> **Seen on hardware:** **Mode 3 (Spectral)** on the `clouds` synth crackled
-> and, after a few seconds of continuous use, **froze the whole drumlogue —
-> the power cable had to be pulled.** `clouds_fx` no longer crashes, but its
-> CPU cost makes it hard to use in practice, and it was unstable in Spectral
-> and at Position 100% + Density 100%.
+> **The freeze is fixed. Spectral is still not comfortable to use.**
 >
-> The cause is measured, and it is **not** memory corruption: the phase
-> vocoder's FFT ran on the audio thread — where the original firmware ran it
-> in its idle loop — as one burst per hop costing about 4x a whole block's
-> budget, missing the deadline on 3.12% of blocks for as long as Spectral was
-> selected.
+> Spectral used to crackle and then **lock the whole drumlogue up within
+> seconds — the power cable had to be pulled.** Shrinking the phase vocoder's
+> FFT from 4096 to 512 points and splitting the stereo pair's two transforms
+> across the hop removed that: **re-tested on hardware, Spectral no longer
+> hangs the instrument.**
 >
-> **Two changes address it.** The FFT was shrunk from 4096 to 512 points, and
-> the stereo pair's two transforms — which upstream runs back to back in one
-> block — were split apart so they never land in the same host render.
-> Together they remove the overrun on both units in every measurement
-> available here: no render misses its deadline, and Spectral now costs
-> *less* than the modes that already work rather than several times more.
-> Spectral sounds markedly tighter and less smeared as a result — a 16 ms
-> analysis window instead of 128 ms — which is the real price; the split
-> itself is free, and leaves steady-state output bit-identical. **Neither has
-> been re-tested on hardware.** Until it has,
-> treat Spectral as suspect and do not use either unit in a live set or
-> anywhere an unrecoverable freeze would cost you something.
+> What hardware also says is that it is **still heavy, and audibly so — it
+> clicks.** Treat Mode 3 as a mode to use sparingly and deliberately:
 >
-> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware and are
-> unaffected by the change. So is every other oscillator in this repository.
-> Full analysis and measurements:
-> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+> - Expect clicks and dropouts, more so with other parts and effects running.
+> - **Avoid fast parameter changes while Spectral is playing.** This has not
+>   been seen to crash, but the margin is thin and knob sweeps are the obvious
+>   way to spend what is left of it.
+> - Do not use it in a live set, or anywhere a dropout would cost you
+>   something.
+>
+> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware
+> throughout and are unaffected. So is every other oscillator in this
+> repository.
+>
+> Why it is still heavy, in one line: the burst was the freeze, and the burst
+> is gone — but Spectral's *average* cost is now the binding constraint, and
+> the two FFTs and the per-bin spectral modifier are most of it. The
+> optimisations since are worth about 10%, which is not the order of magnitude
+> the problem needs. What would be — spreading a transform across several
+> audio blocks, or moving it to a worker thread — is written up with the
+> arithmetic in
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md),
+> along with the full measurements.
 
 **Platforms supported:**
 - Korg prologue
@@ -273,14 +275,11 @@ Clouds (based on Clouds)
 ----
 *Granular audio processor*
 
-> **⚠ Warning — Mode 3 (Spectral) froze the drumlogue at the previous FFT
-> size.** On hardware, Spectral crackled and then locked the instrument up
-> after a few seconds, recoverable only by unplugging the power. The cause was
-> a once-per-hop FFT burst on the audio thread costing ~4x a whole block's
-> budget. The FFT is now 512 points instead of 4096, and the stereo pair's two
-> transforms are spread across the hop rather than run back to back, which
-> together remove the overrun under measurement but **have not been re-tested
-> on hardware**. Modes 0-2 were unaffected throughout. See
+> **⚠ Warning — Mode 3 (Spectral) is CPU-marginal.** It used to freeze the
+> instrument; that is fixed and confirmed on hardware. It is still heavy
+> enough to click, and fast parameter changes while it plays are the thing
+> most likely to push it over. Modes 0-2 are unaffected. See the warning at
+> the top of this README and
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 Based on Mutable Instruments **Clouds**, a granular audio processor with four playback modes. Transforms incoming audio or internal oscillator into textural clouds, time-stretched drones, delays, and spectral freezes.
@@ -344,9 +343,13 @@ CloudsFX (Clouds as an insert effect)
 > picks up both Spectral fixes described at the top of this README — and the
 > second one, splitting the stereo pair's transforms across the hop, was
 > driven by this unit: it is the one whose deadline the FFT could not fit
-> inside. Untested on hardware, as there. The Position/Density instability is
-> a separate, undiagnosed issue: that setting measures 15.9% mean with zero
-> deadline misses, so the FFT burst does not explain it. Measurements in
+> inside. **Spectral is the most expensive thing either unit does, and
+> CloudsFX is the more expensive of the two** — it measures about half again
+> the synth's cost per render, because it resamples stereo in both directions
+> with the dry path included. Expect clicks in Mode 3 and avoid fast parameter
+> changes while it plays. The Position/Density instability is a separate,
+> undiagnosed issue: that setting measures 15.9% mean with zero deadline
+> misses, so the FFT burst does not explain it. Measurements in
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 >
 > Changing Mode, Quality or resetting the unit mutes it for 2-4 blocks while
@@ -654,6 +657,8 @@ make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
 make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
                                 # call vs upstream's loop, sample for sample
                                 # at every FFT size from 256 to 4096
+make test-clouds-cola           # STFT overlap-add reconstruction at hop ratio
+                                # 4, 2 and 1 -- what backs CLOUDS_PVOC_HOP_RATIO
 
 # Run the shipped .drmlgunit binaries on emulated ARM
 make test-arm

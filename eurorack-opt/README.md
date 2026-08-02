@@ -19,7 +19,7 @@ commit **58b9125**.
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
-| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop** | Spectral, stereo |
+| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; `CLOUDS_PVOC_HOP_RATIO` | Spectral, stereo |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 
 Why forked, and what changed
@@ -260,6 +260,45 @@ Two details are worth knowing before touching this code:
   blocks and the test measures no difference at all; it is visible only at
   2048 and 4096, where the gap is 8 or 16 blocks, and then only as a fraction
   of a percent of level.
+
+#### `CLOUDS_PVOC_HOP_RATIO` — the overlap, and the one lever worth a factor
+
+Hardware confirmed the smaller FFT removed the freeze and also said Spectral
+is still too heavy to be comfortable. Everything that could be shaved off it
+after that — skipping the identity warp polynomial, flattening the window LUT,
+vectorising the windowed I/O — measured between 1% and 5% each. The overlap is
+the only constant in the engine that changes the answer by a factor, because
+it changes how *often* a transform runs rather than how much one costs.
+`make bench-clouds-spike`, ARM under QEMU, per 32-sample engine block:
+
+| | Spectral mean | of which `Prepare()` | Spectral p99.9 |
+|---|---:|---:|---:|
+| `hop_ratio` 4 (upstream, default) | 16.15% | 13.33% | 55.45% |
+| `hop_ratio` 2 | **9.08%** | **6.45%** | 55.99% |
+
+-44% overall, -52% on the phase vocoder. The peak does not move, and should
+not: it is the same transform, half as often. The other three modes never
+touch the phase vocoder and do not move either.
+
+Reconstruction is unaffected, and that is measured rather than argued.
+The window is applied at analysis *and* synthesis, so the effective window is
+sine² = Hann, and Hann sums to exactly 1 at 50% overlap as it sums to 2 at
+75%; `inverse_window_size` in `stft.cc` is already derived from `hop_size_`,
+so the normalisation follows on its own. `make test-clouds-cola` drives the
+real STFT with the modifier disabled and measures the ripple of a steady tone:
+**0.62 dB at ratio 4 and 0.62 dB at ratio 2**, identical to two decimal
+places, against **9.48 dB at ratio 1** — the last being the control, without
+which a test that reported no ripple everywhere would look like a pass rather
+than a broken measurement.
+
+**The default stays at upstream's 4.** What halving the overlap costs is not
+reconstruction but phase-vocoder artifacts on *modified* spectra — fewer
+overlapping frames means less averaging in the phase reconstruction, so
+transients smear differently and heavy Warp/Quantize/Pitch settings get
+grainier. That is most of what Spectral is for, and Spectral's character has
+already been cut once by the 4096 → 512 change. Spending the rest of it is a
+decision about how the instrument should sound, not an optimisation to apply
+quietly. Build with `-DCLOUDS_PVOC_HOP_RATIO=2` to take it.
 
 ### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
 

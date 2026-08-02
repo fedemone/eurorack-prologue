@@ -104,6 +104,17 @@ that counts — and the change made in response.
 | `clouds_fx` | No longer crashes — the park handshake worked. But CPU is too high for the unit to be really usable, and the sound is unstable in Spectral and at Position 100% + Density 100%. |
 | `clouds` | Modes 0-2 fine. **Spectral crackles, and after a few seconds of continuous use the whole instrument freezes — recoverable only by unplugging the power.** |
 
+**Second hardware round, after the FFT was shrunk to 512 and the stereo pair
+split across the hop:**
+
+| Unit | Result |
+|------|--------|
+| `clouds` | **The freeze is gone.** Spectral no longer hangs the instrument. It is still heavy enough to click, and fast parameter changes while it plays are suspected — not observed — to be able to push it over. |
+
+That is the change working as designed and not being enough. See *The
+prediction, and what hardware said* below for what it moved and what it
+did not.
+
 ### It is not memory corruption
 
 That was the first hypothesis, because a hard hang usually means something
@@ -321,14 +332,118 @@ out of getting there and are recorded in `phase_vocoder.cc`:
   measures no difference; it appears only at 2048 and 4096, where the gap is
   8 or 16 blocks, and then as a fraction of a percent of level.
 
-### Still unconfirmed
+### The prediction, and what hardware said
 
-Everything above is QEMU. The prediction is specific and falsifiable: at 512
-with the split, on both units, Spectral's per-render cost distribution sits
-inside the range of the modes that already work on hardware — below them, in
-fact — and no render misses its deadline in 4000-8000 sample runs. If
-Spectral still misbehaves, the model is wrong somewhere and the worker thread
-is the next thing to try.
+The prediction was specific and falsifiable: at 512 with the split, on both
+units, Spectral's per-render cost distribution sits inside the range of the
+modes that already work on hardware — below them, in fact — and no render
+misses its deadline in 4000-8000 sample runs. If Spectral still misbehaves,
+the model is wrong somewhere and the worker thread is the next thing to try.
+
+**Hardware verdict: half right.**
+
+| Claim | Result |
+|-------|--------|
+| The instrument no longer freezes in Spectral | **Confirmed.** The hang is gone. |
+| Spectral is comfortable to run | **False.** Still heavy, and it clicks. |
+
+So the burst model was right about the *freeze* and wrong about what was
+left over. That distinction is worth being precise about, because it changes
+what to optimise next:
+
+- **The burst was the freeze.** 3.12% of blocks missing their deadline,
+  forever, is what wedged the audio thread, and removing it removed the hang.
+  Nothing since has contradicted that.
+- **The mean is now the binding constraint.** Post-fix, measured per whole
+  64-frame render with `make bench-units`: Spectral costs 20.3% mean on the
+  synth and 32.0% on the FX, with p99.9 at 53.8% and 85.8% and *no* renders
+  over deadline. On this harness Spectral now looks fine. Hardware says
+  otherwise, and the discrepancy is the point — the harness measures a unit
+  alone against the whole buffer period, and on a real drumlogue the unit is
+  sharing that period with eleven other parts, the master effects, the
+  sequencer and the UI. A unit at 32% of the *whole* deadline can be well
+  over its actual share.
+
+That reframes the target. Until now the job was to flatten a spike; now it is
+to cut total work, and the two are not optimised the same way. Peak-shaving
+changes (a smaller FFT, spreading transforms) barely move a mean; the mean
+only comes down by doing less arithmetic, or by doing it somewhere else.
+
+### Where the time actually goes
+
+Per `STFT::Buffer()` call, ARM under QEMU, fft_size 512, unit defaults —
+relative shares, not absolute times:
+
+| Phase | µs | share |
+|-------|---:|------:|
+| FFT forward | 127.4 | 32% |
+| `FrameTransformation::Process` | 137.9 | 35% |
+| FFT inverse | 101.3 | 26% |
+| window in | 8.1 | 2% |
+| window out | 20.8 | 5% |
+
+and inside `FrameTransformation`, at the unit defaults (240 bins):
+
+| Step | µs | note |
+|------|---:|------|
+| `RectangularToPolar` | 36.8 | `fast_atan2r` per bin — LUT plus a Carmack rsqrt |
+| `WarpMagnitudes` | 18.6 | **the polynomial is the identity at Size 50%** |
+| `StoreMagnitudes` | 10.1 | |
+| `SetPhases` | 8.8 | unchanged by phase randomization; the cost is the first loop |
+| `PolarToRectangular` | 6.3 | `fast_p2r` per bin |
+| `ReplayMagnitudes` | 3.8 | |
+| `ShiftMagnitudes` | 1.3 | at pitch ratio 1, two copies |
+| `QuantizeMagnitudes` | 0.2 | Texture 50% lands in its dead band, already skipped |
+
+Two things that look like easy wins and are not, recorded so they are not
+tried again:
+
+- **Skipping the phase-randomization loop when its amount is zero.** It is
+  zero at the default Density, and it is 240 RNG calls that add zero. It also
+  costs nothing measurable: `SetPhases` is 8.84 µs with randomization off and
+  8.47 µs with it on. The cost is the first loop, not the second.
+- **A cheaper `fast_atan2r`.** It is the single largest step, but the LUT
+  lookup is a per-bin gather, which ARMv7 NEON cannot do, and the parts that
+  *would* vectorise are the rsqrt — which changes every magnitude in the
+  spectrum and so cannot be done without changing the output.
+
+### What is left, and what it would cost
+
+Ranked by what they would actually buy, since the incremental work above is
+worth about 10% in total and the problem is bigger than that:
+
+1. **Halve the overlap** (`hop_ratio` 4 → 2 in `PhaseVocoder::Init`). Halves
+   the number of transforms, and so halves nearly all of Spectral's cost —
+   the only change here in the right order of magnitude. It is COLA-correct:
+   the window is applied at both analysis and synthesis, so the effective
+   window is sine² = Hann, and Hann at 50% overlap sums to exactly 1; the
+   normalisation in `stft.cc` is already derived from `hop_size_`. The price
+   is phase-vocoder artifacts on *modified* spectra, which is most of what
+   Spectral is for. Unmodified pass-through stays exact. **Not taken here:**
+   Spectral's character has already been cut once, by the 4096 → 512 change,
+   and spending the rest of it is a decision for whoever plays the thing, not
+   a change to slip in under "optimisation".
+2. **Spread one transform across several audio blocks.** `STFT::Buffer()` is
+   five sequential phases and the hop carries four engine blocks of slack, so
+   a stage machine could run window-in + forward FFT in one call, the
+   modifier in the next, the inverse and window-out in a third. This attacks
+   the peak, not the mean — worth less now than it would have been before the
+   FFT shrank. It also needs per-channel scratch: `PhaseVocoder::Init`
+   allocates one `fft_buffer`/`ifft_buffer` pair shared by both channels
+   (8 KB more), and the shared top-16-bin residue documented in
+   `phase_vocoder.cc` is load-bearing, so the change is not as local as it
+   looks.
+3. **A worker thread.** Still the architecturally correct answer, still
+   unverifiable from here: it needs `pthread_create` inside a drumlogue unit,
+   and if the firmware does not tolerate that the failure mode is a hang
+   indistinguishable from the one just fixed. Now testable in principle,
+   since there is hardware in the loop — but it should be tried on its own,
+   not folded into another change.
+
+CloudsFX's instability at POSITION 100 % + DENSITY 100 % is still
+undiagnosed and is a separate matter from the FFT burst: that setting
+measures 15.9 % mean with no deadline misses, so nothing in this analysis
+explains it.
 
 CloudsFX's instability at POSITION 100 % + DENSITY 100 % is still
 undiagnosed and is a separate matter from the FFT burst: that setting
