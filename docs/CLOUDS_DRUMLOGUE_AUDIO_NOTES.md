@@ -1,22 +1,26 @@
 Clouds on drumlogue — audio-thread notes
 ========================================
 
-> ## ⚠ Spectral mode hung the drumlogue; a fix is in but unconfirmed
+> ## ⚠ Spectral hung the drumlogue. That is fixed. It is still CPU-marginal.
 >
-> **Was confirmed on hardware:** `clouds` in **Mode 3 (Spectral)** crackled
-> and, after a few seconds of continuous use, **froze the whole instrument,
-> recoverable only by a power-cycle.** `clouds_fx` no longer crashes but is
-> expensive, and was unstable in Spectral and at Position 100% + Density 100%.
+> **Round one, on hardware:** `clouds` in **Mode 3 (Spectral)** crackled and,
+> after a few seconds of continuous use, **froze the whole instrument,
+> recoverable only by a power-cycle.** The cause is measured, and is **not
+> memory corruption** — it is the phase vocoder's FFT running on the audio
+> thread as one burst per hop, missing the deadline on 3.12% of blocks for as
+> long as Spectral was selected. Two changes address it: the FFT was shrunk
+> from upstream's 4096 to 512, and the stereo pair's two transforms were split
+> apart so they no longer land in the same host render.
 >
-> The cause is measured, and is **not memory corruption** — it is the phase
-> vocoder's FFT running on the audio thread as one burst per hop. Two changes
-> address it: the FFT was shrunk from upstream's 4096 to 512, and the stereo
-> pair's two transforms were split apart so they no longer land in the same
-> host render. Together they remove the structural deadline overrun on both
-> units in every measurement available here, with Spectral now costing *less*
-> than the modes that already work. **Neither has been checked on hardware**,
-> so treat Spectral as suspect until it has been. See
-> [Hardware results and the FFT size](#hardware-results-and-the-fft-size).
+> **Round two, on hardware: the freeze is gone, and Spectral still clicks.**
+> The burst model was right about the hang and did not account for what was
+> left. The binding constraint is now Spectral's *average* cost, not its peak,
+> and the two are not optimised the same way — see
+> [The prediction, and what hardware said](#the-prediction-and-what-hardware-said).
+>
+> Treat Mode 3 as usable only sparingly: expect clicks, avoid fast parameter
+> changes while it plays, do not use it live. Modes 0-2 have been fine on
+> hardware throughout.
 
 Working notes from debugging audio dropouts ("audio interface crash") in the
 `clouds` synth unit and the `clouds_fx` insert effect on real hardware.
@@ -30,8 +34,8 @@ turned out to be wrong.
 
 | Unit | State |
 |------|-------|
-| `clouds` (synth) | Modes 0-2 working on hardware. Mode 3 (Spectral) hung the instrument at FFT size 4096; now 512, which fits the deadline under QEMU but is **unconfirmed on hardware**. |
-| `clouds_fx` (delfx) | Crash **fixed** on hardware. CPU cost high; was unstable in Spectral and at Position 100% + Density 100%. Shares the engine fork, so it gets the smaller FFT — and needed it: 1024 was enough for the synth but not for this unit. |
+| `clouds` (synth) | Modes 0-2 working on hardware. Mode 3 (Spectral) hung the instrument at FFT size 4096; at 512 the **hang is fixed, confirmed on hardware**, but the mode is still heavy enough to click. Stretch now has the thinnest margin of the four. |
+| `clouds_fx` (delfx) | Crash **fixed** on hardware. CPU cost high; was unstable in Spectral and at Position 100% + Density 100%. Shares the engine fork, so it gets the smaller FFT — and needed it: 1024 was enough for the synth but not for this unit. Roughly 1.5x the synth's cost per render. |
 
 ---
 
@@ -59,6 +63,13 @@ Two harnesses, and it matters which one a number came from:
   output sample for sample, at every FFT size. What makes a scheduling change
   safe to make is that it changes nothing audible, and that is a correctness
   question, not a performance one.
+- **Per-unit** (`bench_units.c`, `make bench-units`): dlopens the shipped
+  `.drmlgunit` binaries and times whole `unit_render()` calls at the buffer
+  size the firmware asks for, reporting the same distribution. It is a level
+  above the others — the number includes the wrapper, the adapter's block
+  buffering and every reconfiguration a unit does on the audio thread — and
+  it is the only scale on which two *different* units can be compared.
+  `-p Name=Value` sets a parameter first, which is how a mode is selected.
 - **End-to-end** (`bench_cycle.cc`, `bench_fx.cc`): times whole `OSC_CYCLE`
   calls in pairs, and whole 64-frame FX renders,
   because the drumlogue asks the adapter for 64 frames and the adapter fills
@@ -445,10 +456,56 @@ undiagnosed and is a separate matter from the FFT burst: that setting
 measures 15.9 % mean with no deadline misses, so nothing in this analysis
 explains it.
 
-CloudsFX's instability at POSITION 100 % + DENSITY 100 % is still
-undiagnosed and is a separate matter from the FFT burst: that setting
-measures 15.9 % mean with no deadline misses, so nothing in this analysis
-explains it.
+
+### Stretch now has the worst tail, and it is `LoadCorrelator`
+
+With Spectral's burst gone, Mode 1 is the mode with the thinnest margin left.
+Per whole 64-frame render, three runs of 6000 each, with Granular as the
+control:
+
+| Mode | mean | p99 | p99.9 | over deadline |
+|------|-----:|----:|------:|--------------:|
+| Stretch, `clouds` | 15.7-15.9% | 55-60% | 88-93% | 0.02-0.07% |
+| Stretch, `clouds_fx` | 24.0-24.3% | 65-67% | 98-102% | 0.07-0.10% |
+| *Granular, `clouds`, control* | *19.3-19.7%* | *42-49%* | *59-64%* | *0.00-0.02%* |
+
+The tail is real and repeatable -- consistently about 1.5x the control's --
+but the over-deadline column sits close enough to the control's own floor
+that it should not be read as 0.07% of renders being dropped.
+
+`Prepare()` in Stretch does two things, and taking each away in turn says
+which one is the burst:
+
+| Build | `Prepare()` mean | `Prepare()` worst |
+|-------|-----------------:|------------------:|
+| stock | 3.25% | 63.67% |
+| without `EvaluateSomeCandidates()` | 1.94% | 47.46% |
+| without `LoadCorrelator()` | 0.13% | 7.91% |
+
+`LoadCorrelator()` is it. It packs sign bits for a `window_size_` source
+window and a `2 * window_size_` destination window in one call -- up to 6144
+interpolated buffer reads, doubled for stereo -- in whichever block follows a
+window being scheduled. `EvaluateSomeCandidates()` is already incremental and
+costs almost nothing on average; upstream sized it that way deliberately.
+
+**A reorder was tried and rejected.** `EvaluateNextCandidate()` returns
+immediately once `done_`, so moving the candidate batch *before*
+`LoadCorrelator()` -- guarded by `if (!correlator_.done())` -- makes the block
+that packs the windows never also run a batch. Measured, that takes Stretch's
+p99.9 from 49.4% to 38.5% of the engine block deadline, about a fifth off the
+tail, for three lines and no new state.
+
+It was not taken because it is not free: the search then finishes one block
+later, and at small window sizes there are not many blocks between one window
+and the next. Rendered output is bit-identical at Size 50% and 90% and
+**differs at Size 20%** (0.28% RMS), where the extra block is enough for
+`best_match()` to be read before the search completes and WSOLA settles for a
+worse alignment. That is a sound change, in a mode nobody has reported a
+problem with, to improve a number near the measurement floor. Recorded so the
+trade is known rather than re-derived.
+
+Splitting `LoadCorrelator()` itself across blocks is the version worth
+having, and it needs `wsola_sample_player.h` forked.
 
 ---
 
