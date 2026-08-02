@@ -18,7 +18,12 @@
  *
  * Build for ARMv7-A and run under qemu-arm; see `make bench-units`.
  *
- * Usage: bench_units [-f frames] [-n renders] <unit.drmlgunit> [more units...]
+ * Usage: bench_units [-f frames] [-n renders] [-p Name=Value ...]
+ *                    <unit.drmlgunit> [more units...]
+ *
+ * -p sets a parameter by its header name before the run, and is how a mode is
+ * selected: `-p Mode=3` benches Spectral.  Names that a given unit does not
+ * have are ignored, so one command line can cover several units.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -60,6 +65,21 @@ static double now_us(void) {
   return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
 }
 
+#define MAX_OVERRIDES 16
+static struct {
+  const char *name;
+  int32_t value;
+} s_overrides[MAX_OVERRIDES];
+static int s_num_overrides;
+
+/* Apply the -p overrides that this unit actually has a parameter for. */
+static void apply_overrides(const unit_header_t *hdr, setp_f setp) {
+  for (int i = 0; i < s_num_overrides; ++i)
+    for (uint32_t p = 0; p < hdr->num_params; ++p)
+      if (!strcmp(hdr->params[p].name, s_overrides[i].name))
+        setp((uint8_t)p, s_overrides[i].value);
+}
+
 int main(int argc, char **argv) {
   unsigned frames = 64;
   unsigned renders = 4000;
@@ -68,6 +88,18 @@ int main(int argc, char **argv) {
   while (arg < argc && argv[arg][0] == '-') {
     if (!strcmp(argv[arg], "-f") && arg + 1 < argc) frames = atoi(argv[++arg]);
     else if (!strcmp(argv[arg], "-n") && arg + 1 < argc) renders = atoi(argv[++arg]);
+    else if (!strcmp(argv[arg], "-p") && arg + 1 < argc) {
+      char *spec = argv[++arg];
+      char *eq = strchr(spec, '=');
+      if (!eq || s_num_overrides >= MAX_OVERRIDES) {
+        fprintf(stderr, "bad -p (want Name=Value): %s\n", spec);
+        return 2;
+      }
+      *eq = '\0';
+      s_overrides[s_num_overrides].name = spec;
+      s_overrides[s_num_overrides].value = atoi(eq + 1);
+      ++s_num_overrides;
+    }
     else { fprintf(stderr, "unknown option %s\n", argv[arg]); return 2; }
     ++arg;
   }
@@ -144,6 +176,7 @@ int main(int argc, char **argv) {
     if (f_reset) f_reset();
     for (uint32_t i = 0; i < UNIT_MAX_PARAM_COUNT; ++i)
       f_setp((uint8_t)i, hdr->params[i].init);
+    apply_overrides(hdr, f_setp);
     if (f_resume) f_resume();
 
     for (unsigned i = 0; i < frames; ++i) {

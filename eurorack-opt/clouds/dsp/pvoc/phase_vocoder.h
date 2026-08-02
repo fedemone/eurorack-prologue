@@ -108,12 +108,50 @@ struct Parameters;
 #define CLOUDS_PVOC_ROUND_ROBIN 1
 #endif
 
+// Analysis/synthesis overlap: hop_size = fft_size / CLOUDS_PVOC_HOP_RATIO.
+// Upstream is 4 (75% overlap) and that is the default here.
+//
+// This is the only lever in the engine that changes Spectral's cost by a
+// factor rather than a few percent, because it changes how *often* a
+// transform runs rather than how much one costs.  Measured with
+// `make bench-clouds-spike`, ARM under QEMU, per 32-sample engine block:
+//
+//   hop_ratio 4:  Spectral mean 16.15%,  of which Prepare() 13.33%
+//   hop_ratio 2:  Spectral mean  9.08%,  of which Prepare()  6.45%
+//
+// -44% overall and -52% on the phase vocoder itself.  The peak is unchanged
+// (p99.9 stays ~55%) — it is the same transform, just half as many of them —
+// and the other three modes do not use the phase vocoder at all, so they do
+// not move.
+//
+// Reconstruction does not suffer.  The window is applied at both analysis and
+// synthesis, so the effective window is sine squared = Hann, and Hann sums to
+// exactly 1 at 50% overlap just as it sums to 2 at 75%; `inverse_window_size`
+// in stft.cc is already derived from hop_size_, so the normalisation follows.
+// `make test-clouds-cola` measures it rather than taking the algebra's word
+// for it: the reconstruction ripple of a swept sine is 0.62 dB at both ratio
+// 4 and ratio 2, and 9.48 dB at ratio 1 — the last being the control that
+// shows the test can see a COLA failure at all.
+//
+// What it does cost is phase-vocoder artifacts on *modified* spectra, which
+// is most of what Spectral is for: fewer overlapping frames means less
+// averaging of the phase reconstruction, so transients smear differently and
+// heavy Warp/Quantize/Pitch settings get grainier.  Pass-through is
+// unaffected.  That is a judgement about how the instrument should sound, not
+// a correctness question, which is why the default stays at upstream's 4.
+#ifndef CLOUDS_PVOC_HOP_RATIO
+#define CLOUDS_PVOC_HOP_RATIO 4
+#endif
+
+STATIC_ASSERT(CLOUDS_PVOC_HOP_RATIO == 2 || CLOUDS_PVOC_HOP_RATIO == 4,
+              clouds_pvoc_hop_ratio_must_be_2_or_4);
+
 // The hop must be longer than one audio block, or there is no room to spread
 // the channels into and a deferred window would be overwritten before it is
 // read.  Init() divides the hop by the channel count to get the spacing, so
-// this is also what keeps that spacing from rounding to zero.  hop_size is
-// fft_size / hop_ratio, with hop_ratio fixed at 4 in Init().
-STATIC_ASSERT(!CLOUDS_PVOC_ROUND_ROBIN || (kMaxFftSize / 4) > kMaxBlockSize,
+// this is also what keeps that spacing from rounding to zero.
+STATIC_ASSERT(!CLOUDS_PVOC_ROUND_ROBIN ||
+                  (kMaxFftSize / CLOUDS_PVOC_HOP_RATIO) > kMaxBlockSize,
               clouds_pvoc_hop_too_short_for_round_robin);
 
 class PhaseVocoder {

@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -251,6 +251,24 @@ test-clouds-pvoc-rr:
 	 if [ $$fail -ne 0 ]; then echo "=== FAILURES ==="; exit 1; fi; \
 	 echo "=== ALL PASS (0 failures) ==="
 
+# Overlap-add reconstruction test: drives the real STFT with the modifier
+# disabled and measures the ripple of a steady tone, at hop ratio 4, 2 and 1.
+# This is what backs CLOUDS_PVOC_HOP_RATIO -- halving the overlap halves most
+# of Spectral's cost, and the reason that is safe is a COLA argument worth
+# measuring rather than believing.  Ratio 1 is the control.
+# Usage: make test-clouds-cola
+test-clouds-cola:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_cola.cc \
+	    eurorack/clouds/dsp/pvoc/stft.cc \
+	    eurorack/clouds/dsp/pvoc/frame_transformation.cc \
+	    eurorack/clouds/resources.cc \
+	    eurorack/stmlib/dsp/units.cc \
+	    eurorack/stmlib/dsp/atan.cc \
+	    eurorack/stmlib/utils/random.cc \
+	    -o test_clouds_cola -lm
+	./test_clouds_cola
+
 # FFT tests: the interface contract (split layout, sign convention,
 # unnormalised scaling) and the vectorised butterfly against upstream's scalar
 # one.  Runs on the host, and under QEMU if the ARM toolchain is present --
@@ -270,7 +288,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

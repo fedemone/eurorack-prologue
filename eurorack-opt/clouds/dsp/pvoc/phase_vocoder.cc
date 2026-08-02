@@ -58,7 +58,7 @@ void PhaseVocoder::Init(
   since_service_ = 0;
 
   size_t fft_size = largest_fft_size;
-  size_t hop_ratio = 4;
+  size_t hop_ratio = CLOUDS_PVOC_HOP_RATIO;  // see the header for the trade
 
   // How many Buffer() calls to leave between one channel's transform and the
   // next, so a hop's transforms are spread over the hop instead of bunched.
