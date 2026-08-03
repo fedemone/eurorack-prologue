@@ -109,7 +109,9 @@ struct Parameters;
 #endif
 
 // Analysis/synthesis overlap: hop_size = fft_size / CLOUDS_PVOC_HOP_RATIO.
-// Upstream is 4 (75% overlap) and that is the default here.
+// Upstream is 4 (75% overlap); this port runs 2 (50% overlap), taken
+// deliberately after hardware reported Spectral still clicking with the
+// smaller FFT in place.
 //
 // This is the only lever in the engine that changes Spectral's cost by a
 // factor rather than a few percent, because it changes how *often* a
@@ -137,10 +139,14 @@ struct Parameters;
 // is most of what Spectral is for: fewer overlapping frames means less
 // averaging of the phase reconstruction, so transients smear differently and
 // heavy Warp/Quantize/Pitch settings get grainier.  Pass-through is
-// unaffected.  That is a judgement about how the instrument should sound, not
-// a correctness question, which is why the default stays at upstream's 4.
+// unaffected.  That is a judgement about how the instrument should sound
+// rather than a correctness question, and the judgement made here is that a
+// mode which clicks is worth less than a mode which is grainier: Spectral on
+// this port is already not upstream's effect, and being usable matters more
+// than the last of the smoothing.  Build with -DCLOUDS_PVOC_HOP_RATIO=4 to
+// get upstream's overlap back, at upstream's cost.
 #ifndef CLOUDS_PVOC_HOP_RATIO
-#define CLOUDS_PVOC_HOP_RATIO 4
+#define CLOUDS_PVOC_HOP_RATIO 2
 #endif
 
 STATIC_ASSERT(CLOUDS_PVOC_HOP_RATIO == 2 || CLOUDS_PVOC_HOP_RATIO == 4,

@@ -13,29 +13,35 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > across the hop removed that: **re-tested on hardware, Spectral no longer
 > hangs the instrument.**
 >
-> What hardware also says is that it is **still heavy, and audibly so — it
-> clicks.** Treat Mode 3 as a mode to use sparingly and deliberately:
+> What hardware also said is that it was **still heavy, and audibly so — it
+> clicked.** The response was to halve the phase vocoder's overlap, which
+> halves how often it transforms at all. Measured per render, that took
+> Spectral from 20.3% to **13.6%** on the synth and 32.0% to **23.9%** on the
+> FX — on the synth it is now the *second cheapest* of the four modes rather
+> than the most expensive. Reconstruction is unaffected and measured
+> (`make test-clouds-cola`); what it costs is a grainier, less smoothed sound
+> on heavily modified spectra, which is a deliberate trade.
 >
-> - Expect clicks and dropouts, more so with other parts and effects running.
+> **That build has not been back to hardware.** Until it has, still treat
+> Mode 3 as a mode to use deliberately:
+>
+> - Expect clicks may remain, more so with other parts and effects running.
 > - **Avoid fast parameter changes while Spectral is playing.** This has not
->   been seen to crash, but the margin is thin and knob sweeps are the obvious
->   way to spend what is left of it.
+>   been seen to crash, but the margin was thin and knob sweeps are the
+>   obvious way to spend what is left of it.
 > - Do not use it in a live set, or anywhere a dropout would cost you
 >   something.
 >
 > Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware
-> throughout and are unaffected. So is every other oscillator in this
-> repository.
+> throughout. Stretch has since had its own burst — the WSOLA correlator's
+> window load — split across two blocks, which cuts its worst case at large
+> Size settings and leaves output bit-identical. Every other oscillator in
+> this repository is unaffected by all of it.
 >
-> Why it is still heavy, in one line: the burst was the freeze, and the burst
-> is gone — but Spectral's *average* cost is now the binding constraint, and
-> the two FFTs and the per-bin spectral modifier are most of it. The
-> optimisations since are worth about 10%, which is not the order of magnitude
-> the problem needs. What would be — spreading a transform across several
-> audio blocks, or moving it to a worker thread — is written up with the
-> arithmetic in
-> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md),
-> along with the full measurements.
+> Full measurements, and the two structural options still on the table (a
+> transform spread across several audio blocks, or moved to a worker thread),
+> are in
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 **Platforms supported:**
 - Korg prologue
@@ -324,7 +330,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 - Mode 1 (Stretch) and Mode 3 (Spectral) are the expensive modes. Both do their work in `Prepare()`, which the original firmware runs in its idle loop and this port runs on the audio thread, so it arrives as a burst rather than as steady load. Running the engine at 32 kHz (see below) cut Stretch by 17% and Spectral by 27% and made the bursts a third less frequent, but did not remove them; Modes 0 (Granular) and 2 (Looping Delay) have no burst at all. **Spectral's burst is what hung the instrument** — its average cost is only ~10% of the block budget, but nearly all of it landed in one block per hop, measuring ~4x the budget for that block. Shrinking the FFT from 4096 to 512 points brought that under the deadline; Stretch's burst is the correlator, not the FFT, and is untouched. See [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
 - The engine runs at Clouds' native 32 kHz, converted to and from the drumlogue's 48 kHz at the edges. Size, delay times and the buffer's capacity are therefore 1.5x longer in real time than earlier builds — that is what the hardware sounds like — and the buffer takes 1.5x longer to fill, so give a fresh voice a moment before high Position settings have material. Pitch is unchanged. The top end rolls off above 13 kHz, roughly like Clouds' own codec
 - Reverb at 0% and Texture at or below 75% are now genuinely free: the engine used to run its reverb and diffuser every block whatever the knobs said, and the fork in `eurorack-opt/` skips them when their amount is zero. Together with the 32 kHz change that is about a third off every mode. Turning Reverb up from 0 starts the tail from silence rather than releasing the history the stock engine had been quietly accumulating
-- Mode 3 (Spectral) now runs a 512-point FFT instead of 4096, so its analysis window is 16 ms rather than 128 ms at the engine's 32 kHz: much tighter and more transient, with little of the long smeared freeze left. This was done to keep the per-hop FFT burst inside the audio deadline — at 4096 it hung the instrument, and 1024 was enough for the synth but not for CloudsFX. Two side effects worth knowing: **Position now works in Spectral**, where it previously did nothing at all (the old FFT size left room for only one magnitude texture, and Position indexes between textures), and the whole mode got slightly cheaper on average as well. In stereo the two channels' transforms are also spread across the hop instead of running back to back, which halves the remaining peak without changing the sound at all. A synth-only build can raise `CLOUDS_FFT_SIZE` to 1024 in `eurorack-opt/clouds/dsp/pvoc/stft.h` and get the longer window back — with the split in place it clears the synth's deadline comfortably
+- Mode 3 (Spectral) now runs a 512-point FFT instead of 4096, so its analysis window is 16 ms rather than 128 ms at the engine's 32 kHz: much tighter and more transient, with little of the long smeared freeze left. It also runs at 50% overlap instead of upstream's 75%, halving how often it transforms — that is what took it from the most expensive mode to the second cheapest, and it costs some smoothness on heavily modified spectra. Reconstruction of an unmodified signal is unaffected This was done to keep the per-hop FFT burst inside the audio deadline — at 4096 it hung the instrument, and 1024 was enough for the synth but not for CloudsFX. Two side effects worth knowing: **Position now works in Spectral**, where it previously did nothing at all (the old FFT size left room for only one magnitude texture, and Position indexes between textures), and the whole mode got slightly cheaper on average as well. In stereo the two channels' transforms are also spread across the hop instead of running back to back, which halves the remaining peak without changing the sound at all. A synth-only build can raise `CLOUDS_FFT_SIZE` to 1024 in `eurorack-opt/clouds/dsp/pvoc/stft.h` and get the longer window back — with the split in place it clears the synth's deadline comfortably
 - Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
 - Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
 - Feedback > 70% creates self-oscillating loops — use with care
