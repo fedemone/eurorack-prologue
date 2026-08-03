@@ -423,17 +423,23 @@ tried again:
 Ranked by what they would actually buy, since the incremental work above is
 worth about 10% in total and the problem is bigger than that:
 
-1. **Halve the overlap** (`hop_ratio` 4 → 2 in `PhaseVocoder::Init`). Halves
-   the number of transforms, and so halves nearly all of Spectral's cost —
-   the only change here in the right order of magnitude. It is COLA-correct:
-   the window is applied at both analysis and synthesis, so the effective
-   window is sine² = Hann, and Hann at 50% overlap sums to exactly 1; the
-   normalisation in `stft.cc` is already derived from `hop_size_`. The price
-   is phase-vocoder artifacts on *modified* spectra, which is most of what
-   Spectral is for. Unmodified pass-through stays exact. **Not taken here:**
-   Spectral's character has already been cut once, by the 4096 → 512 change,
-   and spending the rest of it is a decision for whoever plays the thing, not
-   a change to slip in under "optimisation".
+1. **Halve the overlap** (`CLOUDS_PVOC_HOP_RATIO` 4 → 2). Halves the number
+   of transforms, and so halves nearly all of Spectral's cost — the only
+   change here in the right order of magnitude. **Taken**, after hardware
+   reported Spectral still clicking. It is COLA-correct: the window is applied
+   at both analysis and synthesis, so the effective window is sine² = Hann,
+   and Hann at 50% overlap sums to exactly 1; the normalisation in `stft.cc`
+   is already derived from `hop_size_`. `make test-clouds-cola` measures that
+   rather than trusting the algebra — 0.62 dB reconstruction ripple at both
+   ratio 4 and ratio 2, against 9.48 dB at ratio 1 as the control. End to end
+   it took Spectral from 20.3% mean per render to **13.6%** on the synth and
+   32.0% to **23.9%** on the FX, moving it from the most expensive of the four
+   modes to the second cheapest. The price is phase-vocoder artifacts on
+   *modified* spectra, which is most of what Spectral is for; unmodified
+   pass-through stays exact. Spectral's character had already been cut once by
+   the 4096 → 512 change, and the judgement is that a mode which clicks is
+   worth less than a mode which is grainier. `-DCLOUDS_PVOC_HOP_RATIO=4`
+   restores upstream's overlap at upstream's cost.
 2. **Spread one transform across several audio blocks.** `STFT::Buffer()` is
    five sequential phases and the hop carries four engine blocks of slack, so
    a stage machine could run window-in + forward FFT in one call, the
@@ -488,24 +494,60 @@ interpolated buffer reads, doubled for stereo -- in whichever block follows a
 window being scheduled. `EvaluateSomeCandidates()` is already incremental and
 costs almost nothing on average; upstream sized it that way deliberately.
 
-**A reorder was tried and rejected.** `EvaluateNextCandidate()` returns
+**A reorder was tried and rejected first.** `EvaluateNextCandidate()` returns
 immediately once `done_`, so moving the candidate batch *before*
-`LoadCorrelator()` -- guarded by `if (!correlator_.done())` -- makes the block
-that packs the windows never also run a batch. Measured, that takes Stretch's
-p99.9 from 49.4% to 38.5% of the engine block deadline, about a fifth off the
-tail, for three lines and no new state.
+`LoadCorrelator()` -- behind `if (!correlator_.done())` -- makes the block that
+packs the windows never also run a batch. That took Stretch's p99.9 from 49.4%
+to 38.5% of the engine block deadline for three lines and no new state, but
+the search then finishes a block later, and rendered output **differs at Size
+20%** (0.28% RMS) where `best_match()` is read before the search completes and
+WSOLA settles for a worse alignment.
 
-It was not taken because it is not free: the search then finishes one block
-later, and at small window sizes there are not many blocks between one window
-and the next. Rendered output is bit-identical at Size 50% and 90% and
-**differs at Size 20%** (0.28% RMS), where the extra block is enough for
-`best_match()` to be read before the search completes and WSOLA settles for a
-worse alignment. That is a sound change, in a mode nobody has reported a
-problem with, to improve a number near the measurement floor. Recorded so the
-trade is known rather than re-derived.
+**What shipped is the split itself.** `LoadCorrelator()` now does the source
+window on one `Prepare()` and the destination window plus `StartSearch()` on
+the next, in a fork of `wsola_sample_player.h`. Measured at Size 85%, where
+the burst is real, four paired runs:
 
-Splitting `LoadCorrelator()` itself across blocks is the version worth
-having, and it needs `wsola_sample_player.h` forked.
+| | mean | p99 | p99.9 | over deadline |
+|---|---:|---:|---:|---:|
+| before | 11.3-12.4% | 77-83% | 82-149% | 0.01-0.38% |
+| after | 11.9-12.8% | **61-66%** | **81-96%** | **0.01-0.07%** |
+
+About a fifth off p99, and the worst p99.9 across runs goes from 149% to 96%.
+The `max` column moves between 115% and 1608% in *both* builds and is the
+usual QEMU scheduling noise; it is not reported above for that reason.
+
+Three things about it were decided by a 120-point differential sweep against
+upstream -- size x position x pitch -- rather than by argument, because each
+of them looked obviously right and two of them were wrong:
+
+- **Which half is deferred.** Source first, destination second: 3 differing
+  points. The other order: 12. `search_source_` is the window WSOLA is about
+  to play, so it tracks the read position, which sits closer to the write head
+  than `search_target_` does.
+- **When to split at all.** A `window_size_` threshold, not a measured count
+  of the blocks between windows. The measured version sounds better founded
+  and is worse -- 18 differing points -- because the gap varies from window to
+  window, so a long interval followed by a short one lets through a split that
+  does not fit. The threshold is 1024, calibrated from the gap actually
+  observed: ~500 blocks at window 2048 and unity pitch, 8 blocks at window
+  2048 with pitch ratio 4, 8 at window 512, and 3 below window 256. The burst
+  is O(`window_size_`) and the gap grows with it too, so the two move together
+  in the helpful direction and the sizes excluded are the ones with nothing to
+  win.
+- **Not deferring a read that is about to be overwritten.** The destination
+  window's top edge sits at `head - limit * POSITION`, so at POSITION 0 it *is*
+  the write head, and deferring it reads a block of audio recorded after the
+  window was scheduled -- 32 samples of a 2048-sample correlation window, and
+  occasionally enough to flip the best match. That was the last residue in the
+  sweep, at POSITION 0 with +-24 semitones. Requiring two blocks of margin
+  clears it, at the cost of POSITION 0 not getting the split.
+
+With all three in place the sweep is **120 of 120 bit-identical to upstream**.
+At the units' defaults the split does not engage -- Size 50% puts
+`window_size_` near 727, below the threshold -- so this is a fix for the large
+Size settings, which is where Stretch was missing deadlines: 0.19% of renders
+at Size 85% before, against 0.00-0.02% for the Granular control.
 
 ---
 

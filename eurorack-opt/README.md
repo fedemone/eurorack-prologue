@@ -19,7 +19,8 @@ commit **58b9125**.
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
-| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; `CLOUDS_PVOC_HOP_RATIO` | Spectral, stereo |
+| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
+| `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 
 Why forked, and what changed

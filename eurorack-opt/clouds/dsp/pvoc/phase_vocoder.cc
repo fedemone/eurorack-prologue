@@ -67,8 +67,27 @@ void PhaseVocoder::Init(
   // hop by the channel count leaves the last channel served no later than one
   // stride before the next hop arrives, well inside the slack the analysis
   // ring carries.
+  //
+  // The spacing is also capped.  What it has to achieve is that the two
+  // transforms never share a host render, and a render is 1.33 engine blocks
+  // -- so a few blocks is enough and anything beyond that buys nothing.  It
+  // does cost something: a FREEZE engaging, or a mode change reallocating the
+  // workspace, can land between the two channels' transforms and leave them
+  // that far apart in what they captured, and the wider the spacing the larger
+  // that skew.  `make test-clouds-pvoc-rr` measures it, and without the cap it
+  // fails at fft 4096 -- half a hop there is 32 blocks.  Uncapped, the spacing
+  // also grows with CLOUDS_PVOC_HOP_RATIO, which is backwards: a longer hop is
+  // more slack to sit in, not a reason to spread further.
+  //
+  // At the shipped geometry (fft 512, hop ratio 2) half a hop is 4 blocks, so
+  // the cap changes nothing there; it only reins in the larger sizes the test
+  // sweeps and the synth-only override can select.
+  const size_t kMaxServiceStride = 4;
   const size_t hop_blocks = (fft_size / hop_ratio) / kMaxBlockSize;
   service_stride_ = hop_blocks / (size_t)num_channels_;
+  if (service_stride_ > kMaxServiceStride) {
+    service_stride_ = kMaxServiceStride;
+  }
   if (service_stride_ < 1) {
     service_stride_ = 1;
   }
