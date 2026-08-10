@@ -18,6 +18,7 @@ commit **58b9125**.
 | File | Change | Affects |
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
+| `clouds/dsp/grain.h` | **grain envelope no longer reads past `lut_window`** | Granular, high quality |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
@@ -60,6 +61,37 @@ full in a single block, so that matters. Each effect handles it differently:
   upstream**, and only for a quarter second after the diffuser resumes.
 
 When the amount is non-zero, both paths are byte-for-byte the original code.
+
+### `clouds/dsp/grain.h` — grain envelope endpoint
+
+`Grain::RenderEnvelope()` folds the envelope phase to a gain in `[0, 1]` and
+hands it to `Interpolate(lut_window, gain, 4096.0f)`. `lut_window` holds 4097
+entries and `Interpolate` reads both `table[i]` and `table[i + 1]`, so a grain
+whose envelope lands exactly on gain 1.0 reads `lut_window[4097]` — one past
+the end. Any grain width that divides 2.0 into an exact binary fraction gets
+there, which is most of them.
+
+It is arithmetically harmless. An integral index of exactly 4096 means a
+fractional part of zero, so the stray element is multiplied by zero, and the
+table is followed by more `.rodata`, so the read lands in the next table
+rather than faulting. The reason to fix it anyway is the drumlogue's loader:
+every unit in `Units/` is `dlopen`'d into one address space, so "reads a
+neighbouring object" is a property of today's link order, not a guarantee.
+
+The fix folds the endpoint back inside the table — index 4095 with a
+fractional part of 1.0, which interpolates to `lut_window[4096]` exactly, the
+same value upstream computes from one element earlier. `make
+test-clouds-grain-window` checks both halves of that: 9216 envelope samples
+across eight widths and two window shapes, fork against stock, must compare
+byte-identical, and the fork build must then come back clean under
+AddressSanitizer. Building the same test against the submodule header is what
+reports the overrun, so the test has a live canary rather than an assertion
+about the past.
+
+Rings had three overruns of the same shape — `lut_stiffness`, `lut_4_decades`
+and `lut_fm_frequency_quantizer`, all reachable at Structure or Damping 100 %.
+Those are fixed in the port rather than the engine, so no fork was needed; see
+`kLutSafeMax` in `rings-resonator.cc`.
 
 ### `stmlib/fft/shy_fft.h` — NEON butterfly
 
@@ -401,7 +433,7 @@ git -C eurorack log --oneline 58b9125..HEAD -- \
     clouds/dsp/granular_processor.h clouds/dsp/granular_processor.cc \
     clouds/dsp/pvoc/stft.h clouds/dsp/pvoc/phase_vocoder.h \
     clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
-    stmlib/fft/shy_fft.h \
+    clouds/dsp/grain.h stmlib/fft/shy_fft.h \
     rings/dsp/part.cc rings/dsp/performance_state.h
 ```
 
@@ -412,8 +444,9 @@ explaining what it is for. Then re-run `make test-all` and `make test-arm`.
 The one change with a behavioural signature to check afterwards is the
 diffuser ramp: `make test-clouds-synth` covers all four modes, and
 `docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md` has the numbers to compare against.
-`make test-clouds-fft` and `make test-clouds-engine-opt` are the two that
-compare fork against original directly, so run both.
+`make test-clouds-fft`, `make test-clouds-engine-opt` and `make
+test-clouds-grain-window` are the three that compare fork against original
+directly, so run all of them.
 
 For the Rings pair the re-sync is mechanical — the fork is the upstream file
 with three rows appended to each of the two chord tables and the dimension

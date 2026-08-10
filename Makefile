@@ -205,6 +205,49 @@ test-clouds-engine-opt:
 	@echo ""
 	@echo "=== ALL PASS (0 failures) ==="
 
+# Grain window endpoint test: the envelope render compiled against the
+# submodule and against eurorack-opt/, compared sample for sample, then the
+# fork run again under AddressSanitizer.  The fork exists to stop a read one
+# past lut_window, and claims to do it without moving a sample, so both halves
+# get checked -- cmp for the window, ASan for the read.
+# Usage: make test-clouds-grain-window
+test-clouds-grain-window:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -Ieurorack \
+	    test_clouds_grain_window.cc eurorack/clouds/resources.cc \
+	    -o test_clouds_grain_window_stock -lm
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -Ieurorack-opt -Ieurorack \
+	    test_clouds_grain_window.cc eurorack/clouds/resources.cc \
+	    -o test_clouds_grain_window_fork -lm
+	@./test_clouds_grain_window_stock > .grain_window_stock.txt
+	@./test_clouds_grain_window_fork  > .grain_window_fork.txt
+	@echo "Clouds Grain Window Endpoint Test"
+	@echo ""
+	@if cmp -s .grain_window_stock.txt .grain_window_fork.txt; then \
+	    echo "  ok:   envelope bit-identical to upstream, `wc -l < .grain_window_fork.txt` samples over 8 widths"; \
+	 else \
+	    echo "  FAIL: the fork changed the grain envelope"; \
+	    diff .grain_window_stock.txt .grain_window_fork.txt | head -20; \
+	    rm -f .grain_window_*.txt; exit 1; \
+	 fi
+	@rm -f .grain_window_*.txt
+	@if $(CXX) $(COMMON_TEST_FLAGS) -O1 -g -DTEST -fsanitize=address \
+	      -Ieurorack-opt -Ieurorack test_clouds_grain_window.cc \
+	      eurorack/clouds/resources.cc -o test_clouds_grain_window_asan -lm \
+	      >/dev/null 2>&1; then \
+	    if ./test_clouds_grain_window_asan >/dev/null 2>.grain_window_asan.txt; then \
+	      echo "  ok:   no read past lut_window (ASan clean)"; \
+	    else \
+	      echo "  FAIL: ASan flagged the forked envelope render"; \
+	      head -12 .grain_window_asan.txt; \
+	      rm -f .grain_window_asan.txt; exit 1; \
+	    fi; \
+	    rm -f .grain_window_asan.txt; \
+	 else \
+	    echo "  skip: no AddressSanitizer in $(CXX); endpoint read not checked"; \
+	 fi
+	@echo ""
+	@echo "=== ALL PASS (0 failures) ==="
+
 # Phase vocoder scheduling test: the round-robin Buffer() in eurorack-opt/
 # against upstream's transform-every-channel loop, sample for sample.  Both
 # sides are fork builds at the same FFT size, so the only variable is the
@@ -288,7 +331,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

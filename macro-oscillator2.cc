@@ -4,7 +4,7 @@
 #ifdef __ARM_NEON
 #include <arm_neon.h>
 #endif
-#include "stmlib/dsp/cosine_oscillator.h"
+#include <math.h>
 #include "stmlib/utils/random.h"
 #include "plaits/dsp/dsp.h"
 #include "plaits/dsp/engine/engine.h"
@@ -54,8 +54,6 @@ plaits::EngineParameters parameters = {
     .harmonics = 0,
     .accent = 0
 };
-
-stmlib::CosineOscillator lfo;
 
 enum LfoTarget {
   LfoTargetShape,
@@ -218,8 +216,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   stmlib::BufferAllocator allocator;
   allocator.Init(engine_buffer, sizeof(engine_buffer));
   engine.Init(&allocator);
-  lfo.InitApproximate(0);
-  lfo.Start();
+  lfo2_phase = 0.0f;
 
   p_values[0] = 100;
 }
@@ -228,7 +225,6 @@ void OSC_NOTEON(const user_osc_param_t * const params)
 {
   (void)params;
   gate = true;
-  lfo.Start();
   lfo2_phase = 0.0f;
 }
 void OSC_NOTEOFF(const user_osc_param_t * const params)
@@ -246,20 +242,32 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 
   shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));
 
-  /* Multi-shape LFO2 generation */
+  /* Multi-shape LFO2 generation.  Every shape, cosine included, is derived
+   * from the one phase accumulator, so switching shape mid-cycle continues
+   * rather than jumps.
+   *
+   * The cosine used to come from stmlib's CosineOscillator.  That class is a
+   * two-pole resonator, and InitApproximate() sets its coefficient to
+   * 2 - 32*freq^2 -- which at freq 0 is exactly 2, a double pole at z = 1.
+   * There the recursion stops oscillating and starts integrating: it ramped
+   * linearly from whatever state the last non-zero rate left it in, about 1.7
+   * per thousand blocks measured.  Rate 0 is not an exotic setting, it is
+   * where the knob starts, so turning Depth up and leaving Rate alone was
+   * enough to reach it.  Every destination here runs through clip01f(), so
+   * the symptom was a modulated knob sliding to its rail and staying there
+   * rather than a fault -- in Rings, where the ramp reached an unclipped
+   * destination (Note), the same code segfaulted on 9 runs in 30.
+   * cosf() of a bounded phase cannot drift at any rate, including zero. */
   { float freq = get_param_lfo2_frequency() / 600.f;
     float depth = get_param_lfo2_depth();
-    /* Always advance phase accumulator (for non-cosine shapes) */
     lfo2_phase += freq;
     if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
-    /* Always advance cosine oscillator (keeps it in sync) */
-    lfo.InitApproximate(freq);
-    float cos_val = lfo.Next(); /* [0, 1] */
+    const float cos_val = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
     float raw;
     switch (lfo2_shape_value) {
       default:
       case 0: /* Cosine */
-        raw = (cos_val - 0.5f) * 2.0f;
+        raw = cos_val;
         break;
       case 1: /* Triangle */
         raw = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
@@ -272,8 +280,7 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
         raw = 1.0f - 2.0f * lfo2_phase;
         break;
       case 4: /* Fat Sine (deformed cosine with soft-clip) */
-        raw = (cos_val - 0.5f) * 2.0f;
-        raw = raw * (1.5f - 0.5f * raw * raw);
+        raw = cos_val * (1.5f - 0.5f * cos_val * cos_val);
         raw = (raw > 1.0f) ? 1.0f : ((raw < -1.0f) ? -1.0f : raw);
         break;
     }

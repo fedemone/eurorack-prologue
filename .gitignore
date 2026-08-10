@@ -33,3 +33,7 @@ test_clouds_pvoc_rr_1
 bench_clouds_spike_arm
 bench_units_arm
 test_clouds_cola
+test_clouds_grain_window_stock
+test_clouds_grain_window_fork
+test_clouds_grain_window_asan
+.grain_window_*.txt
