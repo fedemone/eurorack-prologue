@@ -552,6 +552,203 @@ static void probe_density(unit_t *u) {
     u->setp((uint8_t)p, u->hdr->params[p].init);
 }
 
+/* ---- Chord must retune the strings ------------------------------------
+ *
+ * Rings' quantized sympathetic-strings model tunes its strings from a chord
+ * table, and this port appends three rows to that table (see the fork note in
+ * eurorack-opt/rings/dsp/part.cc).  A wrong row is not a crash and not a
+ * silence: it is a chord that sounds like a different chord, which every
+ * other check in this file is happy to pass.
+ *
+ * So listen instead.  Strum each chord and measure the energy at a fixed set
+ * of intervals above the root with a Goertzel, which is one bandpass per
+ * interval and cheap enough to run fourteen times.  Two of the probe
+ * intervals are deliberately not in equal temperament -- 2.4 semitones is a
+ * slendro step, 9.69 is the septimal seventh -- and each sits next to its
+ * tempered neighbour in the list.  That pairing is the point: a chord table
+ * that reached the strings shows more energy at 9.69 than at 10.0, while one
+ * that was rounded to the nearest semitone somewhere along the way shows the
+ * opposite, and no amount of "is it finite" testing can tell those apart.
+ * ---------------------------------------------------------------------- */
+
+static const float kChordProbeTones[] = {
+  0.0f,  2.0f,  2.4f,  3.0f,  4.0f, 5.0f, 7.0f, 9.0f,
+  9.69f, 10.0f, 12.0f, 14.0f, 15.0f, 17.0f, 19.0f
+};
+#define NUM_CHORD_TONES ((int)(sizeof kChordProbeTones / sizeof kChordProbeTones[0]))
+#define CHORD_TONE_2_4  2   /* index of the slendro step */
+#define CHORD_TONE_2_0  1   /* ... and its tempered neighbour */
+#define CHORD_TONE_9_69 8   /* index of the septimal seventh */
+#define CHORD_TONE_10   9   /* ... and its tempered neighbour */
+
+/* Strum note 60 and return one Goertzel magnitude per probe tone.
+ *
+ * Averaged over several strums.  Rings excites its strings with a noise
+ * burst, so a single strum is a noisy estimate of what the chord is doing --
+ * measured, one chord compared against a second recording of itself came out
+ * further apart than the two closest genuinely different chords.  Averaging
+ * power over CHORD_STRUMS strums brings that down far enough that the
+ * comparison means what it says. */
+#define CHORD_STRUMS 6
+#define CHORD_BLOCKS 400
+
+static void render_chord_spectrum(unit_t *u, float *mag) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  const float root = 261.6256f;                 /* MIDI 60 */
+  double coeff[NUM_CHORD_TONES], power[NUM_CHORD_TONES];
+
+  for (int t = 0; t < NUM_CHORD_TONES; ++t) {
+    const double f = root * pow(2.0, kChordProbeTones[t] / 12.0);
+    coeff[t] = 2.0 * cos(2.0 * M_PI * f / 48000.0);
+    power[t] = 0.0;
+  }
+  memset(in, 0, sizeof(in));                    /* internal exciter only */
+
+  for (int rep = 0; rep < CHORD_STRUMS; ++rep) {
+    double s1[NUM_CHORD_TONES], s2[NUM_CHORD_TONES];
+    for (int t = 0; t < NUM_CHORD_TONES; ++t) s1[t] = s2[t] = 0.0;
+
+    /* Start from silence every time.  Without this each chord is measured on
+     * top of the previous one's decay and the whole sweep slides downhill --
+     * the first chord came out twenty times louder than the last, which makes
+     * a comparison between two chords a comparison of when they were tested. */
+    if (u->reset) u->reset();
+    for (int b = 0; b < 40; ++b) u->render(in, out, FRAMES);
+    if (u->noteon) u->noteon(60, 127);
+    /* Skip the pluck itself: it is a broadband noise burst, and much the same
+     * burst whichever chord is selected.  What differs is what rings after. */
+    for (int b = 0; b < 24; ++b) u->render(in, out, FRAMES);
+
+    /* The window has to resolve the septimal seventh from the tempered one:
+     * 458.0 Hz against 466.2 Hz at this root, 8.2 Hz apart.  CHORD_BLOCKS
+     * blocks is 25600 samples, which puts them 4.4 bins apart -- comfortably
+     * outside a Hann main lobe, where 160 blocks left them inside it and the
+     * louder of the pair simply leaked into the other's bin.  Hann rather
+     * than none for the same reason: an unwindowed bin hears its neighbour at
+     * -13 dB, which is not enough to call a tuning by. */
+    for (int b = 0; b < CHORD_BLOCKS; ++b) {
+      memset(out, 0, sizeof(out));
+      u->render(in, out, FRAMES);
+      for (int i = 0; i < FRAMES; ++i) {
+        const int n = b * FRAMES + i;
+        const double w = 0.5 - 0.5 * cos(2.0 * M_PI * n /
+                                         (double)(CHORD_BLOCKS * FRAMES - 1));
+        const double x = w * 0.5 * ((double)out[i * 2] + (double)out[i * 2 + 1]);
+        for (int t = 0; t < NUM_CHORD_TONES; ++t) {
+          const double s = x + coeff[t] * s1[t] - s2[t];
+          s2[t] = s1[t];
+          s1[t] = s;
+        }
+      }
+    }
+    if (u->noteoff) u->noteoff(60);
+
+    for (int t = 0; t < NUM_CHORD_TONES; ++t)
+      power[t] += fabs(s1[t] * s1[t] + s2[t] * s2[t] - coeff[t] * s1[t] * s2[t]);
+  }
+
+  for (int t = 0; t < NUM_CHORD_TONES; ++t)
+    mag[t] = (float)sqrt(power[t] / CHORD_STRUMS);
+}
+
+static void probe_chords(unit_t *u) {
+  int chord_id = -1, model_id = -1;
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+    if (strcmp(u->hdr->params[p].name, "Chord") == 0) chord_id = (int)p;
+    if (strcmp(u->hdr->params[p].name, "Model") == 0) model_id = (int)p;
+  }
+  if (chord_id < 0 || model_id < 0) return;
+
+  const int lo = u->hdr->params[chord_id].min;
+  const int hi = u->hdr->params[chord_id].max;
+  if (hi - lo + 1 > 16) return;                 /* not the parameter we mean */
+
+  /* Chord only reaches the strings in the quantized sympathetic model, which
+   * is also this unit's default -- take it from the header rather than
+   * hard-coding 4, so renumbering the models cannot quietly defeat the test.
+   *
+   * Damping goes to maximum: the strings then ring for longer than the
+   * analysis window instead of decaying inside it, which is what lets a long
+   * window buy resolution rather than just accumulating room noise. */
+  u->setp((uint8_t)model_id, u->hdr->params[model_id].init);
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    if (strcmp(u->hdr->params[p].name, "Damping") == 0)
+      u->setp((uint8_t)p, u->hdr->params[p].max);
+
+  static float mag[16][NUM_CHORD_TONES];
+  int silent = -1;
+  for (int c = lo; c <= hi; ++c) {
+    u->setp((uint8_t)chord_id, c);
+    render_chord_spectrum(u, mag[c - lo]);
+    double energy = 0.0;
+    for (int t = 0; t < NUM_CHORD_TONES; ++t) energy += mag[c - lo][t];
+    if (energy < 1e-3 && silent < 0) silent = c;
+  }
+
+  CHECK(silent < 0, "%s: every chord sounds%s", u->hdr->name,
+        silent < 0 ? "" : " (silent one found)");
+
+  if (getenv("CHORD_DEBUG")) {
+    printf("      tone:");
+    for (int t = 0; t < NUM_CHORD_TONES; ++t) printf(" %7.2f", kChordProbeTones[t]);
+    printf("\n");
+    for (int c = lo; c <= hi; ++c) {
+      printf("  %8s:", u->getstr ? u->getstr((uint8_t)chord_id, c) : "?");
+      for (int t = 0; t < NUM_CHORD_TONES; ++t) printf(" %7.3f", mag[c - lo][t]);
+      printf("\n");
+    }
+  }
+
+  /* Each chord is checked against itself rather than against other chords.
+   *
+   * Comparing whole spectra between chords was tried and does not work here:
+   * a Rings string is not a sine, so every string puts a second harmonic an
+   * octave up, and the probe bins fill with other strings' overtones -- a
+   * bare fifth and a major ninth came out closer to each other than one chord
+   * did to a second recording of itself.  Two bins a third of a semitone
+   * apart in the *same* recording do not have that problem: whatever
+   * overtones land there land on both, so what is left between them is the
+   * fundamental, which is the thing being asserted.
+   *
+   * Each case below therefore names a tone the chord does contain and the
+   * neighbouring tone it does not, and the margins are hundredfold rather
+   * than marginal. */
+  for (int c = lo; c <= hi; ++c) {
+    const char *nm = u->getstr ? u->getstr((uint8_t)chord_id, c) : NULL;
+    const float *m = mag[c - lo];
+    if (!nm) continue;
+    if (strcmp(nm, "Just7") == 0) {
+      CHECK(m[CHORD_TONE_9_69] > 4.0f * m[CHORD_TONE_10],
+            "%s: Just7 rings the septimal 7th, not the tempered one "
+            "(%.2f vs %.2f)", u->hdr->name, m[CHORD_TONE_9_69],
+            m[CHORD_TONE_10]);
+    } else if (strcmp(nm, "Slendro") == 0) {
+      CHECK(m[CHORD_TONE_2_4] > 4.0f * m[CHORD_TONE_2_0],
+            "%s: Slendro rings its 2.4-semitone step, not a whole tone "
+            "(%.2f vs %.2f)", u->hdr->name, m[CHORD_TONE_2_4],
+            m[CHORD_TONE_2_0]);
+    } else if (strcmp(nm, "4ths") == 0) {
+      /* Two stacked fourths is a tempered minor seventh, so this one has to
+       * come out the opposite way to Just7 -- same pair of bins, same
+       * recording geometry, opposite verdict. */
+      CHECK(m[CHORD_TONE_10] > 4.0f * m[CHORD_TONE_9_69],
+            "%s: 4ths stacks to a tempered minor 7th (%.2f vs %.2f)",
+            u->hdr->name, m[CHORD_TONE_10], m[CHORD_TONE_9_69]);
+    } else if (strcmp(nm, "min7") == 0) {
+      /* The control from upstream's own chords: a seventh that has always
+       * been tempered must still read as tempered, or the Just7 comparison
+       * above is measuring the probe rather than the chord. */
+      CHECK(m[CHORD_TONE_10] > 4.0f * m[CHORD_TONE_9_69],
+            "%s: min7 rings the tempered 7th (%.2f vs %.2f)", u->hdr->name,
+            m[CHORD_TONE_10], m[CHORD_TONE_9_69]);
+    }
+  }
+
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+}
+
 /* ---- control thread racing the audio thread ---------------------------
  *
  * On the device unit_set_param_value(), unit_reset(), unit_suspend() and
@@ -693,6 +890,9 @@ int main(int argc, char **argv) {
 
   printf("\n=== Density / grain scheduling ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_density(&s_units[i]);
+
+  printf("\n=== Chord tuning ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_chords(&s_units[i]);
 
   printf("\n=== Out-of-range parameter values ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_param_out_of_range(&s_units[i]);

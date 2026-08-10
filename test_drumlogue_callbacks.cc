@@ -1836,7 +1836,15 @@ TEST(param_str_value_lfo_shape_strings) {
   /* Rings: Chord at id 5, Model at id 6, Polyphony at id 7 */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Oct"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 10), "Maj"));
-  ASSERT_TRUE(unit_get_param_str_value(5, 11) == nullptr); /* out of range */
+  /* 11-13 are this port's additions; 13 is the last, so 14 is out of range. */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 11), "4ths"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 12), "Just7"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 13), "Slendro"));
+  ASSERT_TRUE(unit_get_param_str_value(5, 14) == nullptr); /* out of range */
+  /* Every name the Chord parameter can select must exist: a declared max
+   * beyond the name table shows on the panel as a blank entry. */
+  for (int32_t c = unit_header.params[5].min; c <= unit_header.params[5].max; ++c)
+    ASSERT_TRUE(unit_get_param_str_value(5, c) != nullptr);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 0), "Modal"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "FM"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 5), "Str+Verb"));
