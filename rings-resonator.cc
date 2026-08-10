@@ -18,6 +18,12 @@
  *   4 = Sympathetic strings (quantized chords)
  *   5 = String + reverb
  *
+ * Modulation (drumlogue only):
+ *   Two LFOs, one destination each, in the same layout the Plaits and
+ *   Elements ports use.  Besides the four continuous knobs they can reach
+ *   Note (transposes the sounding pitch, including a running arpeggio) and
+ *   Chord (steps along the chord list, so a slow LFO is a chord sequencer).
+ *
  * Arpeggiator (drumlogue only):
  *   Rings is monophonic here (one held note), so the built-in arpeggiator
  *   builds a note sequence from either the selected Chord's tones or plain
@@ -59,6 +65,83 @@ static bool previous_gate_ = false;
 uint16_t p_values[k_num_user_osc_param_id] = {0};
 float shape = 0, shiftshape = 0;
 float shape_lfo = 0;
+
+/* ======================================================================
+ * Modulation
+ *
+ * Two LFOs, laid out the way the Plaits and Elements ports do it so the
+ * panel behaves the same across the family: LFO1 arrives from outside (the
+ * host's shape LFO on prologue, the wrapper's own oscillator on drumlogue,
+ * which is why it has a Rate but no Depth) and LFO2 is generated here and
+ * has both.  Each picks one destination.
+ *
+ * Two of the destinations are particular to this engine.  `Note` transposes
+ * the sounding pitch, and is applied after the arpeggiator so that a running
+ * pattern is transposed as a whole rather than having its steps rewritten
+ * underneath it.  `Chord` is the odd one: it is not a continuous quantity but
+ * an index into a table of string tunings, so the modulation is rounded and
+ * the LFO walks the chord list rather than sliding through it -- which turns
+ * a slow LFO into a chord sequencer and a fast one into something closer to a
+ * broken arpeggio.  It is clamped, not wrapped, so Chord itself sets where in
+ * the list the sweep sits; put it mid-list for a symmetric sweep.
+ *
+ * The clamp is not politeness.  performance_state.chord indexes the chord
+ * table with no bounds check between here and the subscript, so an unclamped
+ * modulated value would be a wild read on the audio thread -- the same shape
+ * of bug as the Polyphony race above, arrived at from a different direction.
+ * ==================================================================== */
+
+enum LfoTarget {
+  LfoTargetPosition,
+  LfoTargetStructure,
+  LfoTargetBrightness,
+  LfoTargetDamping,
+  LfoTargetNote,
+  LfoTargetChord,
+  LfoTargetLfo2Frequency,
+  LfoTargetLfo2Depth
+};
+
+/* Semitones of pitch modulation at full LFO swing.  LFO1 has no depth control
+ * -- it is whatever the host or the wrapper sends, which is full scale -- so
+ * this constant is what makes LFO1 -> Note musical rather than a siren, and
+ * it is deliberately a vibrato-sized number.  LFO2 reaches the same range at
+ * Depth 100 % and scales down from there. */
+static const float kLfoNoteSemitones = 2.0f;
+
+static float lfo2 = 0.0f;
+static float lfo2_phase = 0.0f;
+static uint16_t lfo1_shape_value = 0;
+static uint16_t lfo2_shape_value = 0;
+static uint16_t lfo2_target_ = 0;
+
+/* Transfer curve for LFO1.  Same five shapes as the other ports. */
+static inline float apply_lfo1_shape(float x) {
+  switch (lfo1_shape_value) {
+    default:
+    case 0: /* Cosine: pass-through */
+      return x;
+    case 1: /* Triangle: S-curve */
+      { float ax = x < 0.f ? -x : x;
+        float s = ax * (2.0f - ax);
+        return x < 0.f ? -s : s; }
+    case 2: /* Ramp Up: quadratic */
+      return x < 0.f ? -(x * x) : (x * x);
+    case 3: /* Ramp Down: inverse quadratic */
+      { if (x > 0.f) { float s = 1.0f - x; return 1.0f - s * s; }
+        if (x < 0.f) { float s = 1.0f + x; return -(1.0f - s * s); }
+        return 0.f; }
+    case 4: /* Fat Sine: soft-clip */
+      return clip1m1f(x * (1.5f - 0.5f * x * x));
+  }
+}
+
+/* A target value out of range simply matches nothing, so an unknown selector
+ * is silently no modulation rather than an out-of-bounds anything. */
+static inline float get_lfo_value(enum LfoTarget target) {
+  return (p_values[k_user_osc_param_id4] == (uint16_t)target ? shape_lfo : 0.0f) +
+         (lfo2_target_ == (uint16_t)target ? lfo2 : 0.0f);
+}
 
 /* Model and Polyphony are latched here and applied on the audio thread.
  *
@@ -348,6 +431,13 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   arp_bpm_     = 120;
   arp_reset();
 
+  shape_lfo        = 0.0f;
+  lfo2             = 0.0f;
+  lfo2_phase       = 0.0f;
+  lfo1_shape_value = 0;
+  lfo2_shape_value = 0;
+  lfo2_target_     = 0;
+
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
 
   /* Part::Init() leaves the part dirty, and Part::ConfigureResonators() —
@@ -370,7 +460,62 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 {
   (void)frames;
 
-  shape_lfo = q31_to_f32(params->shape_lfo);
+  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));
+
+  /* LFO2.  Every shape is derived from the one phase accumulator, so
+   * switching shape mid-cycle continues rather than jumps.
+   *
+   * The cosine is computed from that phase rather than taken from stmlib's
+   * CosineOscillator, which is what the sibling ports use.  That class is a
+   * two-pole resonator, and InitApproximate() sets its coefficient to
+   * 2 - 32*freq^2 -- which at freq 0 is exactly 2, a double pole at z = 1.
+   * There the recursion stops oscillating and starts integrating: it ramps
+   * linearly from whatever state the last non-zero rate left it in, about
+   * 1.7 per thousand blocks measured.  Rate 0 is not an exotic setting, it
+   * is where the knob starts.
+   *
+   * Left in, that is a crash and not just a wrong LFO.  With Note as the
+   * destination the ramp carried `note` to about -3500 semitones, and
+   * SemitonesToRatio() indexes a 257-entry table straight off the value with
+   * no check of its own: ASan put the read 3392 entries before the start of
+   * lut_pitch_ratio_high, and `make test-arm` segfaulted on 9 runs in 30.
+   * A cosine of a bounded phase cannot do that at any rate, including zero.
+   *
+   * Worth knowing when reading the sibling ports: macro-oscillator2.cc and
+   * modal-strike.cc still use the resonator, so LFO2 Rate 0 with Depth up
+   * ramps there too.  Most of their destinations run through clip01f(),
+   * which turns it into a knob stuck at its rail rather than a fault. */
+  { const float freq =
+        clip01f(p_values[k_user_osc_param_id5] * 0.01f +
+                get_lfo_value(LfoTargetLfo2Frequency)) / 600.f;
+    const float depth =
+        clip01f(p_values[k_user_osc_param_id6] * 0.01f +
+                get_lfo_value(LfoTargetLfo2Depth));
+    lfo2_phase += freq;
+    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+    const float cosine = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
+    float raw;
+    switch (lfo2_shape_value) {
+      default:
+      case 0: /* Cosine */
+        raw = cosine;
+        break;
+      case 1: /* Triangle */
+        raw = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                  : (3.0f - 4.0f * lfo2_phase);
+        break;
+      case 2: /* Ramp Up */
+        raw = 2.0f * lfo2_phase - 1.0f;
+        break;
+      case 3: /* Ramp Down */
+        raw = 1.0f - 2.0f * lfo2_phase;
+        break;
+      case 4: /* Fat Sine */
+        raw = clip1m1f(cosine * (1.5f - 0.5f * cosine * cosine));
+        break;
+    }
+    lfo2 = raw * depth;
+  }
 
   /* Apply latched engine reconfiguration here, on the audio thread, before
    * anything reads polyphony_ or model_.  See pending_* above. */
@@ -393,16 +538,26 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
       ((params->pitch & 0xFF) * k_note_mod_fscale);
 
   /* Patch parameters.  Structure and Damping index lookup tables one element
-   * wider than their own top value; see kLutSafeMax. */
-  patch_.position   = clip01f(shape);
-  patch_.structure  = clip_lut01f(shiftshape);
-  patch_.brightness = clip01f(p_values[k_user_osc_param_id1] * 0.01f);
-  patch_.damping    = clip_lut01f(p_values[k_user_osc_param_id2] * 0.01f);
+   * wider than their own top value; see kLutSafeMax.  The clips also absorb
+   * the modulation, so an LFO cannot push a knob past its own range. */
+  patch_.position   = clip01f(shape + get_lfo_value(LfoTargetPosition));
+  patch_.structure  = clip_lut01f(shiftshape + get_lfo_value(LfoTargetStructure));
+  patch_.brightness = clip01f(p_values[k_user_osc_param_id1] * 0.01f +
+                              get_lfo_value(LfoTargetBrightness));
+  patch_.damping    = clip_lut01f(p_values[k_user_osc_param_id2] * 0.01f +
+                                  get_lfo_value(LfoTargetDamping));
 
-  /* Chord from param */
-  performance_state_.chord = p_values[k_user_osc_param_id3];
-  if (performance_state_.chord >= kNumChords)
-    performance_state_.chord = kNumChords - 1;
+  /* Chord from param, plus modulation.  Rounded, because this indexes a table
+   * of tunings rather than naming a quantity: the LFO steps along the chord
+   * list.  The clamp is load-bearing — see the modulation notes at the top. */
+  { int32_t chord = (int32_t)p_values[k_user_osc_param_id3];
+    const float chord_mod = get_lfo_value(LfoTargetChord);
+    if (chord_mod != 0.0f)
+      chord += (int32_t)lrintf(chord_mod * (float)(kNumChords - 1));
+    if (chord < 0) chord = 0;
+    if (chord >= kNumChords) chord = kNumChords - 1;
+    performance_state_.chord = chord;
+  }
 
   /* Gate / strum detection.  When the arpeggiator is running it drives both
    * the sounding pitch and the strum timing; otherwise strum follows the
@@ -418,6 +573,24 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
     previous_gate_ = gate_;
     if (!gate_) arp_pos_ = -1; /* rearm the arp for the next note-on */
   }
+
+  /* Pitch modulation goes on last, after the arpeggiator has chosen its step.
+   * Modulating the root the arp is built from instead would rewrite the
+   * pattern's intervals under it; this transposes the whole thing, which is
+   * what a pitch LFO is for.
+   *
+   * Then the result is pinned to the MIDI range, which is not about musical
+   * sense — nothing here can leave it — but about what happens downstream if
+   * something ever does.  Part turns this into string frequencies through
+   * SemitonesToRatio(), which indexes a 257-entry table off the value with no
+   * check of its own, so a wild note is a wild read on the audio thread.  A
+   * diverging LFO reached -3500 semitones during development and that is
+   * exactly how it presented.  Two compares to make the table index a
+   * property of this line rather than of everything upstream of it. */
+  performance_state_.note +=
+      get_lfo_value(LfoTargetNote) * kLfoNoteSemitones;
+  if (!(performance_state_.note > 0.0f)) performance_state_.note = 0.0f;
+  else if (performance_state_.note > 127.0f) performance_state_.note = 127.0f;
 
   /* Clear input (internal exciter mode) */
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
@@ -530,6 +703,18 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     case 13: /* Arp Octaves (1..4) */
       arp_octaves_ = value;
       arp_cached_n_ = -1; /* note count changes -> rebuild */
+      break;
+
+    case 14: /* LFO1 Shape (0-4) */
+      lfo1_shape_value = value;
+      break;
+
+    case 15: /* LFO2 Target (0-5; LFO1's two extra targets are its own) */
+      lfo2_target_ = value;
+      break;
+
+    case 16: /* LFO2 Shape (0-4) */
+      lfo2_shape_value = value;
       break;
 
     case kTempoParamIndex: /* Host tempo (integer BPM), forwarded by adapter */

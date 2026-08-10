@@ -386,6 +386,14 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 15 -> custom 14  (0-1000 permil)  [SmplEnd]
  *
  * Rings (rings-resonator.cc):
+ *   ids 12-18 are the LFO block, laid out as in Plaits/Elements:
+ *   id 12 -> id4        (LFO target strings 0-7)
+ *   id 13 -> custom 14  (LFO1 shape strings)
+ *   id 14 -> lfo1_rate  (0-100, stored in wrapper for internal LFO1)
+ *   id 15 -> id5        (LFO2 rate 0-100)
+ *   id 16 -> id6        (LFO2 depth 0-100)
+ *   id 17 -> custom 15  (LFO2 target strings 0-5)
+ *   id 18 -> custom 16  (LFO2 shape strings)
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
  *   id 1  -> shape      (10-bit: 0-1023)  [Position]
  *   id 2  -> shiftshape (10-bit: 0-1023)  [Structure]
@@ -666,6 +674,33 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       osc_id    = (user_osc_param_id_t)13;
       osc_value = (uint16_t)value;
       break;
+    case 12: /* LFO Target: strings enum 0-7 */
+      osc_id    = k_user_osc_param_id4;
+      osc_value = (uint16_t)value;
+      break;
+    case 13: /* LFO1 Shape: strings enum (custom OSC_PARAM index 14) */
+      osc_id    = (user_osc_param_id_t)14;
+      osc_value = (uint16_t)value;
+      break;
+    case 14: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
+      s_state.lfo1_rate = (float)value;
+      return;
+    case 15: /* LFO2 Rate: 0-100 percent */
+      osc_id    = k_user_osc_param_id5;
+      osc_value = (uint16_t)value;
+      break;
+    case 16: /* LFO2 Depth: 0-100 percent */
+      osc_id    = k_user_osc_param_id6;
+      osc_value = (uint16_t)value;
+      break;
+    case 17: /* LFO2 Target: strings enum 0-5 (custom OSC_PARAM index 15) */
+      osc_id    = (user_osc_param_id_t)15;
+      osc_value = (uint16_t)value;
+      break;
+    case 18: /* LFO2 Shape: strings enum (custom OSC_PARAM index 16) */
+      osc_id    = (user_osc_param_id_t)16;
+      osc_value = (uint16_t)value;
+      break;
     default:
       return;
   }
@@ -901,6 +936,20 @@ static const char * const s_rings_arp_oct_names[] = {
 };
 #define NUM_RINGS_ARP_OCT 4
 
+/* LFO destinations.  LFO1 can also aim at LFO2's own rate and depth; LFO2
+ * cannot aim at itself, so its list is the same one two entries shorter and
+ * the two share an index space (see LfoTarget in rings-resonator.cc). */
+static const char * const s_rings_lfo_target_names[] = {
+  "Position", "Struct.", "Bright.", "Damping", "Note", "Chord",
+  "LFO2 Frq", "LFO2 Dep"
+};
+#define NUM_RINGS_LFO_TARGETS 8
+
+static const char * const s_rings_lfo2_target_names[] = {
+  "Position", "Struct.", "Bright.", "Damping", "Note", "Chord"
+};
+#define NUM_RINGS_LFO2_TARGETS 6
+
 #elif defined(ELEMENTS_RESONATOR_MODES)
 /* ---- Elements LFO target names ---- */
 static const char * const s_elements_lfo_target_names[] = {
@@ -997,6 +1046,22 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
     case 11: /* Arp Octaves */
       if (value >= 1 && value <= NUM_RINGS_ARP_OCT)
         return s_rings_arp_oct_names[value - 1];
+      break;
+    case 12: /* LFO Target */
+      if (value >= 0 && value < NUM_RINGS_LFO_TARGETS)
+        return s_rings_lfo_target_names[value];
+      break;
+    case 13: /* LFO1 Shape */
+      if (value >= 0 && value < NUM_LFO_SHAPES)
+        return s_lfo_shape_names[value];
+      break;
+    case 17: /* LFO2 Target */
+      if (value >= 0 && value < NUM_RINGS_LFO2_TARGETS)
+        return s_rings_lfo2_target_names[value];
+      break;
+    case 18: /* LFO2 Shape */
+      if (value >= 0 && value < NUM_LFO_SHAPES)
+        return s_lfo_shape_names[value];
       break;
   }
 #elif defined(ELEMENTS_RESONATOR_MODES)

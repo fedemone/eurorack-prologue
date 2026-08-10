@@ -749,6 +749,84 @@ static void probe_chords(unit_t *u) {
     u->setp((uint8_t)p, u->hdr->params[p].init);
 }
 
+/* ---- an LFO parked at rate zero ---------------------------------------
+ *
+ * A regression test for a specific way of getting this wrong, found by the
+ * race probe below and reduced to something deterministic.
+ *
+ * stmlib's CosineOscillator is a two-pole resonator whose coefficient
+ * InitApproximate() sets to 2 - 32*freq^2.  At freq 0 that is exactly 2 -- a
+ * double pole at z = 1 -- and the recursion integrates instead of
+ * oscillating, ramping linearly from whatever state the previous rate left
+ * behind.  Rate 0 is where the knob starts, so this is reachable by leaving
+ * one LFO alone and turning up the other's depth.
+ *
+ * Nothing here knows about that mechanism: it turns the rate down, leaves the
+ * depth up, waits, and checks the unit still sounds like an instrument.  Any
+ * modulation source that walks away from its own range fails it.
+ * ---------------------------------------------------------------------- */
+
+static void probe_lfo_stability(unit_t *u) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  int rate = -1, depth = -1, target = -1;
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+    const char *n = u->hdr->params[p].name;
+    if (strcmp(n, "LFO2 Rate") == 0) rate = (int)p;
+    if (strcmp(n, "LFO2 Depth") == 0) depth = (int)p;
+    if (strcmp(n, "LFO2 Target") == 0) target = (int)p;
+  }
+  if (rate < 0 || depth < 0 || target < 0) return;
+
+  int bad_target = -1;
+  float worst = 0.0f;
+  for (int t = u->hdr->params[target].min; t <= u->hdr->params[target].max; ++t) {
+    for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+      u->setp((uint8_t)p, u->hdr->params[p].init);
+    if (u->reset) u->reset();
+    u->setp((uint8_t)target, t);
+    u->setp((uint8_t)depth, u->hdr->params[depth].max);
+
+    /* Run the LFO first, so its state is somewhere mid-cycle... */
+    u->setp((uint8_t)rate, u->hdr->params[rate].max);
+    if (u->is_synth && u->noteon) u->noteon(60, 100);
+    int phase = 0;
+    for (int b = 0; b < 200; ++b) {
+      fill_input(in, phase);
+      phase += FRAMES;
+      u->render(in, out, FRAMES);
+    }
+    /* ...then park the rate at zero and leave it there. */
+    u->setp((uint8_t)rate, u->hdr->params[rate].min);
+    for (int b = 0; b < 4000; ++b) {
+      fill_input(in, phase);
+      phase += FRAMES;
+      memset(out, 0, sizeof(out));
+      u->render(in, out, FRAMES);
+      for (int i = 0; i < FRAMES * 2; ++i) {
+        const float a = out[i] < 0.0f ? -out[i] : out[i];
+        if (!isfinite(out[i]) || a > 4.0f) {
+          if (bad_target < 0) { bad_target = t; worst = out[i]; }
+        } else if (a > worst && bad_target < 0) {
+          worst = a;
+        }
+      }
+    }
+    if (u->noteoff) u->noteoff(60);
+  }
+
+  CHECK(bad_target < 0,
+        "%s: LFO2 parked at rate 0 stays put (worst |out| %.3f%s%s)",
+        u->hdr->name, worst < 0 ? -worst : worst,
+        bad_target < 0 ? "" : ", target ",
+        bad_target < 0 ? ""
+                       : (u->getstr ? u->getstr((uint8_t)target, bad_target) : "?"));
+
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+  if (u->reset) u->reset();
+}
+
 /* ---- control thread racing the audio thread ---------------------------
  *
  * On the device unit_set_param_value(), unit_reset(), unit_suspend() and
@@ -866,6 +944,11 @@ static void measure_stack(unit_t *u) {
 }
 
 int main(int argc, char **argv) {
+  /* Unbuffered: this harness runs code that can and does segfault, and when
+   * it does, the last line printed is the only evidence of where.  Piped into
+   * a log, a block-buffered stdout loses all of it. */
+  setvbuf(stdout, NULL, _IONBF, 0);
+
   if (argc < 2) {
     fprintf(stderr, "usage: %s <unit.drmlgunit> [more units...]\n", argv[0]);
     return 2;
@@ -890,6 +973,9 @@ int main(int argc, char **argv) {
 
   printf("\n=== Density / grain scheduling ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_density(&s_units[i]);
+
+  printf("\n=== Modulation stability ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_lfo_stability(&s_units[i]);
 
   printf("\n=== Chord tuning ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_chords(&s_units[i]);

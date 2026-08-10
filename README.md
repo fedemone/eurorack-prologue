@@ -250,6 +250,29 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 9 | Arp Src | Arp note source: Chord (steps the selected Chord's tones) or Octaves (steps octaves of the root) |
 | 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
 | 11 | Arp Oct | Octave span of the sequence (1-4) |
+| 12 | LFO Target | What LFO1 modulates: Position, Struct., Bright., Damping, Note, Chord, LFO2 Frq, LFO2 Dep |
+| 13 | LFO1 Shape | Transfer curve: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine |
+| 14 | LFO1 Rate | 0-100% (0 = LFO1 off) |
+| 15 | LFO2 Rate | 0-100% |
+| 16 | LFO2 Depth | 0-100% |
+| 17 | LFO2 Target | As LFO Target, minus the two LFO2 entries — LFO2 cannot modulate itself |
+| 18 | LFO2 Shape | As LFO1 Shape |
+
+**Modulation:** two LFOs, one destination each, laid out as on the Plaits and
+Elements ports. LFO1 has a Rate but no Depth — it arrives at full scale (from the
+host's shape LFO on prologue, from the wrapper's own oscillator on drumlogue), so
+its Shape is what tames it; LFO2 has both. Alongside the four continuous knobs,
+two destinations are particular to this engine:
+
+- **Note** transposes the sounding pitch, ±2 semitones at full swing — vibrato
+  rather than sirens, since LFO1 has no depth of its own to turn down. Applied
+  after the arpeggiator, so a running pattern transposes as a whole instead of
+  having its intervals rewritten under it.
+- **Chord** steps along the chord list rather than sliding through it, because
+  it selects a table of string tunings rather than naming a quantity. Slow, it
+  is a chord sequencer; fast, it is closer to a broken arpeggio. It clamps
+  rather than wraps, so `Chord` itself decides where in the list the sweep sits
+  — put it mid-list for a symmetric one.
 
 **Chords:** the first eleven — `Oct`, `5th`, `sus4`, `min`, `min7`, `min9`, `min11`,
 `69`, `Maj9`, `Maj7`, `Maj` — are Rings' own. Three more are added here, chosen for
@@ -285,6 +308,7 @@ extra gain can't clip the output.
 **Sound design tips:**
 - The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
 - `Just7` and `Slendro` show their character best with Damping high and Polyphony 1: the strings need time to ring before the tuning is audible as tuning rather than as a chord shape
+- Point an LFO at `Chord` with a slow rate and a high `Damping` to get a chord sequence that overlaps itself — each change retunes the strings while the previous chord is still ringing
 - Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
@@ -622,6 +646,23 @@ Known Issues
   (`lut_stiffness`, `lut_4_decades`, `lut_fm_frequency_quantizer`, reachable
   at Structure or Damping 100%) and those *are* fixed, in the port rather than
   the engine — see `kLutSafeMax` in `rings-resonator.cc`.
+
+* **Plaits and Elements: LFO2 drifts when its Rate is at 0.** Both ports build
+  LFO2 on stmlib's `CosineOscillator`, whose coefficient `InitApproximate()`
+  sets to `2 - 32·freq²`. At rate 0 that is exactly 2 — a double pole at z = 1
+  — so the recursion integrates instead of oscillating and ramps linearly from
+  wherever the last non-zero rate left it, measured at about 1.7 per thousand
+  blocks. Reachable by turning LFO2 Depth up and leaving its Rate alone. It
+  does not blow up audibly: nearly every destination in those ports goes
+  through `clip01f()`, so the symptom is a modulated knob sliding to its rail
+  and staying there rather than a fault, and `make test-arm` measures both
+  units as staying in range. Rings does not use the resonator — it takes its
+  cosine from the phase accumulator it already keeps, which cannot leave
+  [-1, 1] at any rate — because there the ramp reached an unclipped
+  destination (`Note`) and segfaulted on 9 runs in 30. The fix in the sibling
+  ports is the same two-line substitution, and is not applied here only
+  because it would change the sound of two units that are otherwise untouched
+  by this work.
 
 Building
 ====

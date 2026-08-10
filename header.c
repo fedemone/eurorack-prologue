@@ -48,6 +48,17 @@
  *    id 5:  Chord       (0-13)       -> k_user_osc_param_id3
  *    id 6:  Model       (strings)    -> custom OSC_PARAM index 8
  *    id 7:  Polyphony   (strings)    -> custom OSC_PARAM index 9
+ *    id 8:  Arp         (strings)    -> custom OSC_PARAM index 10
+ *    id 9:  Arp Src     (strings)    -> custom OSC_PARAM index 11
+ *    id 10: Arp Rate    (strings)    -> custom OSC_PARAM index 12
+ *    id 11: Arp Oct     (strings)    -> custom OSC_PARAM index 13
+ *    id 12: LFO Target  (strings)    -> k_user_osc_param_id4
+ *    id 13: LFO1 Shape  (strings)    -> custom OSC_PARAM index 14
+ *    id 14: LFO1 Rate   (0-100%)     -> stored in wrapper (internal LFO1)
+ *    id 15: LFO2 Rate   (0-100%)     -> k_user_osc_param_id5
+ *    id 16: LFO2 Depth  (0-100%)     -> k_user_osc_param_id6
+ *    id 17: LFO2 Target (strings)    -> custom OSC_PARAM index 15
+ *    id 18: LFO2 Shape  (strings)    -> custom OSC_PARAM index 16
  *
  *  Clouds oscillators (clouds-granular.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -413,10 +424,12 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Rings oscillators (rings-resonator.cc)
      *
-     * 12 params: Base Note, Position, Structure, Brightness, Damping,
-     *            Chord, Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct
+     * 19 params: Base Note, Position, Structure, Brightness, Damping,
+     *            Chord, Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct,
+     *            LFO Target, LFO1 Shape, LFO1 Rate, LFO2 Rate, LFO2 Depth,
+     *            LFO2 Target, LFO2 Shape
      * ================================================================ */
-    .num_params = 12,
+    .num_params = 19,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -457,14 +470,29 @@ const __unit_header unit_header_t unit_header = {
         /* id 11: Arp Oct (span the sequence across 1-4 octaves) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Arp Oct"}},
 
-        // Pages 3-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        // Page 4
+        /* id 12: LFO Target — what LFO1 modulates.  0-5 are the destinations
+         * both LFOs share; 6 and 7 are LFO2's own rate and depth, which only
+         * LFO1 can reach. */
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
+        /* id 13: LFO1 Shape (transfer curve for the incoming shape LFO) */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        /* id 14: LFO1 Rate (drumlogue has no host shape LFO, so the wrapper
+         * runs one; 0 leaves LFO1 silent, which is the default) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
+        /* id 15: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+
+        // Page 5
+        /* id 16: LFO2 Depth (LFO1 has no depth of its own — it arrives at
+         * full scale — so this is the only modulation amount on the panel) */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
+        /* id 17: LFO2 Target (the six shared destinations) */
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
+        /* id 18: LFO2 Shape */
+        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+
+        // Pages 5-6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
