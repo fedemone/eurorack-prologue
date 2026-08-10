@@ -243,13 +243,28 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
 | 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
 | 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-10) |
+| 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-13, see below) |
 | 6 | Model | Resonator type (0-5, see table above; default 4 = Sympathetic Quantized) |
 | 7 | Polyphony | Number of voices (1-4) |
 | 8 | Arp | Arpeggiator pattern: Off, Up, Down, Up-Dn, Dn-Up, Up-P-Dn, Up-Dn-P, Dn-P-Up, Dn-Up-P |
 | 9 | Arp Src | Arp note source: Chord (steps the selected Chord's tones) or Octaves (steps octaves of the root) |
 | 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
 | 11 | Arp Oct | Octave span of the sequence (1-4) |
+
+**Chords:** the first eleven — `Oct`, `5th`, `sus4`, `min`, `min7`, `min9`, `min11`,
+`69`, `Maj9`, `Maj7`, `Maj` — are Rings' own. Three more are added here, chosen for
+things a resonator can do that a keyboard cannot:
+
+| | | |
+|---|---|---|
+| 11 | `4ths` | Stacked perfect fourths. No third at all, so it is neither major nor minor — open and unresolved. Not the same as `sus4`, which is a triad with the third moved; this is fourths all the way up. |
+| 12 | `Just7` | A just-intoned dominant seventh — harmonics 4:5:6:7 of the root. The seventh is 31 cents flat of the tempered one, so instead of beating against the root it locks into its overtone series and the chord fuses into a single tone. |
+| 13 | `Slendro` | The Javanese gamelan pentatonic, as five equal steps to the octave. Every interval is foreign to equal temperament; struck and left to ring it is recognisably gong-like. |
+
+The last two are microtonal, which is why they are worth having on *this* engine
+specifically: each string is tuned independently and rings sympathetically, so
+intervals that merely sound out of tune on a piano audibly lock or beat here. The
+arpeggiator walks the same intervals, fractions included.
 
 **Arpeggiator:** Rings sounds one held note at a time, so the built-in arpeggiator
 builds a sequence of pitches and re-strums the resonator step-by-step, synced to the
@@ -269,6 +284,7 @@ extra gain can't clip the output.
 
 **Sound design tips:**
 - The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
+- `Just7` and `Slendro` show their character best with Damping high and Polyphony 1: the strings need time to ring before the tuning is audible as tuning rather than as a chord shape
 - Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar

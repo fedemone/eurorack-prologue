@@ -865,11 +865,15 @@ static const char * const s_rings_model_names[] = {
 };
 #define NUM_RINGS_MODELS 6
 
+/* The last three are added by this port; see the fork note in
+ * eurorack-opt/rings/dsp/part.cc.  "4ths" is a quartal voicing, "Just7" a
+ * just-intoned dominant seventh, "Slendro" the gamelan pentatonic. */
 static const char * const s_rings_chord_names[] = {
   "Oct", "5th", "sus4", "min", "min7",
-  "min9", "min11", "69", "Maj9", "Maj7", "Maj"
+  "min9", "min11", "69", "Maj9", "Maj7", "Maj",
+  "4ths", "Just7", "Slendro"
 };
-#define NUM_RINGS_CHORDS 11
+#define NUM_RINGS_CHORDS 14
 
 static const char * const s_rings_poly_names[] = {
   "1", "2", "3", "4"

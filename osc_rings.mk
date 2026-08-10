@@ -4,7 +4,7 @@ PROJECT = $(OSCILLATOR)
 OSC_DDEFS = -DRINGS_RESONATOR
 
 UCXXSRC = rings-resonator.cc \
-	eurorack/rings/dsp/part.cc \
+	eurorack-opt/rings/dsp/part.cc \
 	eurorack/rings/dsp/resonator.cc \
 	eurorack/rings/dsp/string.cc \
 	eurorack/rings/dsp/fm_voice.cc \

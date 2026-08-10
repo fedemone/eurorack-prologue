@@ -1,8 +1,8 @@
 eurorack-opt — forked Mutable Instruments sources
 =================================================
 
-Optimized copies of a few files from the `eurorack/` submodule, used by the
-`clouds` and `clouds_fx` drumlogue units.
+Forked copies of a few files from the `eurorack/` submodule, used by the
+`clouds`, `clouds_fx` and `rings` drumlogue units.
 
 `eurorack/` is a submodule this repository does not edit, so the only way to
 change engine code is to fork the file here and take it out of the submodule's
@@ -22,6 +22,7 @@ commit **58b9125**.
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
+| `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
 
 Why forked, and what changed
 ----------------------------
@@ -316,26 +317,74 @@ Measured under `qemu-arm` with Granular mode as a control for run-to-run
 noise, the Spectral/Granular cost ratio went 1.24–1.33 → 1.13–1.16 across
 three paired runs: roughly half of the FFT's excess cost.
 
+### `rings/dsp/part.cc`, `rings/dsp/performance_state.h` — three more chords
+
+The only fork here that adds a feature rather than saving time. Rings' Chord
+parameter selects a row of string tunings; upstream ships eleven, and three
+more are appended: `4ths` (stacked perfect fourths), `Just7` (a just-intoned
+dominant seventh, harmonics 4:5:6:7) and `Slendro` (the gamelan pentatonic,
+five equal steps to the octave). Two of the three are microtonal, which is the
+reason for picking them: on a resonator each string is tuned and rings
+independently, so a septimal seventh audibly stops beating against the root
+where a tempered one does not. `kNumChords` goes 11 → 14 in the header, and
+`rings-resonator.cc` carries the matching arpeggiator intervals.
+
+There is a second reason this had to be a fork rather than a header tweak.
+Upstream states the table's length twice — once as `kNumChords` in
+`performance_state.h`, once as a literal `11` in the table's own dimension in
+`part.cc` — and nothing ties the two together. `performance_state.chord`
+reaches the subscript from the panel with no bounds check in between, so
+raising the parameter's range while the dimension stayed at 11 would index
+past the row into the next polyphony block, on the audio thread. The fork
+dimensions both tables with `kNumChords`, which is what makes them move
+together.
+
+One file keys off the constant and is deliberately *not* forked:
+`rings/dsp/string_synth_part.cc` has a parallel table of its own, so its three
+new rows initialise to zero — a unison on the root, not garbage. Nothing in
+this port instantiates `StringSynthPart` (it is Rings' polyphonic string-synth
+easter egg), so that is dead data; if anything ever reaches it, those rows are
+the thing to fill in.
+
+Verified by `make test-arm`, which strums each of the fourteen chords on the
+shipped binary and measures the result with a Goertzel per probe interval. The
+checks are within-recording comparisons of adjacent bins — `Just7` must ring
+9.69 semitones rather than 10.0, `min7` and `4ths` the other way round,
+`Slendro` 2.4 rather than 2.0 — because comparing whole spectra between chords
+does not work on this engine: Rings' strings are not sinusoids, every one puts
+a second harmonic an octave up, and a bare fifth came out closer to a major
+ninth than one chord did to a second recording of itself. Two bins a third of
+a semitone apart in the same recording share whatever overtones land there, so
+what is left between them is the fundamental. Margins are 60× to 11000×.
+
 Build wiring — read this before touching it
 -------------------------------------------
 
-Three of the four files are **headers**, and two of them change `sizeof` of
-types the port layer instantiates (`GranularProcessor` directly; `FFT`, hence
+Most of these files are **headers**, and several change `sizeof` of types the
+port layer instantiates (`GranularProcessor` directly; `FFT`, hence
 `PhaseVocoder`, hence `GranularProcessor` again). A build where some
 translation units see these headers and others see the submodule's links
-without complaint and then corrupts memory at run time.
+without complaint and then corrupts memory at run time. The Rings pair has the
+same shape for a different reason: a `part.cc` compiled against the
+submodule's `kNumChords` would index a fourteen-row parameter into an
+eleven-row table.
 
 So the rule is all-or-nothing, and it is enforced:
 
 1. `eurorack-opt/` must come **before** `eurorack/` on the include path.
-2. `eurorack-opt/clouds/dsp/granular_processor.cc` replaces the submodule's in
-   the source list — the submodule's must not also be compiled. (`shy_fft.h`
-   and `stft.h` are headers, so they need no source-list change, only the
-   include order.)
-3. The build defines `CLOUDS_OPT_ENGINE`. These headers define
-   `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if
-   the first is set without the second, so a half-configured build fails at
-   compile time instead of at run time.
+2. `eurorack-opt/clouds/dsp/granular_processor.cc` and
+   `eurorack-opt/rings/dsp/part.cc` replace the submodule's in the source list
+   — the submodule's must not also be compiled. (The rest are headers, so they
+   need no source-list change, only the include order.)
+3. The build defines `CLOUDS_OPT_ENGINE`. The Clouds headers define
+   `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if the
+   first is set without the second, so a half-configured build fails at compile
+   time instead of at run time.
+4. Rings has no such guard, because it needs none: `part.cc` is the only file
+   that reads the chord table, and it is the file that is forked. A build that
+   picked up the wrong `performance_state.h` would be caught by `make
+   test-arm`, which walks the Chord parameter over its declared range and
+   requires every value to name a chord.
 
 Wired up in `Makefile` (`CLOUDS_OPT_FLAGS`, `CLOUDS_FX_ENGINE`),
 `osc_clouds.mk`, `makefile.inc` (`DINCDIR`, which is why the entry goes
@@ -348,8 +397,12 @@ Re-syncing when the submodule moves
 -----------------------------------
 
 ```
-git -C eurorack log --oneline 58b9125..HEAD -- clouds/dsp/granular_processor.h \
-    clouds/dsp/granular_processor.cc clouds/dsp/pvoc/stft.h stmlib/fft/shy_fft.h
+git -C eurorack log --oneline 58b9125..HEAD -- \
+    clouds/dsp/granular_processor.h clouds/dsp/granular_processor.cc \
+    clouds/dsp/pvoc/stft.h clouds/dsp/pvoc/phase_vocoder.h \
+    clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
+    stmlib/fft/shy_fft.h \
+    rings/dsp/part.cc rings/dsp/performance_state.h
 ```
 
 If that is empty, nothing to do. If not, diff upstream against the fork and
@@ -361,6 +414,11 @@ diffuser ramp: `make test-clouds-synth` covers all four modes, and
 `docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md` has the numbers to compare against.
 `make test-clouds-fft` and `make test-clouds-engine-opt` are the two that
 compare fork against original directly, so run both.
+
+For the Rings pair the re-sync is mechanical — the fork is the upstream file
+with three rows appended to each of the two chord tables and the dimension
+named rather than spelled `11`. If upstream ever changes those tables, the
+rows to keep are the ones marked "Added for the drumlogue port".
 
 Note that `shy_fft.h` is a *stmlib* file, not a Clouds one, so upstream churn
 there could affect anything else that uses stmlib's FFT. Nothing else in this

@@ -45,7 +45,7 @@
  *    id 2:  Structure   (0-100%)     -> k_user_osc_param_shiftshape
  *    id 3:  Brightness  (0-100%)     -> k_user_osc_param_id1
  *    id 4:  Damping     (0-100%)     -> k_user_osc_param_id2
- *    id 5:  Chord       (0-10)       -> k_user_osc_param_id3
+ *    id 5:  Chord       (0-13)       -> k_user_osc_param_id3
  *    id 6:  Model       (strings)    -> custom OSC_PARAM index 8
  *    id 7:  Polyphony   (strings)    -> custom OSC_PARAM index 9
  *
@@ -431,8 +431,13 @@ const __unit_header unit_header_t unit_header = {
         // Page 2
         /* id 4: Damping (resonance / decay time) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Damping"}},
-        /* id 5: Chord (chord type for sympathetic strings) */
-        {0, 10, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
+        /* id 5: Chord (chord type for sympathetic strings).
+         * 0-10 are Rings' own; 11-13 are added by this port (Quartal, a just
+         * dominant seventh, and the gamelan slendro scale).  The max must
+         * track kNumChords in eurorack-opt/rings/dsp/performance_state.h --
+         * rings-resonator.cc clamps against it, so a stale value here costs a
+         * chord rather than an out-of-range index. */
+        {0, 13, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
         /* id 6: Model (resonator type: Modal/SympStr/String/FM/...).
          * Default 4 = SympStrQ so the Chord parameter is effective on load
          * (Chord only affects the quantized sympathetic-strings model). */

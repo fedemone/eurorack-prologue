@@ -122,19 +122,32 @@ static inline float clip_lut01f(float x) {
 static const uint16_t kTempoParamIndex = 63;
 
 /* Ascending chord tones (semitones from root) for the arpeggiator, one row
- * per Chord value (matches Rings' 11 chord names).  -1 terminates a row. */
-static const int8_t kArpChordIntervals[11][4] = {
-  {  0, 12, -1, -1 },  /* Oct   */
-  {  0,  7, 12, -1 },  /* 5th   */
-  {  0,  5,  7, -1 },  /* sus4  */
-  {  0,  3,  7, -1 },  /* min   */
-  {  0,  3,  7, 10 },  /* min7  */
-  {  0,  3,  7, 14 },  /* min9  */
-  {  0,  3,  7, 17 },  /* min11 */
-  {  0,  4,  7,  9 },  /* 69    */
-  {  0,  4,  7, 14 },  /* Maj9  */
-  {  0,  4,  7, 11 },  /* Maj7  */
-  {  0,  4,  7, -1 },  /* Maj   */
+ * per Chord value.  A negative entry is an unused slot: no chord tone sits
+ * below its own root, so the sign is free to mean "row ends here".
+ *
+ * These are float, not the integer semitones they were, because the last two
+ * chords are not in twelve-tone equal temperament -- Just7's seventh is 31
+ * cents flat and every step of Slendro is 2.4 semitones.  The arpeggiator
+ * re-strums the same resonator the sympathetic strings are tuned on, so an
+ * integer table here would have had the arp playing a rounded version of the
+ * chord the strings are ringing at: a third of a semitone out, held against a
+ * resonator, which is a beat rather than a rounding error.  See the chord
+ * table in eurorack-opt/rings/dsp/part.cc, which these mirror. */
+static const float kArpChordIntervals[kNumChords][4] = {
+  {  0.0f, 12.0f,  -1.0f, -1.0f },  /* Oct     */
+  {  0.0f,  7.0f,  12.0f, -1.0f },  /* 5th     */
+  {  0.0f,  5.0f,   7.0f, -1.0f },  /* sus4    */
+  {  0.0f,  3.0f,   7.0f, -1.0f },  /* min     */
+  {  0.0f,  3.0f,   7.0f, 10.0f },  /* min7    */
+  {  0.0f,  3.0f,   7.0f, 14.0f },  /* min9    */
+  {  0.0f,  3.0f,   7.0f, 17.0f },  /* min11   */
+  {  0.0f,  4.0f,   7.0f,  9.0f },  /* 69      */
+  {  0.0f,  4.0f,   7.0f, 14.0f },  /* Maj9    */
+  {  0.0f,  4.0f,   7.0f, 11.0f },  /* Maj7    */
+  {  0.0f,  4.0f,   7.0f, -1.0f },  /* Maj     */
+  {  0.0f,  5.0f,  10.0f, 15.0f },  /* 4ths    */
+  {  0.0f,  3.86f,  7.02f, 9.69f }, /* Just7   */
+  {  0.0f,  2.4f,   4.8f,  7.2f },  /* Slendro */
 };
 
 /* Step length as a fraction of a quarter-note beat, per Arp Rate index. */
@@ -187,12 +200,12 @@ static int build_arp_notes(float root, float *out) {
     /* Chord tones */
     int ci = (int)performance_state_.chord;
     if (ci < 0) ci = 0;
-    if (ci > 10) ci = 10;
+    if (ci > kNumChords - 1) ci = kNumChords - 1;
     for (int o = 0; o < octs; ++o) {
       for (int k = 0; k < 4 && n < kArpMaxNotes; ++k) {
-        int8_t iv = kArpChordIntervals[ci][k];
-        if (iv < 0) continue;
-        out[n++] = root + (float)iv + 12.0f * o;
+        float iv = kArpChordIntervals[ci][k];
+        if (iv < 0.0f) continue;
+        out[n++] = root + iv + 12.0f * (float)o;
       }
     }
   }
