@@ -125,6 +125,14 @@ The oscillator has a built-in additional cosine key-synced LFO which can modulat
 | 7          | `LFO2 Rate` |       |
 | 8          | `LFO2 Int` |       |
 
+At `LFO2 Rate` 0 the LFO holds still, at the top of its cosine — so with Depth
+up it adds a steady full-scale offset to its destination rather than a moving
+one. This is the same in all three ports that have an LFO2. It used to drift
+instead: every shape is now derived from one phase accumulator, cosine
+included, rather than from stmlib's `CosineOscillator`, whose recursion
+degenerates into an integrator at rate 0. See the comment above the LFO2 block
+in `macro-oscillator2.cc` for the mechanism.
+
 For more information please read the excellent [Mutable Instruments Plaits documentation](https://mutable-instruments.net/modules/plaits/manual/).
 
 ### Plaits Tips
@@ -633,37 +641,6 @@ Known Issues
 
 * When first selecting the oscillator in the multi-engine, all values default to their minimum values, however the display seems to default to 0. For bipolar values it means the display might still show 0% while internally in the oscillator the value is -100%.
 
-* **Clouds reads one element past `lut_window`** (upstream). `Grain::RenderEnvelope()`
-  calls `Interpolate(lut_window, gain, 4096.0f)`, and the table has 4097
-  entries, so a grain envelope phase landing exactly on 1.0 reads
-  `lut_window[4097]`. It is arithmetically harmless — an integral index of N
-  means a fractional part of zero, so the stray element is multiplied by zero
-  — and the table is followed by more `.rodata`, so it reads neighbouring
-  table data rather than faulting. Left alone deliberately: fixing it means
-  touching the Clouds engine fork, and both Clouds units are already awaiting
-  hardware re-testing after the Spectral changes; adding an unrelated engine
-  edit now would muddy that result. Rings had three of the same overrun
-  (`lut_stiffness`, `lut_4_decades`, `lut_fm_frequency_quantizer`, reachable
-  at Structure or Damping 100%) and those *are* fixed, in the port rather than
-  the engine — see `kLutSafeMax` in `rings-resonator.cc`.
-
-* **Plaits and Elements: LFO2 drifts when its Rate is at 0.** Both ports build
-  LFO2 on stmlib's `CosineOscillator`, whose coefficient `InitApproximate()`
-  sets to `2 - 32·freq²`. At rate 0 that is exactly 2 — a double pole at z = 1
-  — so the recursion integrates instead of oscillating and ramps linearly from
-  wherever the last non-zero rate left it, measured at about 1.7 per thousand
-  blocks. Reachable by turning LFO2 Depth up and leaving its Rate alone. It
-  does not blow up audibly: nearly every destination in those ports goes
-  through `clip01f()`, so the symptom is a modulated knob sliding to its rail
-  and staying there rather than a fault, and `make test-arm` measures both
-  units as staying in range. Rings does not use the resonator — it takes its
-  cosine from the phase accumulator it already keeps, which cannot leave
-  [-1, 1] at any rate — because there the ramp reached an unclipped
-  destination (`Note`) and segfaulted on 9 runs in 30. The fix in the sibling
-  ports is the same two-line substitution, and is not applied here only
-  because it would change the sound of two units that are otherwise untouched
-  by this work.
-
 Building
 ====
 
@@ -717,6 +694,9 @@ make test-clouds-fx-reconfig    # render thread vs control thread doing
                                 # Mode/Quality/reset (the park handshake)
 make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
                                 # engine, compared sample for sample
+make test-clouds-grain-window   # grain envelope, fork vs stock, plus an ASan
+                                # run over the endpoint that used to read one
+                                # element past lut_window
 make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
                                 # call vs upstream's loop, sample for sample
                                 # at every FFT size from 256 to 4096
