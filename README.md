@@ -125,13 +125,18 @@ The oscillator has a built-in additional cosine key-synced LFO which can modulat
 | 7          | `LFO2 Rate` |       |
 | 8          | `LFO2 Int` |       |
 
-At `LFO2 Rate` 0 the LFO holds still, at the top of its cosine — so with Depth
-up it adds a steady full-scale offset to its destination rather than a moving
-one. This is the same in all three ports that have an LFO2. It used to drift
-instead: every shape is now derived from one phase accumulator, cosine
-included, rather than from stmlib's `CosineOscillator`, whose recursion
-degenerates into an integrator at rate 0. See the comment above the LFO2 block
-in `macro-oscillator2.cc` for the mechanism.
+`LFO2 Rate` at 0 means no modulation: Depth does nothing until the rate leaves
+its end stop. This is the same in all three ports that have an LFO2, and it is
+checked exactly rather than approximately — `make test-arm` renders each unit
+twice at rate 0, once at each end of Depth, and requires the two renders to
+agree sample for sample.
+
+It used to drift instead of holding, and holding is not the same as reading
+zero: a stopped phase accumulator still has a value. Both are fixed. Every
+shape now comes from one phase accumulator rather than from stmlib's
+`CosineOscillator`, whose recursion degenerates into an integrator at rate 0,
+and the LFO reports zero rather than its parked value while the rate is at
+zero. See the comment above the LFO2 block in `macro-oscillator2.cc`.
 
 For more information please read the excellent [Mutable Instruments Plaits documentation](https://mutable-instruments.net/modules/plaits/manual/).
 
@@ -242,7 +247,7 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
 | 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
 
-**Parameters (12):**
+**Parameters (21):**
 
 | # | Name | Description |
 |---|------|-------------|
@@ -258,24 +263,31 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 9 | Arp Src | Arp note source: Chord (steps the selected Chord's tones) or Octaves (steps octaves of the root) |
 | 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
 | 11 | Arp Oct | Octave span of the sequence (1-4) |
-| 12 | LFO Target | What LFO1 modulates: Position, Struct., Bright., Damping, Note, Chord, LFO2 Frq, LFO2 Dep |
+| 12 | LFO1 Target | What LFO1 modulates: Position, Struct., Bright., Damping, Note, Chord, LFO2 Frq, LFO2 Dep |
 | 13 | LFO1 Shape | Transfer curve: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine |
 | 14 | LFO1 Rate | 0-100% (0 = LFO1 off) |
-| 15 | LFO2 Rate | 0-100% |
-| 16 | LFO2 Depth | 0-100% |
-| 17 | LFO2 Target | As LFO Target, minus the two LFO2 entries — LFO2 cannot modulate itself |
-| 18 | LFO2 Shape | As LFO1 Shape |
+| 15 | LFO1 Depth | 0-100% (default 100%) |
+| 16 | LFO2 Target | As LFO1 Target, minus the two LFO2 entries — LFO2 cannot modulate itself |
+| 17 | LFO2 Shape | As LFO1 Shape |
+| 18 | LFO2 Rate | 0-100% (0 = LFO2 off) |
+| 19 | LFO2 Depth | 0-100% |
+| 20 | Note Range | Semitones of pitch modulation at full LFO swing (0-24, default 2) |
 
 **Modulation:** two LFOs, one destination each, laid out as on the Plaits and
-Elements ports. LFO1 has a Rate but no Depth — it arrives at full scale (from the
-host's shape LFO on prologue, from the wrapper's own oscillator on drumlogue), so
-its Shape is what tames it; LFO2 has both. Alongside the four continuous knobs,
-two destinations are particular to this engine:
+Elements ports but with a Rate, Depth, Shape and Target apiece — pages 4 and 5
+are one LFO each, in the same order, so the pair reads the same way. LFO1's
+waveform still arrives from outside (the host's shape LFO on prologue, the
+wrapper's own oscillator on drumlogue); Depth scales it after its Shape curve
+has been applied, so turning it down turns the modulation down rather than
+bending the curve. Either LFO at Rate 0 contributes nothing.
 
-- **Note** transposes the sounding pitch, ±2 semitones at full swing — vibrato
-  rather than sirens, since LFO1 has no depth of its own to turn down. Applied
-  after the arpeggiator, so a running pattern transposes as a whole instead of
-  having its intervals rewritten under it.
+Alongside the four continuous knobs, two destinations are particular to this
+engine:
+
+- **Note** transposes the sounding pitch by up to `Note Range` semitones at
+  full swing — 2 for vibrato, 12 for octave sweeps. Applied after the
+  arpeggiator, so a running pattern transposes as a whole instead of having its
+  intervals rewritten under it.
 - **Chord** steps along the chord list rather than sliding through it, because
   it selects a table of string tunings rather than naming a quantity. Slow, it
   is a chord sequencer; fast, it is closer to a broken arpeggio. It clamps
@@ -317,6 +329,7 @@ extra gain can't clip the output.
 - The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
 - `Just7` and `Slendro` show their character best with Damping high and Polyphony 1: the strings need time to ring before the tuning is audible as tuning rather than as a chord shape
 - Point an LFO at `Chord` with a slow rate and a high `Damping` to get a chord sequence that overlaps itself — each change retunes the strings while the previous chord is still ringing
+- `Note Range` is what decides whether `Note` is an effect or a gesture: 1-3 semitones is vibrato, 12 turns a slow LFO into an octave sweep, and 7 with a Ramp shape steps the whole arpeggio up a fifth and drops it back
 - Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar

@@ -424,12 +424,13 @@ const __unit_header unit_header_t unit_header = {
     /* ================================================================
      * Rings oscillators (rings-resonator.cc)
      *
-     * 19 params: Base Note, Position, Structure, Brightness, Damping,
+     * 21 params: Base Note, Position, Structure, Brightness, Damping,
      *            Chord, Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct,
-     *            LFO Target, LFO1 Shape, LFO1 Rate, LFO2 Rate, LFO2 Depth,
-     *            LFO2 Target, LFO2 Shape
+     *            LFO1 Target, LFO1 Shape, LFO1 Rate, LFO1 Depth,
+     *            LFO2 Target, LFO2 Shape, LFO2 Rate, LFO2 Depth,
+     *            Note Range
      * ================================================================ */
-    .num_params = 19,
+    .num_params = 21,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -470,31 +471,43 @@ const __unit_header unit_header_t unit_header = {
         /* id 11: Arp Oct (span the sequence across 1-4 octaves) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Arp Oct"}},
 
+        /* Pages 4 and 5 are one LFO each, in the same order, so the two read
+         * as a pair on the panel: Target, Shape, Rate, Depth. */
+
         // Page 4
-        /* id 12: LFO Target — what LFO1 modulates.  0-5 are the destinations
+        /* id 12: LFO1 Target — what LFO1 modulates.  0-5 are the destinations
          * both LFOs share; 6 and 7 are LFO2's own rate and depth, which only
          * LFO1 can reach. */
-        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
+        {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Target"}},
         /* id 13: LFO1 Shape (transfer curve for the incoming shape LFO) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
         /* id 14: LFO1 Rate (drumlogue has no host shape LFO, so the wrapper
          * runs one; 0 leaves LFO1 silent, which is the default) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
-        /* id 15: LFO2 Rate */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 15: LFO1 Depth.  Defaults to full scale, which is where LFO1 was
+         * fixed before this existed; Rate at 0 is what keeps it quiet on
+         * load. */
+        {0, 100, 0, 100, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Depth"}},
 
         // Page 5
-        /* id 16: LFO2 Depth (LFO1 has no depth of its own — it arrives at
-         * full scale — so this is the only modulation amount on the panel) */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
-        /* id 17: LFO2 Target (the six shared destinations) */
+        /* id 16: LFO2 Target (the six shared destinations) */
         {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
-        /* id 18: LFO2 Shape */
+        /* id 17: LFO2 Shape */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+        /* id 18: LFO2 Rate */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
+        /* id 19: LFO2 Depth */
+        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Depth"}},
 
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
+        // Page 6
+        /* id 20: Note Range — semitones of pitch modulation at full LFO
+         * swing, for whichever LFO has Note as its target.  2 is vibrato,
+         * 12 an octave sweep.  rings-resonator.cc clamps against its own
+         * maximum, so a stale value here costs range rather than an
+         * out-of-range index. */
+        {0, 24, 0, 2, k_unit_param_type_none, 0, 0, 0, {"Note Range"}},
+
+        // Page 6: blank
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
