@@ -87,6 +87,9 @@ typedef struct {
   void_f reset;
   void_f resume;
   void_f suspend;
+  init_f init;
+  void_f teardown;
+  unit_runtime_desc_t desc;
   int is_synth;
   float peak;
 } unit_t;
@@ -182,6 +185,8 @@ static int load_unit(const char *path) {
   u->resume = (void_f)dlsym(h, "unit_resume");
   u->suspend = (void_f)dlsym(h, "unit_suspend");
   init_f f_init = (init_f)dlsym(h, "unit_init");
+  u->init = f_init;
+  u->teardown = (void_f)dlsym(h, "unit_teardown");
   void_f f_reset = u->reset;
   void_f f_resume = u->resume;
 
@@ -211,6 +216,7 @@ static int load_unit(const char *path) {
   desc.get_num_samples_for_bank = hook_num_samples;
   desc.get_sample = hook_get_sample;
 
+  u->desc = desc;
   int8_t err = f_init(&desc);
   CHECK(err == k_unit_err_none, "%s: unit_init -> %d", u->hdr->name, err);
   if (err != k_unit_err_none) return -1;
@@ -766,6 +772,115 @@ static void probe_chords(unit_t *u) {
  * modulation source that walks away from its own range fails it.
  * ---------------------------------------------------------------------- */
 
+/* Takes the unit through its full lifecycle, sets every parameter to its
+ * declared init except LFO2's target, rate and depth, renders `blocks`, and
+ * returns an FNV-1a hash of every output sample.  Comparing hashes is how the
+ * rate-0 check below stays exact: it asserts that two renders are the same
+ * render, not that they are close. */
+static uint32_t render_lfo_pass(unit_t *u, int target, int t, int rate,
+                                int rate_v, int depth, int depth_v,
+                                int blocks) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  uint32_t h = 2166136261u;
+
+  /* teardown/init, not reset(): reset() is a note-off.  It leaves a resonator
+   * ringing and it does not rewind the random source these engines excite
+   * themselves from, and either is enough to make two passes differ for
+   * reasons that have nothing to do with the LFO.  The full lifecycle is the
+   * only rewind the ABI offers. */
+  if (u->teardown) u->teardown();
+  u->init(&u->desc);
+  if (u->reset) u->reset();
+  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+  if (u->resume) u->resume();
+
+  u->setp((uint8_t)target, t);
+  u->setp((uint8_t)rate, rate_v);
+  u->setp((uint8_t)depth, depth_v);
+
+  if (u->is_synth && u->noteon) u->noteon(60, 100);
+  for (int b = 0; b < blocks; ++b) {
+    fill_input(in, b * FRAMES);
+    memset(out, 0, sizeof(out));
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES * 2; ++i) {
+      uint32_t bits;
+      memcpy(&bits, &out[i], sizeof(bits));
+      h = (h ^ bits) * 16777619u;
+    }
+  }
+  if (u->noteoff) u->noteoff(60);
+  return h;
+}
+
+/* Rate 0 means no modulation.
+ *
+ * A stopped phase accumulator still has a value, so an LFO can park at its
+ * peak and turn Depth into a DC offset on whatever it is pointed at -- and
+ * rate 0 is where the knob starts, so that is the state a unit loads in.  The
+ * check is exact rather than tolerant: with the rate at its minimum, moving
+ * Depth from one end of its range to the other must not change a single
+ * output sample.
+ *
+ * Two renders are only comparable if the unit renders the same thing twice,
+ * which is why each pass re-inits rather than resetting -- reset() is a
+ * note-off and rewinds neither a ringing resonator nor the random source
+ * these engines excite themselves from.  A control pass checks that per unit
+ * anyway, so an engine that stays unreproducible for some other reason is
+ * reported as skipped rather than quietly passing. */
+static void probe_lfo_rate_zero_silent(unit_t *u) {
+  int rate = -1, depth = -1, target = -1;
+  for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
+    const char *n = u->hdr->params[p].name;
+    if (strcmp(n, "LFO2 Rate") == 0) rate = (int)p;
+    if (strcmp(n, "LFO2 Depth") == 0) depth = (int)p;
+    if (strcmp(n, "LFO2 Target") == 0) target = (int)p;
+  }
+  if (rate < 0 || depth < 0 || target < 0) return;
+  if (u->hdr->params[rate].min != 0) return; /* nothing to park at */
+  if (!u->init || !u->teardown) return;      /* cannot rewind between passes */
+
+  const int lo = u->hdr->params[depth].min;
+  const int hi = u->hdr->params[depth].max;
+  const int t0 = u->hdr->params[target].min;
+  const int blocks = 300;
+
+  if (render_lfo_pass(u, target, t0, rate, 0, depth, lo, blocks) !=
+      render_lfo_pass(u, target, t0, rate, 0, depth, lo, blocks)) {
+    CHECK(1, "%s: LFO2 rate 0 = no modulation (skipped: renders differ "
+             "between identical passes)", u->hdr->name);
+    return;
+  }
+
+  int bad_target = -1;
+  for (int t = t0; t <= u->hdr->params[target].max && bad_target < 0; ++t) {
+    const uint32_t quiet = render_lfo_pass(u, target, t, rate, 0, depth, lo,
+                                           blocks);
+    const uint32_t loud  = render_lfo_pass(u, target, t, rate, 0, depth, hi,
+                                           blocks);
+    if (quiet != loud) bad_target = t;
+  }
+
+  CHECK(bad_target < 0,
+        "%s: LFO2 rate 0 = no modulation, Depth %d..%d over %d targets%s%s",
+        u->hdr->name, lo, hi,
+        u->hdr->params[target].max - t0 + 1,
+        bad_target < 0 ? "" : " -- fails at ",
+        bad_target < 0 ? ""
+                       : (u->getstr ? u->getstr((uint8_t)target, bad_target)
+                                    : "?"));
+
+  /* Leave the unit initialized and at its defaults for whatever runs next. */
+  if (u->teardown) u->teardown();
+  u->init(&u->desc);
+  if (u->reset) u->reset();
+  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+  if (u->resume) u->resume();
+}
+
 static void probe_lfo_stability(unit_t *u) {
   static float in[FRAMES * 2];
   static float out[FRAMES * 2];
@@ -976,6 +1091,7 @@ int main(int argc, char **argv) {
 
   printf("\n=== Modulation stability ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_lfo_stability(&s_units[i]);
+  for (int i = 0; i < s_num_units; ++i) probe_lfo_rate_zero_silent(&s_units[i]);
 
   printf("\n=== Chord tuning ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_chords(&s_units[i]);

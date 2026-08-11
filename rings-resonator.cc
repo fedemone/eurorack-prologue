@@ -41,6 +41,7 @@
 #include <arm_neon.h>
 #endif
 
+#include "stmlib/utils/random.h"
 #include "rings/dsp/part.h"
 #include "rings/resources.h"
 
@@ -102,12 +103,19 @@ enum LfoTarget {
   LfoTargetLfo2Depth
 };
 
-/* Semitones of pitch modulation at full LFO swing.  LFO1 has no depth control
- * -- it is whatever the host or the wrapper sends, which is full scale -- so
- * this constant is what makes LFO1 -> Note musical rather than a siren, and
- * it is deliberately a vibrato-sized number.  LFO2 reaches the same range at
- * Depth 100 % and scales down from there. */
-static const float kLfoNoteSemitones = 2.0f;
+/* Semitones of pitch modulation at full LFO swing.  A whole tone is vibrato,
+ * 12 is an octave sweep, and the useful settings are far enough apart that a
+ * fixed value could only suit one of them; the panel owns this.  Defaults to
+ * 2, which is what it was fixed at before the parameter existed.  Range is
+ * checked in OSC_PARAM rather than trusted, because it scales a value that
+ * ends up as a lookup-table index. */
+#define kLfoNoteSemitonesMax 24
+static uint16_t lfo_note_semitones_ = 2;
+
+/* LFO1's depth, 0-100.  On prologue there is no such parameter -- LFO1 is the
+ * host's shape LFO and arrives at whatever the panel sends -- so the default
+ * is full scale and that platform simply never writes it. */
+static uint16_t lfo1_depth_value = 100;
 
 static float lfo2 = 0.0f;
 static float lfo2_phase = 0.0f;
@@ -396,6 +404,16 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   (void)platform;
   (void)api;
 
+  /* Rings excites itself from stmlib::Random -- Plucker for the internal
+   * exciter, String::Process for the dispersion noise -- and that generator's
+   * state is a static nothing here was seeding, so the unit rendered
+   * differently depending on how much had been drawn from it before.  Seeded
+   * here the sequence restarts with the unit, as modal-strike.cc already
+   * does.  Consecutive notes still differ from each other; what becomes
+   * repeatable is a unit load, which is what makes the rate-0 modulation
+   * check in test_drmlgunit.c able to compare two renders at all. */
+  stmlib::Random::Seed(0x82eef2a3);
+
   part_.Init(reverb_buffer_);
   /* Default to the quantized sympathetic-strings model so the Chord
    * parameter is effective out of the box.  Chord only affects this model
@@ -437,6 +455,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   lfo1_shape_value = 0;
   lfo2_shape_value = 0;
   lfo2_target_     = 0;
+  lfo1_depth_value = 100;
+  lfo_note_semitones_ = 2;
 
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
 
@@ -460,14 +480,17 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
 {
   (void)frames;
 
-  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));
+  /* Shape first, then depth: the shapes are transfer curves, so scaling the
+   * input would bend the curve rather than turn the modulation down. */
+  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo)) *
+              (lfo1_depth_value * 0.01f);
 
   /* LFO2.  Every shape is derived from the one phase accumulator, so
    * switching shape mid-cycle continues rather than jumps.
    *
    * The cosine is computed from that phase rather than taken from stmlib's
-   * CosineOscillator, which is what the sibling ports use.  That class is a
-   * two-pole resonator, and InitApproximate() sets its coefficient to
+   * CosineOscillator, which is what all three ports used to do.  That class
+   * is a two-pole resonator, and InitApproximate() sets its coefficient to
    * 2 - 32*freq^2 -- which at freq 0 is exactly 2, a double pole at z = 1.
    * There the recursion stops oscillating and starts integrating: it ramps
    * linearly from whatever state the last non-zero rate left it in, about
@@ -480,41 +503,49 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
    * no check of its own: ASan put the read 3392 entries before the start of
    * lut_pitch_ratio_high, and `make test-arm` segfaulted on 9 runs in 30.
    * A cosine of a bounded phase cannot do that at any rate, including zero.
-   *
-   * Worth knowing when reading the sibling ports: macro-oscillator2.cc and
-   * modal-strike.cc still use the resonator, so LFO2 Rate 0 with Depth up
-   * ramps there too.  Most of their destinations run through clip01f(),
-   * which turns it into a knob stuck at its rail rather than a fault. */
+   * macro-oscillator2.cc and modal-strike.cc have since had the same
+   * substitution; the comment there tells the same story from their side. */
   { const float freq =
         clip01f(p_values[k_user_osc_param_id5] * 0.01f +
                 get_lfo_value(LfoTargetLfo2Frequency)) / 600.f;
     const float depth =
         clip01f(p_values[k_user_osc_param_id6] * 0.01f +
                 get_lfo_value(LfoTargetLfo2Depth));
-    lfo2_phase += freq;
-    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
-    const float cosine = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
-    float raw;
-    switch (lfo2_shape_value) {
-      default:
-      case 0: /* Cosine */
-        raw = cosine;
-        break;
-      case 1: /* Triangle */
-        raw = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
-                                  : (3.0f - 4.0f * lfo2_phase);
-        break;
-      case 2: /* Ramp Up */
-        raw = 2.0f * lfo2_phase - 1.0f;
-        break;
-      case 3: /* Ramp Down */
-        raw = 1.0f - 2.0f * lfo2_phase;
-        break;
-      case 4: /* Fat Sine */
-        raw = clip1m1f(cosine * (1.5f - 0.5f * cosine * cosine));
-        break;
+    if (freq <= 0.0f) {
+      /* Rate 0 means no modulation, not modulation parked somewhere.  A
+       * stopped phase accumulator still has a value -- cos(0) is 1 -- and
+       * reporting that would make Depth a DC offset whenever Rate is at its
+       * end stop, which is where it starts.  The phase is left where it is
+       * rather than rewound: Rate can itself be modulated (LfoTargetLfo2-
+       * Frequency), and rewinding would re-trigger the shape every time the
+       * effective rate crossed zero. */
+      lfo2 = 0.0f;
+    } else {
+      lfo2_phase += freq;
+      if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+      const float cosine = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
+      float raw;
+      switch (lfo2_shape_value) {
+        default:
+        case 0: /* Cosine */
+          raw = cosine;
+          break;
+        case 1: /* Triangle */
+          raw = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                    : (3.0f - 4.0f * lfo2_phase);
+          break;
+        case 2: /* Ramp Up */
+          raw = 2.0f * lfo2_phase - 1.0f;
+          break;
+        case 3: /* Ramp Down */
+          raw = 1.0f - 2.0f * lfo2_phase;
+          break;
+        case 4: /* Fat Sine */
+          raw = clip1m1f(cosine * (1.5f - 0.5f * cosine * cosine));
+          break;
+      }
+      lfo2 = raw * depth;
     }
-    lfo2 = raw * depth;
   }
 
   /* Apply latched engine reconfiguration here, on the audio thread, before
@@ -588,7 +619,7 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
    * exactly how it presented.  Two compares to make the table index a
    * property of this line rather than of everything upstream of it. */
   performance_state_.note +=
-      get_lfo_value(LfoTargetNote) * kLfoNoteSemitones;
+      get_lfo_value(LfoTargetNote) * (float)lfo_note_semitones_;
   if (!(performance_state_.note > 0.0f)) performance_state_.note = 0.0f;
   else if (performance_state_.note > 127.0f) performance_state_.note = 127.0f;
 
@@ -715,6 +746,15 @@ void OSC_PARAM(uint16_t index, uint16_t value)
 
     case 16: /* LFO2 Shape (0-4) */
       lfo2_shape_value = value;
+      break;
+
+    case 17: /* LFO1 Depth (0-100) */
+      lfo1_depth_value = value > 100 ? 100 : value;
+      break;
+
+    case 18: /* Note Range, in semitones at full LFO swing */
+      lfo_note_semitones_ =
+          value > kLfoNoteSemitonesMax ? kLfoNoteSemitonesMax : value;
       break;
 
     case kTempoParamIndex: /* Host tempo (integer BPM), forwarded by adapter */

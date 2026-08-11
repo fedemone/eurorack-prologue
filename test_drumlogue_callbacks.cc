@@ -241,7 +241,7 @@ TEST(unit_header_num_params) {
 #elif defined(CLOUDS_GRANULAR)
   ASSERT_EQ(16U, unit_header.num_params);
 #elif defined(RINGS_RESONATOR)
-  ASSERT_EQ(19U, unit_header.num_params);
+  ASSERT_EQ(21U, unit_header.num_params);
 #elif defined(ELEMENTS_RESONATOR_MODES)
   ASSERT_EQ(15U, unit_header.num_params);
 #else
@@ -438,7 +438,7 @@ TEST(unit_header_unused_params_are_none) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(RINGS_RESONATOR)
-  for (int i = 19; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 21; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -832,7 +832,7 @@ TEST(wrapper_param_out_of_range_ignored) {
 #elif defined(CLOUDS_GRANULAR)
   unit_set_param_value(16, 50);  /* id 16 -> default case, should return */
 #elif defined(RINGS_RESONATOR)
-  unit_set_param_value(19, 50);  /* id 19 -> default case, should return */
+  unit_set_param_value(21, 50);  /* id 21 -> default case, should return */
 #elif defined(ELEMENTS_RESONATOR_MODES)
   unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
 #else
@@ -1114,25 +1114,31 @@ TEST(rings_param_arp_str_values) {
 TEST(rings_param_lfo_routing) {
   init_unit();
   /* Continuous LFO params take the three OSC param slots Rings had spare. */
-  unit_set_param_value(12, 5);   /* LFO Target = Chord */
+  unit_set_param_value(12, 5);   /* LFO1 Target = Chord */
   ASSERT_EQ(k_user_osc_param_id4, g_mock.last_param_index);
   ASSERT_EQ(5, g_mock.last_param_value);
-  unit_set_param_value(15, 40);  /* LFO2 Rate */
+  unit_set_param_value(18, 40);  /* LFO2 Rate */
   ASSERT_EQ(k_user_osc_param_id5, g_mock.last_param_index);
   ASSERT_EQ(40, g_mock.last_param_value);
-  unit_set_param_value(16, 70);  /* LFO2 Depth */
+  unit_set_param_value(19, 70);  /* LFO2 Depth */
   ASSERT_EQ(k_user_osc_param_id6, g_mock.last_param_index);
   ASSERT_EQ(70, g_mock.last_param_value);
-  /* The three string params go on custom indices above the arp's. */
+  /* Everything else goes on custom indices above the arp's. */
   unit_set_param_value(13, 2);   /* LFO1 Shape */
   ASSERT_EQ(14, g_mock.last_param_index);
   ASSERT_EQ(2, g_mock.last_param_value);
-  unit_set_param_value(17, 4);   /* LFO2 Target = Note */
+  unit_set_param_value(16, 4);   /* LFO2 Target = Note */
   ASSERT_EQ(15, g_mock.last_param_index);
   ASSERT_EQ(4, g_mock.last_param_value);
-  unit_set_param_value(18, 3);   /* LFO2 Shape */
+  unit_set_param_value(17, 3);   /* LFO2 Shape */
   ASSERT_EQ(16, g_mock.last_param_index);
   ASSERT_EQ(3, g_mock.last_param_value);
+  unit_set_param_value(15, 65);  /* LFO1 Depth */
+  ASSERT_EQ(17, g_mock.last_param_index);
+  ASSERT_EQ(65, g_mock.last_param_value);
+  unit_set_param_value(20, 12);  /* Note Range */
+  ASSERT_EQ(18, g_mock.last_param_index);
+  ASSERT_EQ(12, g_mock.last_param_value);
   teardown_unit();
 }
 
@@ -1155,15 +1161,15 @@ TEST(rings_param_lfo_str_values) {
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(12, 7), "LFO2 Dep"));
   ASSERT_TRUE(unit_get_param_str_value(12, 8) == nullptr);
   /* LFO2 cannot modulate itself, so its list stops two entries earlier. */
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 5), "Chord"));
-  ASSERT_TRUE(unit_get_param_str_value(17, 6) == nullptr);
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(16, 5), "Chord"));
+  ASSERT_TRUE(unit_get_param_str_value(16, 6) == nullptr);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 0), "Cosine"));
-  ASSERT_EQ(0, strcmp(unit_get_param_str_value(18, 4), "Fat Sine"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 4), "Fat Sine"));
   /* Both target lists must agree with what the header says is selectable. */
   for (int32_t v = unit_header.params[12].min; v <= unit_header.params[12].max; ++v)
     ASSERT_TRUE(unit_get_param_str_value(12, v) != nullptr);
-  for (int32_t v = unit_header.params[17].min; v <= unit_header.params[17].max; ++v)
-    ASSERT_TRUE(unit_get_param_str_value(17, v) != nullptr);
+  for (int32_t v = unit_header.params[16].min; v <= unit_header.params[16].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(16, v) != nullptr);
   teardown_unit();
 }
 

@@ -241,22 +241,33 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
    * cosf() of a bounded phase cannot drift at any rate, including zero. */
   { float freq = get_lfo2_frequency() / 600.f;
     float depth = get_lfo2_depth();
-    lfo2_phase += freq;
-    if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
-    const float cos_val = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
-    float raw_lfo;
-    switch (lfo2_shape_value) {
-      default:
-      case 0: raw_lfo = cos_val; break;
-      case 1: raw_lfo = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
-                                             : (3.0f - 4.0f * lfo2_phase); break;
-      case 2: raw_lfo = 2.0f * lfo2_phase - 1.0f; break;
-      case 3: raw_lfo = 1.0f - 2.0f * lfo2_phase; break;
-      case 4: raw_lfo = cos_val * (1.5f - 0.5f * cos_val * cos_val);
-              raw_lfo = (raw_lfo > 1.0f) ? 1.0f : ((raw_lfo < -1.0f) ? -1.0f : raw_lfo);
-              break;
+    if (freq <= 0.0f) {
+      /* Rate 0 means no modulation, not modulation parked somewhere.  A
+       * stopped phase accumulator still has a value -- cos(0) is 1 -- and
+       * reporting that would make Depth a DC offset whenever Rate is at its
+       * end stop, which is where it starts.  The phase is left where it is
+       * rather than rewound: Rate can itself be modulated (LfoTargetLfo2-
+       * Frequency), and rewinding would re-trigger the shape every time the
+       * effective rate crossed zero. */
+      lfo2 = 0.0f;
+    } else {
+      lfo2_phase += freq;
+      if (lfo2_phase >= 1.0f) lfo2_phase -= (float)(int)lfo2_phase;
+      const float cos_val = cosf(2.0f * 3.1415926535f * lfo2_phase); /* [-1, 1] */
+      float raw_lfo;
+      switch (lfo2_shape_value) {
+        default:
+        case 0: raw_lfo = cos_val; break;
+        case 1: raw_lfo = (lfo2_phase < 0.5f) ? (4.0f * lfo2_phase - 1.0f)
+                                              : (3.0f - 4.0f * lfo2_phase); break;
+        case 2: raw_lfo = 2.0f * lfo2_phase - 1.0f; break;
+        case 3: raw_lfo = 1.0f - 2.0f * lfo2_phase; break;
+        case 4: raw_lfo = cos_val * (1.5f - 0.5f * cos_val * cos_val);
+                raw_lfo = (raw_lfo > 1.0f) ? 1.0f : ((raw_lfo < -1.0f) ? -1.0f : raw_lfo);
+                break;
+      }
+      lfo2 = raw_lfo * depth;
     }
-    lfo2 = raw_lfo * depth;
   }
 #endif
 
