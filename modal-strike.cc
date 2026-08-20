@@ -135,6 +135,37 @@ inline float get_lfo_value(enum LfoTarget target) {
 }
 #endif
 
+/* Geometry indexes a lookup table one element wider than its own top value.
+ *
+ * Resonator::ComputeFilters() calls Interpolate(lut_stiffness, geometry_,
+ * 256.0f), and stmlib's Interpolate reads table[floor(x * N)] and the element
+ * after it.  lut_stiffness holds 257 entries, indices 0..256, so geometry_ at
+ * exactly 1.0 reads lut_stiffness[257] -- one past the end.  Geometry at 100 %
+ * is one knob position, not a corner case, and either LFO can drive it there
+ * from anywhere below.
+ *
+ * The overrun is benign arithmetically -- an integral index of N means a
+ * fractional part of zero, so the stray element is multiplied by zero -- and
+ * the table is followed by more .rodata, so it reads a neighbouring table
+ * rather than faulting.  It is still a read past the end of an array on the
+ * audio thread, in an address space shared with every other loaded unit, and
+ * the cost of not doing it is one 4096th of a knob's travel.
+ *
+ * Fixed here rather than in the engine, so no fork is needed: Geometry is the
+ * only parameter that reaches this table, and this is the only place it is
+ * set.  Damping also indexes a 257-entry table (lut_4_decades) but through
+ * damping_ * 0.8f, which tops out at 204.8 and is safe.  Rings carries the
+ * same helper, under the same name, for the same reason.
+ *
+ * Found by pointing AddressSanitizer at a host build of the unit and running
+ * the test_drmlgunit parameter sweep at it; see `make test-asan`. */
+static const float kLutSafeMax = 1.0f - 1.0f / 4096.0f;
+
+static inline float clip_lut01f(float x) {
+  x = clip01f(x);
+  return (x > kLutSafeMax) ? kLutSafeMax : x;
+}
+
 inline uint8_t GetGateFlags(bool gate_in) {
   uint8_t flags = 0;
   if (gate_in) {
@@ -440,7 +471,7 @@ inline float get_shape() {
   return clip01f(shape + get_lfo_value(LfoTargetPosition));
 }
 inline float get_shift_shape() {
-  return clip01f(shiftshape + get_lfo_value(LfoTargetGeometry));
+  return clip_lut01f(shiftshape + get_lfo_value(LfoTargetGeometry));
 }
 inline float get_strength() {
   return clip01f((p_values[k_user_osc_param_id1] * 0.01f) + get_lfo_value(LfoTargetStrength));
@@ -462,7 +493,7 @@ inline float get_shape() {
   return clip01f(shape + (p_values[k_user_osc_param_id6] == 0 ? shape_lfo : 0.0f));
 }
 inline float get_shift_shape() {
-  return clip01f(shiftshape + (p_values[k_user_osc_param_id6] == 1 ? shape_lfo : 0.0f));
+  return clip_lut01f(shiftshape + (p_values[k_user_osc_param_id6] == 1 ? shape_lfo : 0.0f));
 }
 inline float get_strength() {
   return clip01f((p_values[k_user_osc_param_id1] * 0.01f) + (p_values[k_user_osc_param_id6] == 2 ? shape_lfo : 0.0f));

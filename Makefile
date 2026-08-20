@@ -125,7 +125,7 @@ test-mussola:
 CLOUDS_OPT_FLAGS = -Ieurorack-opt -Ieurorack -DCLOUDS_OPT_ENGINE
 CLOUDS_FX_ENGINE = \
     eurorack-opt/clouds/dsp/granular_processor.cc \
-    eurorack/clouds/dsp/correlator.cc \
+    eurorack-opt/clouds/dsp/correlator.cc \
     eurorack/clouds/dsp/mu_law.cc \
     eurorack-opt/clouds/dsp/pvoc/phase_vocoder.cc \
     eurorack/clouds/dsp/pvoc/frame_transformation.cc \
@@ -378,6 +378,110 @@ test-arm:
 	    -I$(SDK_COMMON) test_drmlgunit.c -o test_drmlgunit_arm -ldl -lm -lpthread
 	$(QEMU_ARM) -L $(ARM_SYSROOT) ./test_drmlgunit_arm \
 	    $(foreach u,$(ARM_UNITS),drumlogue/$(u)/build/$(u).drmlgunit)
+
+##############################################################################
+# Sanitizer sweep: the same probe battery as test-arm, run against host builds
+# of the units under AddressSanitizer and UndefinedBehaviorSanitizer.
+#
+# test-arm proves the shipped artifact runs. It cannot see a read one element
+# past a lookup table, because that read lands in the next table and returns a
+# plausible number. Every memory defect found in this repository so far is of
+# that shape — Rings at Structure or Damping 100%, Elements at Geometry 100%,
+# the Clouds grain envelope at the end of its window — and each was found by
+# hand, by someone who already suspected it. This target is that search
+# automated: no new test scenarios, just the existing sweeps with a sanitizer
+# watching.
+#
+# Each unit's source list, defines and include paths already exist, in
+# drumlogue/<unit>/config.mk. They are used here rather than restated, so a
+# unit that gains a source file is covered without anyone remembering to come
+# back. Those files all assign the same variable names, so only one can be
+# included per make invocation -- hence the recursion through asan-unit.
+#
+# The version script is applied here too, so the cross-unit isolation check
+# means what it means on the device: without it every unit exports its whole
+# port layer and the first one loaded hijacks the rest.
+#
+# Requires a compiler with ASan/UBSan (any recent GCC or Clang). No ARM
+# toolchain, no QEMU, no Docker.
+#
+# Usage: make test-asan [ASAN_UNITS="rings modal_strike"]
+##############################################################################
+
+ASAN_UNITS ?= mo2_va rings mussola modal_strike clouds clouds_fx
+ASAN_DIR   := .asan
+
+# -DTEST is stmlib's own switch for its portable fallbacks: without it,
+# stmlib/dsp/dsp.h reaches for ARM inline assembly (ssat, usat, vsqrt.f32)
+# that no host assembler will take. It selects sqrtf() and a compare-based
+# clip, which is what the ARM instructions do anyway. Nothing in this
+# repository keys on TEST, and the existing host suites already build this way.
+# shift-base is switched off. It fires on things like `position << 4`, where
+# position is a Q20.12 index and the shift is deliberately reinterpreting the
+# bit pattern; the standard calls a signed left shift that overflows undefined,
+# but every compiler this builds under wraps it, and Mutable Instruments' code
+# uses the idiom throughout. Suppressing the whole check is the honest choice —
+# forking headers to add casts would buy nothing and cost maintenance. The
+# related shift-exponent check stays on, because a shift by the operand's width
+# genuinely differs between targets: that is how the Stretch correlator's
+# `>> 32` was found, and ARM and x86 answer it differently.
+ASAN_FLAGS := -fsanitize=address,undefined -fsanitize-recover=address,undefined \
+              -fno-sanitize=shift-base \
+              -fno-omit-frame-pointer -g -O1 -DTEST
+
+# Set by the recursive invocation below; brings in one unit's build variables.
+# PROJROOT is overridden *after* the include because config.mk assigns it with
+# `=`, so the source lists that reference it are still unexpanded here.
+ifdef ASAN_UNIT
+include drumlogue/$(ASAN_UNIT)/config.mk
+PROJROOT := .
+endif
+
+.PHONY: test-asan asan-unit
+test-asan:
+	@echo "Sanitizer sweep (AddressSanitizer + UndefinedBehaviorSanitizer)"
+	@echo ""
+	@mkdir -p $(ASAN_DIR)
+	@for u in $(ASAN_UNITS); do \
+	    $(MAKE) --no-print-directory asan-unit ASAN_UNIT=$$u || exit 1; \
+	 done
+	@$(CC) -std=gnu11 $(ASAN_FLAGS) -I$(SDK_COMMON) \
+	    test_drmlgunit.c -o $(ASAN_DIR)/test_drmlgunit -ldl -lm -lpthread
+	@ASAN_OPTIONS=halt_on_error=0:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=0 \
+	    ./$(ASAN_DIR)/test_drmlgunit \
+	    $(foreach u,$(ASAN_UNITS),$(ASAN_DIR)/$(u).so) \
+	    > $(ASAN_DIR)/log.txt 2>&1; echo "  probe exit: $$?" > $(ASAN_DIR)/exit.txt
+	@grep -E "^  (ok|FAIL) " $(ASAN_DIR)/log.txt | grep -c "^  ok" \
+	    | xargs printf "  %s probe checks passed\n"
+	@a=`grep -c "ERROR: AddressSanitizer" $(ASAN_DIR)/log.txt || true`; \
+	 u=`grep -c "runtime error:" $(ASAN_DIR)/log.txt || true`; \
+	 f=`grep -c "^  FAIL " $(ASAN_DIR)/log.txt || true`; \
+	 if [ "$$a" = 0 ] && [ "$$u" = 0 ] && [ "$$f" = 0 ]; then \
+	    echo "  no AddressSanitizer reports"; \
+	    echo "  no UndefinedBehaviorSanitizer reports"; \
+	    echo ""; echo "=== ALL PASS (0 failures) ==="; \
+	 else \
+	    echo "  AddressSanitizer reports: $$a"; \
+	    echo "  UndefinedBehaviorSanitizer reports: $$u"; \
+	    echo "  probe failures: $$f"; \
+	    echo ""; \
+	    grep -E "ERROR: AddressSanitizer|runtime error:|is located|^  FAIL " \
+	        $(ASAN_DIR)/log.txt | head -40; \
+	    echo ""; echo "  full log: $(ASAN_DIR)/log.txt"; \
+	    exit 1; \
+	 fi
+
+# One unit, built as a host shared object with the sanitizers on.
+# -I$(SDK_COMMON) leads, so the unit and the probe harness agree on the ABI
+# structs; the repo keeps its own vendored copy of runtime.h for the
+# prologue-family headers and the two are separate transcriptions.
+asan-unit:
+	@echo "  building $(ASAN_UNIT) ..."
+	@mkdir -p $(ASAN_DIR)
+	@$(CXX) -std=c++11 $(ASAN_FLAGS) -shared -fPIC \
+	    $(UDEFS) -I$(SDK_COMMON) $(patsubst %,-I%,$(UINCDIR)) \
+	    $(CSRC) $(CXXSRC) -o $(ASAN_DIR)/$(ASAN_UNIT).so -lm \
+	    -Wl,--version-script=drumlogue/unit_exports.map
 
 # Benchmark: per-render cost distribution for the shipped .drmlgunit binaries,
 # measured through the drumlogue ABI at the buffer size the firmware asks for.

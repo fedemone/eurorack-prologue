@@ -699,6 +699,13 @@ PLATFORM=prologue make -f osc_fm.mk
 # Run host-side tests (no Docker/ARM needed)
 make test-all
 
+# Build every unit as a host shared object and run the drumlogue probe
+# battery at it under AddressSanitizer and UndefinedBehaviorSanitizer.
+# No ARM toolchain, no QEMU, no Docker.  This is what finds reads one
+# element past a lookup table, which test-arm cannot see -- the stray
+# read lands in the next table and returns a plausible number.
+make test-asan
+
 # Clouds-specific suites (also part of test-all)
 make test-clouds-synth          # real engine behind OSC_*: pitch across the
                                 # 48/32 kHz boundary, all modes x qualities

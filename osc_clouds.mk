@@ -7,7 +7,7 @@ OSC_DDEFS = -DCLOUDS_GRANULAR -DCLOUDS_OPT_ENGINE
 
 UCXXSRC = clouds-granular.cc \
 	eurorack-opt/clouds/dsp/granular_processor.cc \
-	eurorack/clouds/dsp/correlator.cc \
+	eurorack-opt/clouds/dsp/correlator.cc \
 	eurorack/clouds/dsp/mu_law.cc \
 	eurorack/clouds/dsp/pvoc/phase_vocoder.cc \
 	eurorack/clouds/dsp/pvoc/frame_transformation.cc \

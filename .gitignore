@@ -37,3 +37,4 @@ test_clouds_grain_window_stock
 test_clouds_grain_window_fork
 test_clouds_grain_window_asan
 .grain_window_*.txt
+.asan/
