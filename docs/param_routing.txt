@@ -1,0 +1,324 @@
+# VirtAnalog: 15 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Shape             0 -> osc[6] = 0
+ 1 Shape            50 -> osc[6] = 512
+ 1 Shape           100 -> osc[6] = 1023
+ 2 ShiftShape        0 -> osc[7] = 0
+ 2 ShiftShape       50 -> osc[7] = 512
+ 2 ShiftShape      100 -> osc[7] = 1023
+ 3 Param 1           0 -> osc[0] = 0
+ 3 Param 1          50 -> osc[0] = 100
+ 3 Param 1         100 -> osc[0] = 200
+ 4 Param 2           0 -> osc[1] = 0
+ 4 Param 2          50 -> osc[1] = 50
+ 4 Param 2         100 -> osc[1] = 100
+ 5 LFO Target        0 -> osc[2] = 0
+ 5 LFO Target        3 -> osc[2] = 3
+ 5 LFO Target        7 -> osc[2] = 7
+ 6 LFO1 Shape        0 -> osc[11] = 0
+ 6 LFO1 Shape        2 -> osc[11] = 2
+ 6 LFO1 Shape        4 -> osc[11] = 4
+ 7 LFO1 Rate         0 -> wrapper
+ 7 LFO1 Rate        50 -> wrapper
+ 7 LFO1 Rate       100 -> wrapper
+ 8 LFO2 Rate         0 -> osc[3] = 0
+ 8 LFO2 Rate        50 -> osc[3] = 50
+ 8 LFO2 Rate       100 -> osc[3] = 100
+ 9 LFO2 Depth        0 -> osc[4] = 0
+ 9 LFO2 Depth       50 -> osc[4] = 50
+ 9 LFO2 Depth      100 -> osc[4] = 100
+10 LFO2 Target       0 -> osc[5] = 0
+10 LFO2 Target       3 -> osc[5] = 3
+10 LFO2 Target       7 -> osc[5] = 7
+11 LFO2 Shape        0 -> osc[12] = 0
+11 LFO2 Shape        2 -> osc[12] = 2
+11 LFO2 Shape        4 -> osc[12] = 4
+12 Gate Mode         0 -> osc[13] = 0
+12 Gate Mode         1 -> osc[13] = 1
+12 Gate Mode         2 -> osc[13] = 2
+13 LFO1 Depth        0 -> osc[14] = 0
+13 LFO1 Depth       50 -> osc[14] = 50
+13 LFO1 Depth      100 -> osc[14] = 100
+14 Pitch Range       0 -> osc[15] = 0
+14 Pitch Range      12 -> osc[15] = 12
+14 Pitch Range      24 -> osc[15] = 24
+# String: 15 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Shape             0 -> osc[6] = 0
+ 1 Shape            50 -> osc[6] = 512
+ 1 Shape           100 -> osc[6] = 1023
+ 2 ShiftShape        0 -> osc[7] = 0
+ 2 ShiftShape       50 -> osc[7] = 512
+ 2 ShiftShape      100 -> osc[7] = 1023
+ 3 Harmonics         0 -> osc[0] = 0
+ 3 Harmonics        50 -> osc[0] = 100
+ 3 Harmonics       100 -> osc[0] = 200
+ 4 Attenuate         0 -> osc[1] = 0
+ 4 Attenuate        50 -> osc[1] = 50
+ 4 Attenuate       100 -> osc[1] = 100
+ 5 LFO Target        0 -> osc[2] = 0
+ 5 LFO Target        3 -> osc[2] = 3
+ 5 LFO Target        7 -> osc[2] = 7
+ 6 LFO1 Shape        0 -> osc[11] = 0
+ 6 LFO1 Shape        2 -> osc[11] = 2
+ 6 LFO1 Shape        4 -> osc[11] = 4
+ 7 LFO1 Rate         0 -> wrapper
+ 7 LFO1 Rate        50 -> wrapper
+ 7 LFO1 Rate       100 -> wrapper
+ 8 LFO2 Rate         0 -> osc[3] = 0
+ 8 LFO2 Rate        50 -> osc[3] = 50
+ 8 LFO2 Rate       100 -> osc[3] = 100
+ 9 LFO2 Depth        0 -> osc[4] = 0
+ 9 LFO2 Depth       50 -> osc[4] = 50
+ 9 LFO2 Depth      100 -> osc[4] = 100
+10 LFO2 Target       0 -> osc[5] = 0
+10 LFO2 Target       3 -> osc[5] = 3
+10 LFO2 Target       7 -> osc[5] = 7
+11 LFO2 Shape        0 -> osc[12] = 0
+11 LFO2 Shape        2 -> osc[12] = 2
+11 LFO2 Shape        4 -> osc[12] = 4
+12 Gate Mode         0 -> osc[13] = 0
+12 Gate Mode         1 -> osc[13] = 1
+12 Gate Mode         2 -> osc[13] = 2
+13 LFO1 Depth        0 -> osc[14] = 0
+13 LFO1 Depth       50 -> osc[14] = 50
+13 LFO1 Depth      100 -> osc[14] = 100
+14 Pitch Range       0 -> osc[15] = 0
+14 Pitch Range      12 -> osc[15] = 12
+14 Pitch Range      24 -> osc[15] = 24
+# Strike24: 15 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Position          0 -> osc[6] = 0
+ 1 Position         50 -> osc[6] = 512
+ 1 Position        100 -> osc[6] = 1023
+ 2 Geometry          0 -> osc[7] = 0
+ 2 Geometry         50 -> osc[7] = 512
+ 2 Geometry        100 -> osc[7] = 1023
+ 3 Strength          0 -> osc[0] = 0
+ 3 Strength         50 -> osc[0] = 50
+ 3 Strength        100 -> osc[0] = 100
+ 4 Mallet            0 -> osc[1] = 0
+ 4 Mallet           50 -> osc[1] = 50
+ 4 Mallet          100 -> osc[1] = 100
+ 5 Timbre            0 -> osc[2] = 0
+ 5 Timbre           50 -> osc[2] = 50
+ 5 Timbre          100 -> osc[2] = 100
+ 6 Damping           0 -> osc[3] = 0
+ 6 Damping          50 -> osc[3] = 50
+ 6 Damping         100 -> osc[3] = 100
+ 7 Brightness        0 -> osc[4] = 0
+ 7 Brightness       50 -> osc[4] = 50
+ 7 Brightness      100 -> osc[4] = 100
+ 8 LFO Target        0 -> osc[5] = 0
+ 8 LFO Target        4 -> osc[5] = 4
+ 8 LFO Target        8 -> osc[5] = 8
+ 9 LFO1 Shape        0 -> osc[11] = 0
+ 9 LFO1 Shape        2 -> osc[11] = 2
+ 9 LFO1 Shape        4 -> osc[11] = 4
+10 LFO1 Rate         0 -> wrapper
+10 LFO1 Rate        50 -> wrapper
+10 LFO1 Rate       100 -> wrapper
+11 LFO2 Rate         0 -> osc[8] = 0
+11 LFO2 Rate        50 -> osc[8] = 50
+11 LFO2 Rate       100 -> osc[8] = 100
+12 LFO2 Depth        0 -> osc[9] = 0
+12 LFO2 Depth       50 -> osc[9] = 50
+12 LFO2 Depth      100 -> osc[9] = 100
+13 LFO2 Target       0 -> osc[10] = 0
+13 LFO2 Target       3 -> osc[10] = 3
+13 LFO2 Target       6 -> osc[10] = 6
+14 LFO2 Shape        0 -> osc[12] = 0
+14 LFO2 Shape        2 -> osc[12] = 2
+14 LFO2 Shape        4 -> osc[12] = 4
+# Rings: 21 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Position          0 -> osc[6] = 0
+ 1 Position         50 -> osc[6] = 512
+ 1 Position        100 -> osc[6] = 1023
+ 2 Structure         0 -> osc[7] = 0
+ 2 Structure        50 -> osc[7] = 512
+ 2 Structure       100 -> osc[7] = 1023
+ 3 Brightness        0 -> osc[0] = 0
+ 3 Brightness       50 -> osc[0] = 50
+ 3 Brightness      100 -> osc[0] = 100
+ 4 Damping           0 -> osc[1] = 0
+ 4 Damping          50 -> osc[1] = 50
+ 4 Damping         100 -> osc[1] = 100
+ 5 Chord             0 -> osc[2] = 0
+ 5 Chord             6 -> osc[2] = 6
+ 5 Chord            13 -> osc[2] = 13
+ 6 Model             0 -> osc[8] = 0
+ 6 Model             2 -> osc[8] = 2
+ 6 Model             5 -> osc[8] = 5
+ 7 Polyphony         1 -> osc[9] = 1
+ 7 Polyphony         2 -> osc[9] = 2
+ 7 Polyphony         4 -> osc[9] = 4
+ 8 Arp               0 -> osc[10] = 0
+ 8 Arp               4 -> osc[10] = 4
+ 8 Arp               8 -> osc[10] = 8
+ 9 Arp Src           0 -> osc[11] = 0
+ 9 Arp Src           0 -> osc[11] = 0
+ 9 Arp Src           1 -> osc[11] = 1
+10 Arp Rate          0 -> osc[12] = 0
+10 Arp Rate          2 -> osc[12] = 2
+10 Arp Rate          5 -> osc[12] = 5
+11 Arp Oct           1 -> osc[13] = 1
+11 Arp Oct           2 -> osc[13] = 2
+11 Arp Oct           4 -> osc[13] = 4
+12 LFO1 Target       0 -> osc[3] = 0
+12 LFO1 Target       3 -> osc[3] = 3
+12 LFO1 Target       7 -> osc[3] = 7
+13 LFO1 Shape        0 -> osc[14] = 0
+13 LFO1 Shape        2 -> osc[14] = 2
+13 LFO1 Shape        4 -> osc[14] = 4
+14 LFO1 Rate         0 -> wrapper
+14 LFO1 Rate        50 -> wrapper
+14 LFO1 Rate       100 -> wrapper
+15 LFO1 Depth        0 -> osc[17] = 0
+15 LFO1 Depth       50 -> osc[17] = 50
+15 LFO1 Depth      100 -> osc[17] = 100
+16 LFO2 Target       0 -> osc[15] = 0
+16 LFO2 Target       2 -> osc[15] = 2
+16 LFO2 Target       5 -> osc[15] = 5
+17 LFO2 Shape        0 -> osc[16] = 0
+17 LFO2 Shape        2 -> osc[16] = 2
+17 LFO2 Shape        4 -> osc[16] = 4
+18 LFO2 Rate         0 -> osc[4] = 0
+18 LFO2 Rate        50 -> osc[4] = 50
+18 LFO2 Rate       100 -> osc[4] = 100
+19 LFO2 Depth        0 -> osc[5] = 0
+19 LFO2 Depth       50 -> osc[5] = 50
+19 LFO2 Depth      100 -> osc[5] = 100
+20 Note Range        0 -> osc[18] = 0
+20 Note Range       12 -> osc[18] = 12
+20 Note Range       24 -> osc[18] = 24
+# Clouds: 16 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Position          0 -> osc[6] = 0
+ 1 Position         50 -> osc[6] = 512
+ 1 Position        100 -> osc[6] = 1023
+ 2 Size              0 -> osc[7] = 0
+ 2 Size             50 -> osc[7] = 512
+ 2 Size            100 -> osc[7] = 1023
+ 3 Density           0 -> osc[0] = 0
+ 3 Density          50 -> osc[0] = 50
+ 3 Density         100 -> osc[0] = 100
+ 4 Texture           0 -> osc[1] = 0
+ 4 Texture          50 -> osc[1] = 50
+ 4 Texture         100 -> osc[1] = 100
+ 5 Pitch             0 -> osc[2] = 65512
+ 5 Pitch            24 -> osc[2] = 0
+ 5 Pitch            48 -> osc[2] = 24
+ 6 Feedback          0 -> osc[3] = 0
+ 6 Feedback         50 -> osc[3] = 50
+ 6 Feedback        100 -> osc[3] = 100
+ 7 Dry/Wet           0 -> osc[4] = 0
+ 7 Dry/Wet          50 -> osc[4] = 50
+ 7 Dry/Wet         100 -> osc[4] = 100
+ 8 Reverb            0 -> osc[5] = 0
+ 8 Reverb           50 -> osc[5] = 50
+ 8 Reverb          100 -> osc[5] = 100
+ 9 Freeze            0 -> osc[8] = 0
+ 9 Freeze            0 -> osc[8] = 0
+ 9 Freeze            1 -> osc[8] = 1
+10 Mode              0 -> osc[9] = 0
+10 Mode              1 -> osc[9] = 1
+10 Mode              3 -> osc[9] = 3
+11 Quality           0 -> osc[10] = 0
+11 Quality           1 -> osc[10] = 1
+11 Quality           3 -> osc[10] = 3
+12 SampleBank        0 -> osc[11] = 0
+12 SampleBank        7 -> osc[11] = 7
+12 SampleBank       15 -> osc[11] = 15
+13 SampleNum         0 -> osc[12] = 0
+13 SampleNum        32 -> osc[12] = 32
+13 SampleNum        64 -> osc[12] = 64
+14 SmplStart         0 -> osc[13] = 0
+14 SmplStart       500 -> osc[13] = 500
+14 SmplStart      1000 -> osc[13] = 1000
+15 SmplEnd           0 -> osc[14] = 0
+15 SmplEnd         500 -> osc[14] = 500
+15 SmplEnd        1000 -> osc[14] = 1000
+# Mussola: 24 params
+ 0 Base Note         0 -> wrapper
+ 0 Base Note        63 -> wrapper
+ 0 Base Note       127 -> wrapper
+ 1 Phoneme           0 -> osc[6] = 0
+ 1 Phoneme          50 -> osc[6] = 512
+ 1 Phoneme         100 -> osc[6] = 1023
+ 2 Timbre            0 -> osc[7] = 0
+ 2 Timbre           50 -> osc[7] = 512
+ 2 Timbre          100 -> osc[7] = 1023
+ 3 Harmonics         0 -> osc[0] = 0
+ 3 Harmonics        50 -> osc[0] = 50
+ 3 Harmonics       100 -> osc[0] = 100
+ 4 Morph             0 -> osc[1] = 0
+ 4 Morph            50 -> osc[1] = 50
+ 4 Morph           100 -> osc[1] = 100
+ 5 Speed             0 -> osc[8] = 0
+ 5 Speed            50 -> osc[8] = 50
+ 5 Speed           100 -> osc[8] = 100
+ 6 Prosody           0 -> osc[9] = 0
+ 6 Prosody          50 -> osc[9] = 50
+ 6 Prosody         100 -> osc[9] = 100
+ 7 Decay             0 -> osc[10] = 0
+ 7 Decay            50 -> osc[10] = 50
+ 7 Decay           100 -> osc[10] = 100
+ 8 Mix               0 -> osc[11] = 0
+ 8 Mix              50 -> osc[11] = 50
+ 8 Mix             100 -> osc[11] = 100
+ 9 Model             0 -> osc[12] = 0
+ 9 Model             1 -> osc[12] = 1
+ 9 Model             3 -> osc[12] = 3
+10 Gate Mode         0 -> osc[13] = 0
+10 Gate Mode         1 -> osc[13] = 1
+10 Gate Mode         3 -> osc[13] = 3
+11 Voices            1 -> osc[14] = 1
+11 Voices            2 -> osc[14] = 2
+11 Voices            4 -> osc[14] = 4
+12 Detune            0 -> osc[15] = 0
+12 Detune           50 -> osc[15] = 50
+12 Detune          100 -> osc[15] = 100
+13 Spread            0 -> osc[16] = 0
+13 Spread           50 -> osc[16] = 50
+13 Spread          100 -> osc[16] = 100
+14 Gender            0 -> osc[17] = 0
+14 Gender           50 -> osc[17] = 50
+14 Gender          100 -> osc[17] = 100
+15 Attack            0 -> osc[18] = 0
+15 Attack           50 -> osc[18] = 50
+15 Attack          100 -> osc[18] = 100
+16 Style             0 -> osc[19] = 0
+16 Style             2 -> osc[19] = 2
+16 Style             5 -> osc[19] = 5
+17 Key Mode          0 -> osc[20] = 0
+17 Key Mode          2 -> osc[20] = 2
+17 Key Mode          5 -> osc[20] = 5
+18 Gliss             0 -> osc[21] = 0
+18 Gliss            50 -> osc[21] = 50
+18 Gliss           100 -> osc[21] = 100
+19 Sustain           0 -> osc[22] = 0
+19 Sustain          50 -> osc[22] = 50
+19 Sustain         100 -> osc[22] = 100
+20 LFO Shape         0 -> osc[23] = 0
+20 LFO Shape         1 -> osc[23] = 1
+20 LFO Shape         3 -> osc[23] = 3
+21 LFO Dest          0 -> osc[24] = 0
+21 LFO Dest          7 -> osc[24] = 7
+21 LFO Dest         14 -> osc[24] = 14
+22 LFO Rate          0 -> osc[25] = 0
+22 LFO Rate         50 -> osc[25] = 50
+22 LFO Rate        100 -> osc[25] = 100
+23 LFO Depth         0 -> osc[26] = 0
+23 LFO Depth        50 -> osc[26] = 50
+23 LFO Depth       100 -> osc[26] = 100

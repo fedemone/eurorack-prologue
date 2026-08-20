@@ -38,6 +38,7 @@
 #include "attributes.h"
 #include "drumlogue_fpu.h"
 #include "drumlogue_guards.h"
+#include "drumlogue_param_route.h"
 
 /* ===========================================================================
  * Module State
@@ -460,393 +461,39 @@ void unit_set_param_value(uint8_t id, int32_t value) {
 
   s_state.param_values[id] = value;
 
-  /* Map drumlogue param id to OSC param id and scale */
-  uint16_t osc_value;
-  user_osc_param_id_t osc_id;
+  /* Where it goes is a table in header.c, next to the descriptor that gives
+   * this parameter its range and name.  See drumlogue_param_route.h. */
+  if (id >= unit_header_own.num_params) return;
+  const unit_param_route_t route = unit_param_routes[id];
 
-#if defined(MUSSOLA_VOCAL)
-  /* Mussola custom OSC_PARAM indices (must match mussola.cc enum) */
-  enum {
-    k_mussola_param_speed     = 8,
-    k_mussola_param_prosody   = 9,
-    k_mussola_param_decay     = 10,
-    k_mussola_param_mix       = 11,
-    k_mussola_param_model     = 12,
-    k_mussola_param_gate_mode = 13,
-    k_mussola_param_voices    = 14,
-    k_mussola_param_detune    = 15,
-    k_mussola_param_spread    = 16,
-    k_mussola_param_gender    = 17,
-    k_mussola_param_attack    = 18,
-    k_mussola_param_style     = 19,
-    k_mussola_param_key_mode  = 20,
-    k_mussola_param_gliss     = 21,
-    k_mussola_param_sustain   = 22,
-    k_mussola_param_lfo_shape = 23,
-    k_mussola_param_lfo_dest  = 24,
-    k_mussola_param_lfo_rate  = 25,
-    k_mussola_param_lfo_depth = 26,
-  };
-  /* ---- Mussola param mapping ----
-   * id 0:  Base Note   -> stored in wrapper
-   * id 1:  Phoneme     -> k_user_osc_param_shape (10-bit)
-   * id 2:  Timbre      -> k_user_osc_param_shiftshape (10-bit)
-   * id 3:  Harmonics   -> k_user_osc_param_id1 (0-100)
-   * id 4:  Morph       -> k_user_osc_param_id2 (0-100)
-   * id 5:  Speed       -> k_mussola_param_speed (0-100)
-   * id 6:  Prosody     -> k_mussola_param_prosody (0-100)
-   * id 7:  Decay       -> k_mussola_param_decay (0-100)
-   * id 8:  Mix         -> k_mussola_param_mix (0-100)
-   * id 9:  Model       -> k_mussola_param_model (0-3)
-   * id 10: Gate Mode   -> k_mussola_param_gate_mode (0-2)
-   * id 11: Voices      -> k_mussola_param_voices (1-4)
-   * id 12: Detune      -> k_mussola_param_detune (0-100)
-   * id 13: Spread      -> k_mussola_param_spread (0-100)
-   * id 14: Gender      -> k_mussola_param_gender (0-100)
-   * id 15: Attack      -> k_mussola_param_attack (0-100)
-   * id 16: Style       -> k_mussola_param_style (0-5)
-   * id 17: Key Mode    -> k_mussola_param_key_mode (0-5)
-   * id 18: Gliss       -> k_mussola_param_gliss (0-100)
-   * id 19: Sustain     -> k_mussola_param_sustain (0-100)
-   * id 20: LFO Shape   -> k_mussola_param_lfo_shape (0-3)
-   * id 21: LFO Dest    -> k_mussola_param_lfo_dest (0-14)
-   * id 22: LFO Rate    -> k_mussola_param_lfo_rate (0-100)
-   * id 23: LFO Depth   -> k_mussola_param_lfo_depth (0-100)
-   */
-  switch (id) {
-    case 0: /* Base Note: MIDI note 0-127 */
+  uint16_t osc_value;
+  switch (route.kind) {
+    case k_route_base_note:
       set_base_note(value);
       return;
-    case 1: /* Phoneme: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 2: /* Timbre: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 3: /* Harmonics: 0-100 percent */
-      osc_id    = k_user_osc_param_id1;
-      osc_value = (uint16_t)value;
-      break;
-    case 4: /* Morph: 0-100 percent */
-      osc_id    = k_user_osc_param_id2;
-      osc_value = (uint16_t)value;
-      break;
-    /* Cases 5-23 all map to custom OSC_PARAM index = drumlogue_id + 3 */
-    case 5:  /* Speed */
-    case 6:  /* Prosody */
-    case 7:  /* Decay */
-    case 8:  /* Mix */
-    case 9:  /* Model */
-    case 10: /* Gate Mode */
-    case 11: /* Voices */
-    case 12: /* Detune */
-    case 13: /* Spread */
-    case 14: /* Gender */
-    case 15: /* Attack */
-    case 16: /* Style */
-    case 17: /* Key Mode */
-    case 18: /* Gliss */
-    case 19: /* Sustain */
-    case 20: /* LFO Shape */
-    case 21: /* LFO Dest */
-    case 22: /* LFO Rate */
-    case 23: /* LFO Depth */
-      osc_id    = (user_osc_param_id_t)(id + 3);
-      osc_value = (uint16_t)value;
-      break;
-    default:
+    case k_route_lfo1_rate:
+      /* The drumlogue has no host shape LFO, so the wrapper runs one. */
+      s_state.lfo1_rate = (float)value;
       return;
-  }
-#elif defined(CLOUDS_GRANULAR)
-  /* ---- Clouds param mapping ---- */
-  switch (id) {
-    case 0: /* Base Note: MIDI note 0-127 */
-      set_base_note(value);
-      return;
-    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 2: /* Size: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 3: /* Density: 0-100 percent */
-      osc_id    = k_user_osc_param_id1;
+    case k_route_osc:
       osc_value = (uint16_t)value;
       break;
-    case 4: /* Texture: 0-100 percent */
-      osc_id    = k_user_osc_param_id2;
-      osc_value = (uint16_t)value;
+    case k_route_osc_10bit:
+      /* shape and shiftshape are 10-bit on the OSC side. */
+      osc_value = (uint16_t)((value * 1023 + 50) / 100);
       break;
-    case 5: /* Pitch: 0-48 (centered at 24 = 0 semitones) */
-      osc_id    = k_user_osc_param_id3;
+    case k_route_osc_signed24:
+      /* 0..48 on the panel is -24..+24 semitones to the engine. */
       osc_value = (uint16_t)(int16_t)(value - 24);
       break;
-    case 6: /* Feedback: 0-100 percent */
-      osc_id    = k_user_osc_param_id4;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* Dry/Wet: 0-100 percent */
-      osc_id    = k_user_osc_param_id5;
-      osc_value = (uint16_t)value;
-      break;
-    case 8: /* Reverb: 0-100 percent */
-      osc_id    = k_user_osc_param_id6;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* Freeze: 0-1 (custom OSC_PARAM index 8) */
-      osc_id    = (user_osc_param_id_t)8;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* Mode: 0-3 (custom OSC_PARAM index 9) */
-      osc_id    = (user_osc_param_id_t)9;
-      osc_value = (uint16_t)value;
-      break;
-    case 11: /* Quality: 0-3 (custom OSC_PARAM index 10) */
-      osc_id    = (user_osc_param_id_t)10;
-      osc_value = (uint16_t)value;
-      break;
-    case 12: /* SampleBank: 0-15 (custom OSC_PARAM index 11) */
-      osc_id    = (user_osc_param_id_t)11;
-      osc_value = (uint16_t)value;
-      break;
-    case 13: /* SampleNum: 0-64 (custom OSC_PARAM index 12) */
-      osc_id    = (user_osc_param_id_t)12;
-      osc_value = (uint16_t)value;
-      break;
-    case 14: /* SmplStart: 0-1000 (custom OSC_PARAM index 13) */
-      osc_id    = (user_osc_param_id_t)13;
-      osc_value = (uint16_t)value;
-      break;
-    case 15: /* SmplEnd: 0-1000 (custom OSC_PARAM index 14) */
-      osc_id    = (user_osc_param_id_t)14;
-      osc_value = (uint16_t)value;
-      break;
-    default:
-      return;
-  }
-#elif defined(RINGS_RESONATOR)
-  /* ---- Rings param mapping ---- */
-  switch (id) {
-    case 0: /* Base Note: MIDI note 0-127 */
-      set_base_note(value);
-      return;
-    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 2: /* Structure: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 3: /* Brightness: 0-100 percent */
-      osc_id    = k_user_osc_param_id1;
-      osc_value = (uint16_t)value;
-      break;
-    case 4: /* Damping: 0-100 percent */
-      osc_id    = k_user_osc_param_id2;
-      osc_value = (uint16_t)value;
-      break;
-    case 5: /* Chord: 0-10 enum */
-      osc_id    = k_user_osc_param_id3;
-      osc_value = (uint16_t)value;
-      break;
-    case 6: /* Model: 0-5 enum (custom OSC_PARAM index 8) */
-      osc_id    = (user_osc_param_id_t)8;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* Polyphony: 1-4 (custom OSC_PARAM index 9) */
-      osc_id    = (user_osc_param_id_t)9;
-      osc_value = (uint16_t)value;
-      break;
-    case 8: /* Arp: 0-8 (custom OSC_PARAM index 10) */
-      osc_id    = (user_osc_param_id_t)10;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* Arp Source: 0-1 (custom OSC_PARAM index 11) */
-      osc_id    = (user_osc_param_id_t)11;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* Arp Rate: 0-5 (custom OSC_PARAM index 12) */
-      osc_id    = (user_osc_param_id_t)12;
-      osc_value = (uint16_t)value;
-      break;
-    case 11: /* Arp Octaves: 1-4 (custom OSC_PARAM index 13) */
-      osc_id    = (user_osc_param_id_t)13;
-      osc_value = (uint16_t)value;
-      break;
-    case 12: /* LFO1 Target: strings enum 0-7 */
-      osc_id    = k_user_osc_param_id4;
-      osc_value = (uint16_t)value;
-      break;
-    case 13: /* LFO1 Shape: strings enum (custom OSC_PARAM index 14) */
-      osc_id    = (user_osc_param_id_t)14;
-      osc_value = (uint16_t)value;
-      break;
-    case 14: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
-      s_state.lfo1_rate = (float)value;
-      return;
-    case 15: /* LFO1 Depth: 0-100 percent (custom OSC_PARAM index 17) */
-      osc_id    = (user_osc_param_id_t)17;
-      osc_value = (uint16_t)value;
-      break;
-    case 16: /* LFO2 Target: strings enum 0-5 (custom OSC_PARAM index 15) */
-      osc_id    = (user_osc_param_id_t)15;
-      osc_value = (uint16_t)value;
-      break;
-    case 17: /* LFO2 Shape: strings enum (custom OSC_PARAM index 16) */
-      osc_id    = (user_osc_param_id_t)16;
-      osc_value = (uint16_t)value;
-      break;
-    case 18: /* LFO2 Rate: 0-100 percent */
-      osc_id    = k_user_osc_param_id5;
-      osc_value = (uint16_t)value;
-      break;
-    case 19: /* LFO2 Depth: 0-100 percent */
-      osc_id    = k_user_osc_param_id6;
-      osc_value = (uint16_t)value;
-      break;
-    case 20: /* Note Range: semitones at full swing (custom OSC_PARAM 18) */
-      osc_id    = (user_osc_param_id_t)18;
-      osc_value = (uint16_t)value;
-      break;
-    default:
-      return;
-  }
-#elif defined(ELEMENTS_RESONATOR_MODES)
-  /* ---- Elements param mapping ---- */
-  switch (id) {
-    case 0: /* Base Note: MIDI note 0-127 */
-      set_base_note(value);
-      return;
-    case 1: /* Position: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 2: /* Geometry: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 3: /* Strength: 0-100 percent */
-      osc_id    = k_user_osc_param_id1;
-      osc_value = (uint16_t)value;
-      break;
-    case 4: /* Mallet: 0-100 percent */
-      osc_id    = k_user_osc_param_id2;
-      osc_value = (uint16_t)value;
-      break;
-    case 5: /* Timbre: 0-100 percent */
-      osc_id    = k_user_osc_param_id3;
-      osc_value = (uint16_t)value;
-      break;
-    case 6: /* Damping: 0-100 percent */
-      osc_id    = k_user_osc_param_id4;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* Brightness: 0-100 percent */
-      osc_id    = k_user_osc_param_id5;
-      osc_value = (uint16_t)value;
-      break;
-    case 8: /* LFO Target: strings enum 0-8 */
-      osc_id    = k_user_osc_param_id6;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* LFO1 Shape: strings enum (custom OSC_PARAM index 11) */
-      osc_id    = (user_osc_param_id_t)11;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
-      s_state.lfo1_rate = (float)value;
-      return;
-    case 11: /* LFO2 Rate: 0-100 percent (custom OSC_PARAM index 8) */
-      osc_id    = (user_osc_param_id_t)8;
-      osc_value = (uint16_t)value;
-      break;
-    case 12: /* LFO2 Depth: 0-100 percent (custom OSC_PARAM index 9) */
-      osc_id    = (user_osc_param_id_t)9;
-      osc_value = (uint16_t)value;
-      break;
-    case 13: /* LFO2 Target: strings enum 0-6 (custom OSC_PARAM index 10) */
-      osc_id    = (user_osc_param_id_t)10;
-      osc_value = (uint16_t)value;
-      break;
-    case 14: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
-      osc_id    = (user_osc_param_id_t)12;
-      osc_value = (uint16_t)value;
-      break;
-    default:
-      return;
-  }
-#else
-  /* ---- Plaits param mapping ---- */
-  switch (id) {
-    case 0: /* Base Note: MIDI note 0-127 */
-      set_base_note(value);
-      return;
-    case 1: /* Shape: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 2: /* Shift-Shape: 0-100 -> 10-bit (0-1023) */
-      osc_id    = k_user_osc_param_shiftshape;
-      osc_value = (uint16_t)((value * 1023 + 50) / 100);
-      break;
-    case 3: /* Param 1: 0-100 -> 0-200 (bipolar centered at 100) */
-      osc_id    = k_user_osc_param_id1;
+    case k_route_osc_double:
       osc_value = (uint16_t)(value * 2);
       break;
-    case 4: /* Param 2: 0-100 -> 0-100 (percent) */
-      osc_id    = k_user_osc_param_id2;
-      osc_value = (uint16_t)value;
-      break;
-    case 5: /* LFO Target: strings enum value */
-      osc_id    = k_user_osc_param_id3;
-      osc_value = (uint16_t)value;
-      break;
-    case 6: /* LFO1 Shape: strings enum (custom OSC_PARAM index 11) */
-      osc_id    = (user_osc_param_id_t)11;
-      osc_value = (uint16_t)value;
-      break;
-    case 7: /* LFO1 Rate: 0-100 percent (stored in wrapper for internal LFO1) */
-      s_state.lfo1_rate = (float)value;
-      return;
-    case 8: /* LFO2 Rate: 0-100 percent */
-      osc_id    = k_user_osc_param_id4;
-      osc_value = (uint16_t)value;
-      break;
-    case 9: /* LFO2 Depth: 0-100 percent */
-      osc_id    = k_user_osc_param_id5;
-      osc_value = (uint16_t)value;
-      break;
-    case 10: /* LFO2 Target: strings enum value */
-      osc_id    = k_user_osc_param_id6;
-      osc_value = (uint16_t)value;
-      break;
-    case 11: /* LFO2 Shape: strings enum (custom OSC_PARAM index 12) */
-      osc_id    = (user_osc_param_id_t)12;
-      osc_value = (uint16_t)value;
-      break;
-    case 12: /* Gate Mode: strings enum (custom OSC_PARAM index 13) */
-      osc_id    = (user_osc_param_id_t)13;
-      osc_value = (uint16_t)value;
-      break;
-    case 13: /* LFO1 Depth: 0-100 percent (custom OSC_PARAM index 14) */
-      osc_id    = (user_osc_param_id_t)14;
-      osc_value = (uint16_t)value;
-      break;
-    case 14: /* Pitch Range: semitones at full swing (custom OSC_PARAM 15) */
-      osc_id    = (user_osc_param_id_t)15;
-      osc_value = (uint16_t)value;
-      break;
     default:
       return;
   }
-#endif
 
-  osc_adapter_set_param(osc_id, osc_value);
+  osc_adapter_set_param((user_osc_param_id_t)route.osc, osc_value);
 }
 
 __unit_callback

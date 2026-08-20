@@ -51,6 +51,10 @@ jobs:
       - name: make test-all
         run: make test-all
 
+      - name: Show the routing diff if the panel layout moved
+        if: failure()
+        run: git diff --no-index docs/param_routing.txt .param_routing_now.txt || true
+
   sanitizers:
     name: AddressSanitizer + UndefinedBehaviorSanitizer
     runs-on: ubuntu-latest
