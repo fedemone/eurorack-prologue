@@ -18,6 +18,21 @@ static uint16_t lfo1_shape_value = 0;
 static uint16_t lfo2_shape_value = 0;
 static uint16_t gate_mode_value = 0;
 
+/* LFO1's depth, 0-100.  On prologue there is no such parameter -- LFO1 is the
+ * host's shape LFO and arrives at whatever the panel sends -- so the default
+ * is full scale and that platform simply never writes it. */
+static uint16_t lfo1_depth_value = 100;
+
+/* Semitones of pitch modulation at full LFO swing, for the Pitch destination.
+ * This was fixed at half a semitone, which is vibrato and nothing else; a
+ * whole tone is vibrato too, 12 is an octave sweep, and no one value serves
+ * both. Defaults to 1 -- twice the old fixed depth, because a semitone is a
+ * representable default and half of one is not, and the knob is now there to
+ * put it wherever you want. Range is checked in OSC_PARAM rather than
+ * trusted, because it scales a value that becomes a pitch. */
+#define kPitchRangeSemitonesMax 24
+static uint16_t pitch_range_semitones_ = 1;
+
 enum GateMode {
   GateModeTrigger = 0,   /* One-shot envelope per gate (default) */
   GateModeSustain = 1,   /* Hold while gate on, release on off */
@@ -217,6 +232,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   allocator.Init(engine_buffer, sizeof(engine_buffer));
   engine.Init(&allocator);
   lfo2_phase = 0.0f;
+  lfo1_depth_value = 100;
+  pitch_range_semitones_ = 1;
 
   p_values[0] = 100;
 }
@@ -262,7 +279,10 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   static float aux[plaits::kMaxBlockSize] __attribute__((aligned(16)));
   static bool enveloped;
 
-  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo));
+  /* Shape first, then depth: the shapes are transfer curves, so scaling the
+   * input would bend the curve rather than turn the modulation down. */
+  shape_lfo = apply_lfo1_shape(q31_to_f32(params->shape_lfo)) *
+              (lfo1_depth_value * 0.01f);
 
   /* Multi-shape LFO2 generation.  Every shape, cosine included, is derived
    * from the one phase accumulator, so switching shape mid-cycle continues
@@ -321,7 +341,8 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   }
 
   parameters.note = ((float)(params->pitch >> 8)) + ((params->pitch & 0xFF) * k_note_mod_fscale);
-  parameters.note += (get_lfo_value(LfoTargetPitch) * 0.5);
+  parameters.note += get_lfo_value(LfoTargetPitch) *
+                     (float)pitch_range_semitones_;
 
   /* Gate mode affects trigger and envelope behavior */
   { bool effective_gate = gate;
@@ -465,6 +486,13 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     break;
   case 13: /* Gate Mode (0-2) */
     gate_mode_value = value;
+    break;
+  case 14: /* LFO1 Depth (0-100) */
+    lfo1_depth_value = value > 100 ? 100 : value;
+    break;
+  case 15: /* Pitch Range, in semitones at full LFO swing */
+    pitch_range_semitones_ =
+        value > kPitchRangeSemitonesMax ? kPitchRangeSemitonesMax : value;
     break;
 
   default:

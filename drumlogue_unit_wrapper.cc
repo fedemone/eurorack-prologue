@@ -419,6 +419,8 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 10 -> id6        (LFO2 target strings)
  *   id 11 -> custom 12  (LFO2 shape strings)
  *   id 12 -> custom 13  (Gate mode strings)
+ *   id 13 -> custom 14  (LFO1 depth 0-100)
+ *   id 14 -> custom 15  (Pitch range, semitones at full swing)
  *
  * Elements (modal-strike.cc):
  *   id 0  -> base_note  (MIDI 0-127, stored locally)
@@ -829,6 +831,14 @@ void unit_set_param_value(uint8_t id, int32_t value) {
       break;
     case 12: /* Gate Mode: strings enum (custom OSC_PARAM index 13) */
       osc_id    = (user_osc_param_id_t)13;
+      osc_value = (uint16_t)value;
+      break;
+    case 13: /* LFO1 Depth: 0-100 percent (custom OSC_PARAM index 14) */
+      osc_id    = (user_osc_param_id_t)14;
+      osc_value = (uint16_t)value;
+      break;
+    case 14: /* Pitch Range: semitones at full swing (custom OSC_PARAM 15) */
+      osc_id    = (user_osc_param_id_t)15;
       osc_value = (uint16_t)value;
       break;
     default:

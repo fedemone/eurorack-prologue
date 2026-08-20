@@ -21,6 +21,8 @@
  *    id 10: LFO2 Target (strings)    -> k_user_osc_param_id6
  *    id 11: LFO2 Shape  (strings)    -> custom OSC_PARAM index 12
  *    id 12: Gate Mode   (strings)    -> custom OSC_PARAM index 13
+ *    id 13: LFO1 Depth  (0-100%)     -> custom OSC_PARAM index 14
+ *    id 14: Pitch Range (0-24 st)    -> custom OSC_PARAM index 15
  *
  *  Elements oscillators (modal-strike.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -587,7 +589,7 @@ const __unit_header unit_header_t unit_header = {
      * makes no / too little sound".  Give String its own table so the
      * knob is named "Attenuate" and defaults to 0 (full level).
      * ================================================================ */
-    .num_params = 13,
+    .num_params = 15,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -622,10 +624,22 @@ const __unit_header unit_header_t unit_header = {
         // Page 4
         /* id 12: Gate Mode (envelope/gate behavior) */
         {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+        /* id 13: LFO1 Depth.  Defaults to full scale, which is where LFO1
+         * was fixed before this existed; LFO1 Rate at 0 is what keeps it
+         * quiet on load. */
+        {0, 100, 0, 100, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Depth"}},
+        /* id 14: Pitch Range — semitones of pitch modulation at full LFO
+         * swing, for whichever LFO has Pitch as its target.  Replaces a
+         * fixed half-semitone; 1 is vibrato, 12 an octave sweep.
+         * macro-oscillator2.cc clamps against its own maximum, so a stale
+         * value here costs range rather than an out-of-range pitch.
+         *
+         * Appended rather than slotted in beside the other LFO controls:
+         * these units are in released binaries, and renumbering would
+         * repoint every saved project's knobs. */
+        {0, 24, 0, 1, k_unit_param_type_none, 0, 0, 0, {"Pitch Range"}},
 
         // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
@@ -645,7 +659,7 @@ const __unit_header unit_header_t unit_header = {
      *            LFO Target, LFO1 Shape, LFO1 Rate, LFO2 Rate,
      *            LFO2 Depth, LFO2 Target, LFO2 Shape, Gate Mode
      * ================================================================ */
-    .num_params = 13,
+    .num_params = 15,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -680,10 +694,22 @@ const __unit_header unit_header_t unit_header = {
         // Page 4
         /* id 12: Gate Mode (envelope/gate behavior) */
         {0, 2, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Gate Mode"}},
+        /* id 13: LFO1 Depth.  Defaults to full scale, which is where LFO1
+         * was fixed before this existed; LFO1 Rate at 0 is what keeps it
+         * quiet on load. */
+        {0, 100, 0, 100, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Depth"}},
+        /* id 14: Pitch Range — semitones of pitch modulation at full LFO
+         * swing, for whichever LFO has Pitch as its target.  Replaces a
+         * fixed half-semitone; 1 is vibrato, 12 an octave sweep.
+         * macro-oscillator2.cc clamps against its own maximum, so a stale
+         * value here costs range rather than an out-of-range pitch.
+         *
+         * Appended rather than slotted in beside the other LFO controls:
+         * these units are in released binaries, and renumbering would
+         * repoint every saved project's knobs. */
+        {0, 24, 0, 1, k_unit_param_type_none, 0, 0, 0, {"Pitch Range"}},
 
         // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
         {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
