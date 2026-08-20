@@ -94,7 +94,7 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 
 `LFO2 Target` sets the target for LFO2 according to the table below.
 
-**On drumlogue** (13 params):
+**On drumlogue** (15 params):
 
 | # | Name | Description |
 |---|------|-------------|
@@ -111,6 +111,8 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 | 10 | LFO2 Target | Which parameter LFO2 modulates |
 | 11 | LFO2 Shape | Waveform of LFO2 |
 | 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
+| 13 | LFO1 Depth | Shape LFO amount (0-100%, default 100%) |
+| 14 | Pitch Range | Semitones of pitch modulation at full LFO swing (0-24, default 1) |
 
 ### LFO2
 
@@ -139,6 +141,20 @@ shape now comes from one phase accumulator rather than from stmlib's
 `CosineOscillator`, whose recursion degenerates into an integrator at rate 0,
 and the LFO reports zero rather than its parked value while the rate is at
 zero. See the comment above the LFO2 block in `macro-oscillator2.cc`.
+
+`LFO1 Depth` scales the shape LFO *after* its Shape curve has been applied,
+so turning it down turns the modulation down rather than bending the curve. It
+defaults to 100%, which is where LFO1 was fixed before the control existed;
+`LFO1 Rate` at 0 is what keeps it quiet on load.
+
+`Pitch Range` sets how far the `Pitch` destination goes at full swing. It used
+to be fixed at half a semitone — vibrato and nothing else. The default is now
+1 semitone, so a patch relying on the old fixed depth is twice as deep until
+you set it; 12 turns a slow LFO into an octave sweep.
+
+Both are appended after `Gate Mode` rather than slotted in beside the other
+LFO controls, because these units are in released binaries and renumbering
+would repoint every saved project's knobs.
 
 For more information please read the excellent [Mutable Instruments Plaits documentation](https://mutable-instruments.net/modules/plaits/manual/).
 

@@ -250,7 +250,7 @@ TEST(unit_header_num_params) {
 #elif defined(ELEMENTS_RESONATOR_MODES)
   ASSERT_EQ(15U, unit_header.num_params);
 #else
-  ASSERT_EQ(13U, unit_header.num_params);
+  ASSERT_EQ(15U, unit_header.num_params);
 #endif
 }
 
@@ -451,7 +451,7 @@ TEST(unit_header_unused_params_are_none) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #else
-  for (int i = 13; i < UNIT_MAX_PARAM_COUNT; ++i) {
+  for (int i = 15; i < UNIT_MAX_PARAM_COUNT; ++i) {
     ASSERT_EQ(k_unit_param_type_none, unit_header.params[i].type);
   }
 #endif
@@ -772,6 +772,24 @@ TEST(wrapper_param_lfo1_shape) {
   teardown_unit();
 }
 
+/* LFO1 Depth and Pitch Range were appended rather than slotted in beside the
+ * other LFO controls: these units are in released binaries, and renumbering
+ * would repoint every saved project's knobs. */
+TEST(wrapper_param_lfo1_depth_and_pitch_range) {
+  init_unit();
+  unit_set_param_value(13, 65);
+  ASSERT_EQ(14, g_mock.last_param_index);
+  ASSERT_EQ(65, g_mock.last_param_value);
+  unit_set_param_value(14, 12);
+  ASSERT_EQ(15, g_mock.last_param_index);
+  ASSERT_EQ(12, g_mock.last_param_value);
+  /* Gate Mode must not have moved. */
+  unit_set_param_value(12, 2);
+  ASSERT_EQ(13, g_mock.last_param_index);
+  ASSERT_EQ(2, g_mock.last_param_value);
+  teardown_unit();
+}
+
 TEST(wrapper_param_lfo1_rate) {
   init_unit();
 
@@ -841,7 +859,7 @@ TEST(wrapper_param_out_of_range_ignored) {
 #elif defined(ELEMENTS_RESONATOR_MODES)
   unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
 #else
-  unit_set_param_value(13, 50);  /* id 13 -> default case, should return */
+  unit_set_param_value(15, 50);  /* id 15 -> default case, should return */
 #endif
   ASSERT_EQ(before, g_mock.param_count);
   unit_set_param_value(24, 50);  /* id >= MAX -> guard */
@@ -2162,6 +2180,7 @@ int main(void) {
   run_test_wrapper_param_id2_percent();
   run_test_wrapper_param_id3_lfo_target();
   run_test_wrapper_param_lfo1_shape();
+  run_test_wrapper_param_lfo1_depth_and_pitch_range();
   run_test_wrapper_param_lfo1_rate();
   run_test_wrapper_param_id4_rate();
   run_test_wrapper_param_id5_depth();
