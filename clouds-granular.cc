@@ -639,6 +639,26 @@ void OSC_NOTEOFF(const user_osc_param_t *const params)
   processor_.mutable_parameters()->gate = false;
 }
 
+/* Neutral state, on the audio thread between blocks.  See OSC_RESET in
+ * drumlogue/userosc.h for why it is not done where unit_reset() is called.
+ *
+ * The audio buffer is the whole point here: Clouds holds seconds of recorded
+ * material, and without this a unit swap carries the previous patch's
+ * recording into the next one. RequestBufferReset() hands the clearing to the
+ * Prepare() that already runs at the top of every block -- the same route
+ * Mode and Quality changes take. It is the expensive Prepare(), so it costs
+ * one over-budget block, which is what the SDK means by delay lines being
+ * "set to be cleared" rather than cleared at once. */
+void OSC_RESET(void)
+{
+  osc_active_ = false;
+  processor_.mutable_parameters()->gate    = false;
+  processor_.mutable_parameters()->trigger = false;
+  processor_.mutable_parameters()->freeze  = false;
+  pending_freeze_ = 0;
+  processor_.RequestBufferReset();
+}
+
 void OSC_PARAM(uint16_t index, uint16_t value)
 {
   switch (index) {

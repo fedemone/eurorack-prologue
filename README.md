@@ -877,6 +877,22 @@ of them wrong takes down more than the unit that got it wrong:
   the SDK builds with `-flto` and the constant gets folded before a relocation
   is emitted; a non-LTO build of the same sources reproduces it exactly.
   `header.c` and both wrappers now use one `UNIT_OWN_TARGET` constant.
+- **Neither does the parameter clamp.** Same symbol, same trap, found later:
+  clamping to `unit_header.params[id]` clamped every unit to the *first-loaded*
+  unit's ranges. With Plaits (13 params) ahead of Rings (21), Rings' Chord knob
+  stopped at 7 instead of 13 and its eight LFO controls sat at indices Plaits
+  declares unused — min 0, max 0 — frozen at zero. Confirmed on the shipped ARM
+  binaries. `header.c` now also defines `unit_header_own`, a hidden alias for
+  the same object; hidden symbols cannot be preempted, so the clamp binds to
+  its own unit's copy while `unit_header` stays exported for the firmware.
+- **`unit_reset()` clears the engine, on the audio thread.** The SDK contracts
+  it to return the unit to a neutral state — "delay lines set to be cleared" —
+  and the firmware calls it when a unit is swapped out, so without it the
+  previous patch's tail rings into the next one. It arrives on the control
+  thread, though, where clearing a buffer the renderer is reading is the same
+  race that took the audio engine down. The request is latched and spent by
+  the next render, which calls a new `OSC_RESET()` in each port. Parameter
+  values are deliberately left alone, as the SDK requires.
 
 **Forked engine sources (`eurorack-opt/`):**
 

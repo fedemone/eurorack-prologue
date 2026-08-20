@@ -350,11 +350,12 @@ static inline bool block_invalid(const float *x, uint32_t n) {
  * OSC API Implementation
  * ==================================================================== */
 
-void OSC_INIT(uint32_t platform, uint32_t api)
+/* Everything that is engine state rather than a parameter value.  Shared by
+ * OSC_INIT and OSC_RESET, because the drumlogue's reset is contracted to
+ * produce exactly this -- envelopes idle, phases rewound, the LPC and phaser
+ * histories cleared -- while leaving parameters alone. */
+static void reset_engine_state(void)
 {
-  (void)platform;
-  (void)api;
-
   for (uint16_t v = 0; v < kMaxVoices; ++v) {
     reset_engine(v);
   }
@@ -378,6 +379,25 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   phaser_phase_ = 0.0f;
   memset(ap_x_, 0, sizeof(ap_x_));
   memset(ap_y_, 0, sizeof(ap_y_));
+}
+
+void OSC_INIT(uint32_t platform, uint32_t api)
+{
+  (void)platform;
+  (void)api;
+
+  reset_engine_state();
+}
+
+/* Neutral state, on the audio thread between blocks.  See OSC_RESET in
+ * drumlogue/userosc.h. */
+void OSC_RESET(void)
+{
+  gate_          = false;
+  previous_gate_ = false;
+  amp_           = 0.0f;
+  shape_lfo_     = 0.0f;
+  reset_engine_state();
 }
 
 void OSC_NOTEON(const user_osc_param_t *const params)

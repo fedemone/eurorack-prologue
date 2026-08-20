@@ -422,6 +422,42 @@ void OSC_NOTEOFF(const user_osc_param_t * const params)
   performance_state_.gate = false;
 }
 
+/* Neutral state, on the audio thread between blocks.  See OSC_RESET in
+ * drumlogue/userosc.h for why it is not done where unit_reset() is called.
+ *
+ * Resonator::Init() is the part that matters here: a modal resonator left
+ * ringing carries the previous patch straight into the next one, and the
+ * drumlogue calls unit_reset() when it swaps units. Parameters are
+ * deliberately untouched. */
+void OSC_RESET(void)
+{
+  performance_state_.gate = false;
+  previous_gate_  = false;
+  exciter_level_  = 0.0f;
+  strength_       = 0.0f;
+  envelope_value_ = 0.0f;
+  shape_lfo       = 0.0f;
+
+  strike_.Init();
+  resonator_.Init();
+#if defined(USE_LIMITER)
+  limiter_.Init();
+#endif
+#ifdef ELEMENTS_LFO2
+  lfo2       = 0.0f;
+  lfo2_phase = 0.0f;
+#endif
+
+  /* The half-band interpolator's history, and the block the last render left
+   * in the aliasing filter's tail. */
+  for (size_t i = 0; i < kMaxBlockSize; ++i) {
+    strike_buffer_[i]       = 0.0f;
+    bow_strength_buffer_[i] = 0.0f;
+    raw[i]                  = 0.0f;
+  }
+  for (size_t i = 0; i < kMaxBlockSize + 2; ++i) center[i] = 0.0f;
+}
+
 void OSC_PARAM(uint16_t index, uint16_t value)
 {
   switch (index)

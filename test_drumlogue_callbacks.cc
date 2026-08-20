@@ -101,6 +101,7 @@ struct MockOscState {
   /* Note on/off tracking */
   int noteon_count;
   int noteoff_count;
+  int reset_count;
   uint16_t last_noteon_pitch;
   int32_t last_noteon_shape_lfo;
 
@@ -154,6 +155,10 @@ void OSC_NOTEON(const user_osc_param_t * const params) {
 void OSC_NOTEOFF(const user_osc_param_t * const params) {
   g_mock.noteoff_count++;
   (void)params;
+}
+
+void OSC_RESET(void) {
+  g_mock.reset_count++;
 }
 
 void OSC_PARAM(uint16_t index, uint16_t value) {
@@ -1843,6 +1848,28 @@ TEST(unit_reset_sends_note_off) {
   teardown_unit();
 }
 
+/* The SDK contracts unit_reset() to return the engine to a neutral state --
+ * delay lines cleared, phases rewound -- and it arrives on the control
+ * thread, where re-seating what the renderer is reading is a race. So the
+ * request is latched and spent by the next render, not by unit_reset(). */
+TEST(unit_reset_defers_engine_reset_to_the_render) {
+  init_unit();
+  float out[64 * 2];
+  unit_note_on(60, 100);
+  unit_render(nullptr, out, 64);
+
+  g_mock.reset_count = 0;
+  unit_reset();
+  ASSERT_EQ(0, g_mock.reset_count);   /* not on the control thread */
+
+  unit_render(nullptr, out, 64);
+  ASSERT_EQ(1, g_mock.reset_count);   /* on the next block */
+
+  unit_render(nullptr, out, 64);
+  ASSERT_EQ(1, g_mock.reset_count);   /* and only once */
+  teardown_unit();
+}
+
 /* ===========================================================================
  * Tests: Tempo
  * ======================================================================== */
@@ -2171,6 +2198,7 @@ int main(void) {
   printf("\nLifecycle:\n");
   run_test_unit_teardown_prevents_further_calls();
   run_test_unit_reset_sends_note_off();
+  run_test_unit_reset_defers_engine_reset_to_the_render();
 
   printf("\nTempo:\n");
   run_test_wrapper_set_tempo_delegates();

@@ -233,6 +233,28 @@ void OSC_NOTEOFF(const user_osc_param_t * const params)
   gate = false;
 }
 
+/* Neutral state, on the audio thread between blocks.  See OSC_RESET in
+ * drumlogue/userosc.h for why it is not done where unit_reset() is called.
+ *
+ * Engine::Reset() is what clears the parts with memory -- the string model's
+ * delay line, the wavetable readers' interpolation history.  Parameters are
+ * deliberately untouched: the drumlogue keeps them across a reset and pushes
+ * them again itself. */
+void OSC_RESET(void)
+{
+  gate = false;
+  previous_gate = false;
+  amp = 0.0f;
+  shape_lfo = 0.0f;
+  lfo2 = 0.0f;
+  lfo2_phase = 0.0f;
+  parameters.trigger = plaits::TRIGGER_LOW;
+  engine.Reset();
+#if defined(USE_LIMITER)
+  limiter_.Init();
+#endif
+}
+
 void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t frames)
 {
   (void)frames;
