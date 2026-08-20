@@ -10,7 +10,7 @@ UCXXSRC = clouds-granular.cc \
 	eurorack-opt/clouds/dsp/correlator.cc \
 	eurorack/clouds/dsp/mu_law.cc \
 	eurorack/clouds/dsp/pvoc/phase_vocoder.cc \
-	eurorack/clouds/dsp/pvoc/frame_transformation.cc \
+	eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc \
 	eurorack/clouds/dsp/pvoc/stft.cc \
 	eurorack/clouds/resources.cc \
 	eurorack/stmlib/dsp/units.cc \

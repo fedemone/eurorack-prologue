@@ -18,6 +18,10 @@
  *   B  Reverb at 0 and TEXTURE below the diffusion threshold throughout, i.e.
  *      the case the fork exists for. Both effects are skipped and output must
  *      still be bit-identical.
+ *   D  Spectral, with SIZE swept across its range. The fork skips the
+ *      spectral warp when its polynomial is the identity, which is where
+ *      SIZE 50% lands exactly; the sweep covers that and the settings either
+ *      side where the loop still runs. Output must be bit-identical.
  *   C  REVERB held at 0 for two seconds, then jumped straight to full. Here
  *      the two are *expected* to differ: upstream has been quietly filling
  *      its delay lines the whole time and releases that history at full level
@@ -35,6 +39,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 
 using namespace clouds;
 
@@ -134,8 +139,71 @@ int main(void) {
   float jump_peak = 0.0f;
   run(1.0f, 0.5f, 100, 777u, &jump_peak, 0);
 
+  /* D: Spectral, SIZE swept across its range. The fork returns early from
+   * WarpMagnitudes when the warp polynomial is the identity, which is exactly
+   * where SIZE 50% lands; the sweep covers that setting and the ones either
+   * side of it, where the loop still runs. Bit-identical either way. */
+  engine_init();
+  processor_.set_playback_mode(PLAYBACK_MODE_SPECTRAL);
+  processor_.Prepare();
+  uint64_t d = hash_init();
+  static int16_t d_samples[21 * 60 * kMaxBlockSize * 2];
+  size_t d_count = 0;
+  {
+    ShortFrame in[kMaxBlockSize], out[kMaxBlockSize];
+    uint32_t st = 31337u;
+    Parameters *p = processor_.mutable_parameters();
+    for (int step = 0; step <= 20; ++step) {
+      p->size = (float)step * 0.05f;
+      for (int b = 0; b < 60; ++b) {
+        fill_input(in, kMaxBlockSize, &st);
+        processor_.Prepare();
+        processor_.Process(in, out, kMaxBlockSize);
+        hash_frames(&d, out, kMaxBlockSize);
+        for (size_t i = 0; i < kMaxBlockSize; ++i) {
+          d_samples[d_count++] = out[i].l;
+          d_samples[d_count++] = out[i].r;
+        }
+      }
+    }
+  }
+
+  /* D is not compared by hash. The warp early-out is the exact identity
+   * where upstream's loop is an accumulated approximation of it, so the two
+   * differ -- by less than the int16 quantiser they both feed, which is the
+   * claim worth checking. CLOUDS_DUMP_D writes the samples; CLOUDS_COMPARE_D
+   * reads a dump back and prints the deviation. */
+  if (getenv("CLOUDS_DUMP_D")) {
+    FILE *f = fopen(getenv("CLOUDS_DUMP_D"), "wb");
+    if (f) { fwrite(d_samples, sizeof(int16_t), d_count, f); fclose(f); }
+  }
+  if (getenv("CLOUDS_COMPARE_D")) {
+    FILE *f = fopen(getenv("CLOUDS_COMPARE_D"), "rb");
+    if (!f) { printf("E missing reference\n"); return 1; }
+    static int16_t ref[sizeof(d_samples) / sizeof(d_samples[0])];
+    const size_t got = fread(ref, sizeof(int16_t), d_count, f);
+    fclose(f);
+    if (got != d_count) { printf("E short reference\n"); return 1; }
+    size_t differing = 0;
+    int32_t worst = 0, peak = 1;
+    double sq = 0.0;
+    for (size_t i = 0; i < d_count; ++i) {
+      const int32_t diff = (int32_t)d_samples[i] - (int32_t)ref[i];
+      if (diff) ++differing;
+      const int32_t ad = diff < 0 ? -diff : diff;
+      if (ad > worst) worst = ad;
+      const int32_t ar = ref[i] < 0 ? -ref[i] : ref[i];
+      if (ar > peak) peak = ar;
+      sq += (double)diff * (double)diff;
+    }
+    const double rms = sqrt(sq / (double)d_count);
+    printf("E %zu %zu %d %.4f %.1f %.1f\n", differing, d_count, worst, rms,
+           20.0 * log10(rms / (double)peak), 20.0 * log10(1.0 / (double)peak));
+  }
+
   printf("A %016llx\n", (unsigned long long)a);
   printf("B %016llx\n", (unsigned long long)b);
   printf("C %.1f\n", jump_peak);
+  printf("D %016llx\n", (unsigned long long)d);
   return 0;
 }

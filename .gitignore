@@ -41,3 +41,6 @@ test_clouds_grain_window_asan
 .param_routing_bin
 .param_routing_now.txt
 .param_routing_diff.txt
+test_clouds_warp_off
+test_clouds_warp_on
+.warp_off.raw

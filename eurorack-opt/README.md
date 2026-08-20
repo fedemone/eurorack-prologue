@@ -20,6 +20,7 @@ commit **58b9125**.
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/grain.h` | **grain envelope no longer reads past `lut_window`** | Granular, high quality |
 | `clouds/dsp/correlator.cc` | **no shift by 32 when a candidate lands on a word boundary** | Stretch |
+| `clouds/dsp/pvoc/frame_transformation.cc` | **spectral warp skipped when its polynomial is the identity** | Spectral |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
@@ -122,6 +123,44 @@ behaviour out of the loop, so the sweep means what it says.
 
 Found by `make test-asan` — UndefinedBehaviorSanitizer, on the ordinary
 parameter sweeps, no new scenario required.
+
+### `clouds/dsp/pvoc/frame_transformation.cc` — the identity warp
+
+The spectral warp is a cubic in the bin index, crossfaded between rows of
+`kWarpPolynomials` by the SIZE knob. Row 2 is `{ 0, 0, 1, 0 }` — the identity —
+and SIZE at 50 %, the knob's default and its centre detent, lands on it
+exactly: size 0.5 makes warp 0.5, times four is 2.0 with no fractional part, so
+the crossfade returns row 2 untouched. Every bin is then read back from where
+it already was, through a per-bin `Interpolate`, for nothing.
+
+`gprof` puts `WarpMagnitudes` at 18.6 % of `FrameTransformation::Process`, the
+second largest step in it. End to end with `make bench-clouds-spike`, three
+runs a side:
+
+| | mean | p99 |
+|---|---:|---:|
+| Spectral, before | 6.92 % | 32.6 % |
+| Spectral, after | 6.43 % | 28.9 % |
+
+with the Granular control row flat across all six runs. About 7 % of
+Spectral's cost, at the setting the unit loads in.
+
+**It is not bit-identical**, and the reason is instructive. `size_` is
+`(fft_size / 2) - kHighFrequencyTruncation` — 240, not a power of two — so
+`bin_width` is 1/240, inexact in binary, and the accumulator drifts. Upstream's
+identity warp is really a slightly smeared identity; the copy is the exact one.
+The change makes the warp *more* correct, and different.
+
+`make test-clouds-warp` measures the difference rather than asserting it away,
+rendering Spectral both ways with SIZE swept across its range: **283 of 80640
+samples differ, none by more than 2 LSB, and the error sits 111.6 dB below
+signal peak where one int16 LSB is 87.2 dB down** — two dozen dB under the
+quantiser the output passes through either way. Same standard as the FFT
+change.
+
+Both sides of that comparison are fork builds, with `CLOUDS_WARP_IDENTITY_SKIP`
+switched off on one. Comparing against the submodule would prove nothing:
+Spectral there runs a 4096-point transform at a different hop.
 
 ### `stmlib/fft/shy_fft.h` — NEON butterfly
 
@@ -437,10 +476,12 @@ So the rule is all-or-nothing, and it is enforced:
 2. `eurorack-opt/clouds/dsp/granular_processor.cc`,
    `eurorack-opt/clouds/dsp/correlator.cc` and `eurorack-opt/rings/dsp/part.cc`
    replace the submodule's in the source list — the submodule's must not also
-   be compiled. (The rest are headers, so they need no source-list change, only
-   the include order.) The Clouds pair is listed in five places: `Makefile`
-   (`CLOUDS_FX_ENGINE`), `osc_clouds.mk`, both `drumlogue/clouds*/config.mk`,
-   and `generate_sdk_projects.sh`.
+   be compiled, and so does
+   `eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc`. (The rest are
+   headers, so they need no source-list change, only the include order.) The
+   Clouds sources are listed in five places: `Makefile` (`CLOUDS_FX_ENGINE`),
+   `osc_clouds.mk`, both `drumlogue/clouds*/config.mk`, and
+   `generate_sdk_projects.sh`.
 3. The build defines `CLOUDS_OPT_ENGINE`. The Clouds headers define
    `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if the
    first is set without the second, so a half-configured build fails at compile
@@ -466,7 +507,8 @@ git -C eurorack log --oneline 58b9125..HEAD -- \
     clouds/dsp/granular_processor.h clouds/dsp/granular_processor.cc \
     clouds/dsp/pvoc/stft.h clouds/dsp/pvoc/phase_vocoder.h \
     clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
-    clouds/dsp/grain.h clouds/dsp/correlator.cc stmlib/fft/shy_fft.h \
+    clouds/dsp/grain.h clouds/dsp/correlator.cc \
+    clouds/dsp/pvoc/frame_transformation.cc stmlib/fft/shy_fft.h \
     rings/dsp/part.cc rings/dsp/performance_state.h
 ```
 

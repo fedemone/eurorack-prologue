@@ -128,7 +128,7 @@ CLOUDS_FX_ENGINE = \
     eurorack-opt/clouds/dsp/correlator.cc \
     eurorack/clouds/dsp/mu_law.cc \
     eurorack-opt/clouds/dsp/pvoc/phase_vocoder.cc \
-    eurorack/clouds/dsp/pvoc/frame_transformation.cc \
+    eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc \
     eurorack/clouds/dsp/pvoc/stft.cc \
     eurorack/clouds/resources.cc \
     eurorack/stmlib/dsp/units.cc \
@@ -202,6 +202,36 @@ test-clouds-engine-opt:
 	      printf("  FAIL: C fork peak %.0f exceeds upstream %.0f -- flush is not emptying the delay lines\n", f, s); \
 	      exit 1 } }'
 	@rm -f .engine_opt_*.txt
+	@echo ""
+	@echo "=== ALL PASS (0 failures) ==="
+
+# Spectral warp early-out: the same Spectral rendering with the identity
+# skip in WarpMagnitudes on and off, compared sample for sample.  Both sides
+# are fork builds -- comparing against the submodule would not isolate this,
+# because Spectral there runs a different FFT size and a different hop, so its
+# output legitimately differs.  Scenario D sweeps SIZE across its range, so
+# the settings where the polynomial is *not* the identity are covered too.
+# Usage: make test-clouds-warp
+test-clouds-warp:
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    -DCLOUDS_WARP_IDENTITY_SKIP=0 \
+	    test_clouds_engine_opt.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_warp_off -lm
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_engine_opt.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_warp_on -lm
+	@echo "Clouds Spectral Warp Early-Out Test"
+	@echo ""
+	@CLOUDS_DUMP_D=.warp_off.raw ./test_clouds_warp_off > /dev/null
+	@CLOUDS_COMPARE_D=.warp_off.raw ./test_clouds_warp_on | awk '/^E /{ \
+	    worst = $$4; db = $$6; lsb = $$7; \
+	    printf("  %s: %d of %d samples differ, worst %d LSB\n", \
+	           (worst <= 4) ? "ok  " : "FAIL", $$2, $$3, worst); \
+	    printf("  %s: error %.1f dB below peak; one int16 LSB is %.1f dB down\n", \
+	           (db <= lsb - 10.0) ? "ok  " : "FAIL", db, lsb); \
+	    if (worst > 4 || db > lsb - 10.0) exit 1; \
+	 }'
+	@rm -f .warp_off.raw
 	@echo ""
 	@echo "=== ALL PASS (0 failures) ==="
 
@@ -304,7 +334,7 @@ test-clouds-cola:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
 	    test_clouds_cola.cc \
 	    eurorack/clouds/dsp/pvoc/stft.cc \
-	    eurorack/clouds/dsp/pvoc/frame_transformation.cc \
+	    eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc \
 	    eurorack/clouds/resources.cc \
 	    eurorack/stmlib/dsp/units.cc \
 	    eurorack/stmlib/dsp/atan.cc \
@@ -331,7 +361,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

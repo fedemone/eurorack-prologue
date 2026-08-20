@@ -737,6 +737,8 @@ make test-clouds-grain-window   # grain envelope, fork vs stock, plus an ASan
                                 # element past lut_window
 make test-param-routing         # where every panel knob goes, for every unit,
                                 # against docs/param_routing.txt
+make test-clouds-warp           # Spectral with the identity-warp skip on and
+                                # off: how far apart, against the int16 LSB
 make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
                                 # call vs upstream's loop, sample for sample
                                 # at every FFT size from 256 to 4096
