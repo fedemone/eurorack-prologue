@@ -1,0 +1,97 @@
+##############################################################################
+# Continuous integration.
+#
+# Three jobs, in rough order of how fast they fail:
+#
+#   host        the C++ suites, linking the port layer into an x86 binary.
+#               Seconds. Catches wiring mistakes -- a parameter count that no
+#               longer matches the header, a string table that stops short of
+#               its declared range.
+#
+#   sanitizers  every unit built as a host shared object with ASan and UBSan,
+#               run through the drumlogue probe battery. Catches the reads one
+#               element past a lookup table that the ARM job cannot see,
+#               because there the stray read lands in the next table and
+#               returns a plausible number.
+#
+#   arm         the artifact that actually ships: ARM/NEON code, the drumlogue
+#               ABI, several units in one address space. Slowest, because
+#               every unit is cross-compiled and then run under QEMU.
+#
+# The ARM job runs the whole battery twice, in two different unit orders.
+# That is not redundancy: units share one dynamic scope on the device, so a
+# unit reading a symbol every unit defines gets the first-loaded one's copy,
+# and which unit that is depends on install order. One such bug is already in
+# the history; the second ordering is what would catch the next.
+##############################################################################
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the run in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host test suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Not recursive: logue-sdk carries CMSIS and the whole emsdk as
+          # nested submodules, and the drumlogue build touches neither.
+          submodules: true
+
+      - name: make test-all
+        run: make test-all
+
+  sanitizers:
+    name: AddressSanitizer + UndefinedBehaviorSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Not recursive: logue-sdk carries CMSIS and the whole emsdk as
+          # nested submodules, and the drumlogue build touches neither.
+          submodules: true
+
+      - name: make test-asan
+        run: make test-asan
+
+      - name: Upload the sanitizer log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-log
+          path: .asan/log.txt
+          if-no-files-found: ignore
+
+  arm:
+    name: ARM units under QEMU
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Not recursive: logue-sdk carries CMSIS and the whole emsdk as
+          # nested submodules, and the drumlogue build touches neither.
+          submodules: true
+
+      - name: Install the cross toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf qemu-user
+
+      # The units are cross-compiled once and dlopen'd in whatever order the
+      # command line gives, so the second run costs QEMU time and nothing else.
+      - name: make test-arm
+        run: make test-arm ARM_UNITS="clouds clouds_fx mo2_va rings mussola modal_strike"
+
+      - name: make test-arm, units loaded in the opposite order
+        run: make test-arm ARM_UNITS="modal_strike mussola rings mo2_va clouds_fx clouds"

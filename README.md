@@ -1,6 +1,8 @@
 Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlogue
 =================================
 
+[![CI](https://github.com/fedemone/eurorack-prologue/actions/workflows/ci.yml/badge.svg)](https://github.com/fedemone/eurorack-prologue/actions/workflows/ci.yml)
+
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
 > ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is CPU-marginal
@@ -722,6 +724,11 @@ make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
                                 # at every FFT size from 256 to 4096
 make test-clouds-cola           # STFT overlap-add reconstruction at hop ratio
                                 # 4, 2 and 1 -- what backs CLOUDS_PVOC_HOP_RATIO
+
+# All three of the above run on every push -- see .github/workflows/ci.yml.
+# The ARM job runs the battery twice with the units in opposite orders,
+# because they share one dynamic scope on the device and install order has
+# already hidden one bug.
 
 # Run the shipped .drmlgunit binaries on emulated ARM
 make test-arm
