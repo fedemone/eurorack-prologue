@@ -19,6 +19,7 @@ commit **58b9125**.
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/grain.h` | **grain envelope no longer reads past `lut_window`** | Granular, high quality |
+| `clouds/dsp/correlator.cc` | **no shift by 32 when a candidate lands on a word boundary** | Stretch |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
@@ -92,6 +93,35 @@ Rings had three overruns of the same shape — `lut_stiffness`, `lut_4_decades`
 and `lut_fm_frequency_quantizer`, all reachable at Structure or Damping 100 %.
 Those are fixed in the port rather than the engine, so no fork was needed; see
 `kLutSafeMax` in `rings-resonator.cc`.
+
+### `clouds/dsp/correlator.cc` — the word-straddling shift
+
+The correlator packs sign bits into 32-bit words and scores a splice candidate
+by counting matching bits, reassembling each destination word from two:
+
+```c
+destination_bits  = destination[i]     << offset_bits;
+destination_bits |= destination[i + 1] >> (32 - offset_bits);
+```
+
+`offset_bits` is `candidate_ & 0x1f`, so it is zero for every candidate that
+falls on a word boundary — about one in 32, reached on ordinary settings. The
+second shift is then `>> 32`, which C++ leaves undefined, and the two targets
+this repository builds for disagree about it in the worst possible way: ARM's
+variable shift produces 0, which is what the algebra wants, while x86 masks the
+count to five bits, shifts by zero, and returns the whole word — corrupting the
+score for that candidate.
+
+**This changes nothing on hardware.** The device was already getting ARM's
+answer. It is forked because of where the evidence about Clouds comes from:
+the WSOLA split was settled by a 120-point differential sweep, Stretch is the
+mode that sweep exercises, and it ran on the host. A host that scores splice
+candidates differently from the device is not standing in for it. Making the
+zero case explicit gives both targets the same answer and takes the undefined
+behaviour out of the loop, so the sweep means what it says.
+
+Found by `make test-asan` — UndefinedBehaviorSanitizer, on the ordinary
+parameter sweeps, no new scenario required.
 
 ### `stmlib/fft/shy_fft.h` — NEON butterfly
 
@@ -404,10 +434,13 @@ eleven-row table.
 So the rule is all-or-nothing, and it is enforced:
 
 1. `eurorack-opt/` must come **before** `eurorack/` on the include path.
-2. `eurorack-opt/clouds/dsp/granular_processor.cc` and
-   `eurorack-opt/rings/dsp/part.cc` replace the submodule's in the source list
-   — the submodule's must not also be compiled. (The rest are headers, so they
-   need no source-list change, only the include order.)
+2. `eurorack-opt/clouds/dsp/granular_processor.cc`,
+   `eurorack-opt/clouds/dsp/correlator.cc` and `eurorack-opt/rings/dsp/part.cc`
+   replace the submodule's in the source list — the submodule's must not also
+   be compiled. (The rest are headers, so they need no source-list change, only
+   the include order.) The Clouds pair is listed in five places: `Makefile`
+   (`CLOUDS_FX_ENGINE`), `osc_clouds.mk`, both `drumlogue/clouds*/config.mk`,
+   and `generate_sdk_projects.sh`.
 3. The build defines `CLOUDS_OPT_ENGINE`. The Clouds headers define
    `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if the
    first is set without the second, so a half-configured build fails at compile
@@ -433,7 +466,7 @@ git -C eurorack log --oneline 58b9125..HEAD -- \
     clouds/dsp/granular_processor.h clouds/dsp/granular_processor.cc \
     clouds/dsp/pvoc/stft.h clouds/dsp/pvoc/phase_vocoder.h \
     clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
-    clouds/dsp/grain.h stmlib/fft/shy_fft.h \
+    clouds/dsp/grain.h clouds/dsp/correlator.cc stmlib/fft/shy_fft.h \
     rings/dsp/part.cc rings/dsp/performance_state.h
 ```
 

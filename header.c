@@ -52,13 +52,15 @@
  *    id 9:  Arp Src     (strings)    -> custom OSC_PARAM index 11
  *    id 10: Arp Rate    (strings)    -> custom OSC_PARAM index 12
  *    id 11: Arp Oct     (strings)    -> custom OSC_PARAM index 13
- *    id 12: LFO Target  (strings)    -> k_user_osc_param_id4
+ *    id 12: LFO1 Target (strings)    -> k_user_osc_param_id4
  *    id 13: LFO1 Shape  (strings)    -> custom OSC_PARAM index 14
  *    id 14: LFO1 Rate   (0-100%)     -> stored in wrapper (internal LFO1)
- *    id 15: LFO2 Rate   (0-100%)     -> k_user_osc_param_id5
- *    id 16: LFO2 Depth  (0-100%)     -> k_user_osc_param_id6
- *    id 17: LFO2 Target (strings)    -> custom OSC_PARAM index 15
- *    id 18: LFO2 Shape  (strings)    -> custom OSC_PARAM index 16
+ *    id 15: LFO1 Depth  (0-100%)     -> custom OSC_PARAM index 17
+ *    id 16: LFO2 Target (strings)    -> custom OSC_PARAM index 15
+ *    id 17: LFO2 Shape  (strings)    -> custom OSC_PARAM index 16
+ *    id 18: LFO2 Rate   (0-100%)     -> k_user_osc_param_id5
+ *    id 19: LFO2 Depth  (0-100%)     -> k_user_osc_param_id6
+ *    id 20: Note Range  (0-24 st)    -> custom OSC_PARAM index 18
  *
  *  Clouds oscillators (clouds-granular.cc):
  *    id 0:  Base Note   (0-127 MIDI) -> stored in wrapper (for gate trigger)
@@ -694,3 +696,22 @@ const __unit_header unit_header_t unit_header = {
     }
 #endif
 };
+
+/*
+ * A second name for the same object, hidden.
+ *
+ * `unit_header` has to stay in the dynamic symbol table -- the firmware looks
+ * it up with dlsym() -- and every drumlogue unit ever built defines it, into
+ * one shared dynamic scope. So a reference to `unit_header` from inside a unit
+ * goes through the GOT and resolves to whichever unit was loaded *first*, not
+ * to this one. drumlogue_guards.h explains the same trap for `.target`, which
+ * is compared against a compile-time constant for exactly this reason.
+ *
+ * The parameter clamp cannot use a constant: it needs the whole params table.
+ * A hidden alias gives it one. Hidden symbols are not preemptible, so a
+ * reference to this name binds to this unit's own copy at static link time,
+ * while `unit_header` continues to be exported unchanged. Same storage, same
+ * bytes -- only the binding differs.
+ */
+extern const unit_header_t unit_header_own
+    __attribute__((alias("unit_header"), visibility("hidden")));

@@ -658,6 +658,22 @@ static void render_chord_spectrum(unit_t *u, float *mag) {
     mag[t] = (float)sqrt(power[t] / CHORD_STRUMS);
 }
 
+/* Take the unit through its full lifecycle and back to its declared defaults.
+ *
+ * reset() is not this: it is a note-off, so it leaves a resonator ringing and
+ * rewinds neither engine state nor the random source these engines excite
+ * themselves from. Probes that measure a spectrum or compare two renders need
+ * a known starting point, and the ABI's only real rewind is teardown/init. */
+static void reinit_unit(unit_t *u) {
+  if (!u->init) return;
+  if (u->teardown) u->teardown();
+  u->init(&u->desc);
+  if (u->reset) u->reset();
+  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
+    u->setp((uint8_t)p, u->hdr->params[p].init);
+  if (u->resume) u->resume();
+}
+
 static void probe_chords(unit_t *u) {
   int chord_id = -1, model_id = -1;
   for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
@@ -665,6 +681,13 @@ static void probe_chords(unit_t *u) {
     if (strcmp(u->hdr->params[p].name, "Model") == 0) model_id = (int)p;
   }
   if (chord_id < 0 || model_id < 0) return;
+
+  /* Every other parameter matters to the spectrum as much as Chord does, and
+   * earlier probes leave them wherever they finished -- the race probe most
+   * of all, which walks them randomly for as long as the machine lets it.
+   * Start from the declared defaults so this measures the chord and not the
+   * order the probes happened to run in. */
+  reinit_unit(u);
 
   const int lo = u->hdr->params[chord_id].min;
   const int hi = u->hdr->params[chord_id].max;
@@ -784,17 +807,9 @@ static uint32_t render_lfo_pass(unit_t *u, int target, int t, int rate,
   static float out[FRAMES * 2];
   uint32_t h = 2166136261u;
 
-  /* teardown/init, not reset(): reset() is a note-off.  It leaves a resonator
-   * ringing and it does not rewind the random source these engines excite
-   * themselves from, and either is enough to make two passes differ for
-   * reasons that have nothing to do with the LFO.  The full lifecycle is the
-   * only rewind the ABI offers. */
-  if (u->teardown) u->teardown();
-  u->init(&u->desc);
-  if (u->reset) u->reset();
-  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
-    u->setp((uint8_t)p, u->hdr->params[p].init);
-  if (u->resume) u->resume();
+  /* Full lifecycle, not reset() -- see reinit_unit(). Two passes that differ
+   * because a tail was still ringing would say nothing about the LFO. */
+  reinit_unit(u);
 
   u->setp((uint8_t)target, t);
   u->setp((uint8_t)rate, rate_v);
@@ -873,12 +888,7 @@ static void probe_lfo_rate_zero_silent(unit_t *u) {
                                     : "?"));
 
   /* Leave the unit initialized and at its defaults for whatever runs next. */
-  if (u->teardown) u->teardown();
-  u->init(&u->desc);
-  if (u->reset) u->reset();
-  for (uint32_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
-    u->setp((uint8_t)p, u->hdr->params[p].init);
-  if (u->resume) u->resume();
+  reinit_unit(u);
 }
 
 static void probe_lfo_stability(unit_t *u) {
@@ -940,6 +950,45 @@ static void probe_lfo_stability(unit_t *u) {
   for (uint32_t p = 0; p < u->hdr->num_params; ++p)
     u->setp((uint8_t)p, u->hdr->params[p].init);
   if (u->reset) u->reset();
+}
+
+/* ---- parameter ranges survive being loaded next to other units ---------
+ *
+ * Every drumlogue unit exports `unit_header`, and the device loads them all
+ * into one dynamic scope, so a unit that reads `unit_header` internally reads
+ * the *first-loaded* unit's copy. A unit clamping its inputs against that
+ * table clamps them to another unit's ranges: a knob that should reach 13
+ * stops at 8, and a parameter the other unit does not declare at all -- min 0,
+ * max 0 -- freezes at zero.
+ *
+ * It is invisible from inside one unit, which is why it belongs here: this
+ * harness is the only place where several are loaded at once. Setting each
+ * parameter to the maximum its own header declares and reading it back is
+ * enough to catch it, and says nothing about audio, so it cannot go stale.
+ * ---------------------------------------------------------------------- */
+
+static void probe_param_ranges(unit_t *u) {
+  if (!u->getp) return;
+
+  int bad = -1, want = 0, got = 0;
+  for (uint32_t p = 0; p < u->hdr->num_params && bad < 0; ++p) {
+    const int lo = u->hdr->params[p].min;
+    const int hi = u->hdr->params[p].max;
+    if (hi <= lo) continue;                       /* nothing to reach */
+    u->setp((uint8_t)p, hi);
+    if (u->getp((uint8_t)p) != hi) { bad = (int)p; want = hi; got = u->getp((uint8_t)p); }
+    u->setp((uint8_t)p, lo);
+    if (bad < 0 && u->getp((uint8_t)p) != lo) { bad = (int)p; want = lo; got = u->getp((uint8_t)p); }
+  }
+
+  if (bad < 0) {
+    CHECK(1, "%s: every parameter reaches its declared range", u->hdr->name);
+  } else {
+    CHECK(0, "%s: parameter %d (%s) set to %d reads back %d",
+          u->hdr->name, bad, u->hdr->params[bad].name, want, got);
+  }
+
+  reinit_unit(u);
 }
 
 /* ---- control thread racing the audio thread ---------------------------
@@ -1095,6 +1144,9 @@ int main(int argc, char **argv) {
 
   printf("\n=== Chord tuning ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_chords(&s_units[i]);
+
+  printf("\n=== Declared parameter ranges ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_param_ranges(&s_units[i]);
 
   printf("\n=== Out-of-range parameter values ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_param_out_of_range(&s_units[i]);

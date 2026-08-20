@@ -83,12 +83,38 @@
 #define UNIT_OWN_TARGET (UNIT_TARGET_PLATFORM | k_unit_module_synth)
 #endif
 
+/*
+ * This unit's own header, under a name that cannot be preempted.
+ *
+ * The trap described above for `.target` is not limited to `.target`: *any*
+ * reference to `unit_header` from inside a unit binds to the first-loaded
+ * unit's copy. The clamp below cannot dodge it with a constant the way the
+ * target check does, because it needs the whole params table -- so header.c
+ * defines a hidden alias for the same object, and the clamp reads that.
+ * Hidden symbols are not preemptible, so this binds to this unit's copy at
+ * static link time while `unit_header` stays exported for the firmware's
+ * dlsym(). Same storage, same bytes, different binding.
+ *
+ * Getting this wrong is not subtle in effect. Every unit would clamp its
+ * parameters to the first-loaded unit's ranges: load Plaits (13 params)
+ * before Rings (21) and Rings' Chord knob stops at 8 instead of 13, while its
+ * eight LFO controls sit at indices Plaits declares as unused -- min 0, max 0
+ * -- and are frozen at zero. Silent, and it depends on install order.
+ */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern const unit_header_t unit_header_own __attribute__((visibility("hidden")));
+#ifdef __cplusplus
+}
+#endif
+
 /**
  * Clamp a parameter value to the range this unit's header declares for it.
  * `id` must already be known to be < UNIT_MAX_PARAM_COUNT.
  */
 static inline int32_t unit_param_clamp(uint8_t id, int32_t value) {
-  const unit_param_t *const p = &unit_header.params[id];
+  const unit_param_t *const p = &unit_header_own.params[id];
   if (value < (int32_t)p->min) return (int32_t)p->min;
   if (value > (int32_t)p->max) return (int32_t)p->max;
   return value;

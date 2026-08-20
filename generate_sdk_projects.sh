@@ -273,7 +273,7 @@ create_project "rings" "rings" \
 # Clouds-based oscillator (clouds-granular.cc, block size 32)
 ##############################################################################
 
-CLOUDS_SOURCES="eurorack-opt/clouds/dsp/granular_processor.cc eurorack/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/dsp/pvoc/phase_vocoder.cc eurorack/clouds/dsp/pvoc/frame_transformation.cc eurorack/clouds/dsp/pvoc/stft.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/dsp/atan.cc eurorack/stmlib/utils/random.cc"
+CLOUDS_SOURCES="eurorack-opt/clouds/dsp/granular_processor.cc eurorack-opt/clouds/dsp/correlator.cc eurorack/clouds/dsp/mu_law.cc eurorack/clouds/dsp/pvoc/phase_vocoder.cc eurorack/clouds/dsp/pvoc/frame_transformation.cc eurorack/clouds/dsp/pvoc/stft.cc eurorack/clouds/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/dsp/atan.cc eurorack/stmlib/utils/random.cc"
 
 create_project "clouds" "clouds" \
     "clouds-granular.cc" \
@@ -331,7 +331,7 @@ CSRC = $(PROJROOT)/header.c
 CXXSRC  = $(PROJROOT)/drumlogue_delfx_wrapper.cc
 CXXSRC += $(PROJROOT)/clouds-fx.cc
 CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/granular_processor.cc
-CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/correlator.cc
+CXXSRC += $(PROJROOT)/eurorack-opt/clouds/dsp/correlator.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/mu_law.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/phase_vocoder.cc
 CXXSRC += $(PROJROOT)/eurorack/clouds/dsp/pvoc/frame_transformation.cc
