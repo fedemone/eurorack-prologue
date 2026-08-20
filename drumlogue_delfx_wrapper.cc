@@ -29,6 +29,7 @@
 #include "attributes.h"
 #include "drumlogue_fpu.h"
 #include "drumlogue_guards.h"
+#include "drumlogue_param_route.h"
 
 /* CloudsFX engine entry points (clouds-fx.cc) */
 extern "C" {
@@ -193,7 +194,15 @@ void unit_set_param_value(uint8_t id, int32_t value) {
    * drumlogue_guards.h. */
   value = unit_param_clamp(id, value);
   s_state.param_values[id] = value;
-  clouds_fx_set_param(id, value);
+
+  /* The route is the identity here -- the FX unit has no oscillator behind it
+   * and takes its own ids -- but it is read from the table anyway, so this
+   * unit's layout is described in the same one place as every other unit's.
+   * See drumlogue_param_route.h. */
+  if (id >= unit_header_own.num_params) return;
+  const unit_param_route_t route = unit_param_routes[id];
+  if (route.kind != k_route_fx) return;
+  clouds_fx_set_param(route.osc, value);
 }
 
 __unit_callback

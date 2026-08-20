@@ -331,7 +331,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -577,3 +577,64 @@ package_drumlogue:
 	@cp -a *.drmlgunit ${DRUMLOGUE_PACKAGE}/
 	@cp -a credits.txt ${DRUMLOGUE_PACKAGE}/
 	@zip -rq9m ${DRUMLOGUE_PACKAGE}.zip ${DRUMLOGUE_PACKAGE}/
+
+##############################################################################
+# Parameter routing: where every panel knob actually goes.
+#
+# The panel layout is one table per unit (drumlogue_param_table.h). A slip in
+# that table does not crash and does not fail a range check -- it sends a knob
+# to the wrong engine parameter and waits to be noticed by ear. So the routing
+# is captured, not argued: this dumps id -> destination for every parameter of
+# every unit and diffs it against docs/param_routing.txt, which was generated
+# from the code as it stood before the table existed.
+#
+# A diff here means the panel layout changed. That is sometimes correct --
+# regenerate with `make param-routing-golden` and let the diff be the review.
+#
+# Usage: make test-param-routing
+##############################################################################
+
+ROUTING_UNITS = OSC_VA OSC_STRING ELEMENTS_RESONATOR_MODES=24 RINGS_RESONATOR \
+                CLOUDS_GRANULAR MUSSOLA_VOCAL
+
+define ROUTING_BUILD
+	@$(CXX) $(COMMON_TEST_FLAGS) -O1 -I$(SDK_COMMON) \
+	    -DOSC_NATIVE_BLOCK_SIZE=24 -D$(1) \
+	    test_param_routing_dump.cc drumlogue_osc_adapter.cc \
+	    drumlogue_unit_wrapper.cc header.c -o .param_routing_bin -lm
+	@./.param_routing_bin
+endef
+
+.PHONY: test-param-routing param-routing-golden
+param-routing-golden:
+	@mkdir -p docs
+	@: > docs/param_routing.txt
+	@for u in $(ROUTING_UNITS); do \
+	    $(MAKE) --no-print-directory .param-routing-one ROUTING_UNIT=$$u \
+	        >> docs/param_routing.txt || exit 1; \
+	 done
+	@rm -f .param_routing_bin
+	@echo "wrote docs/param_routing.txt (`wc -l < docs/param_routing.txt` lines)"
+
+test-param-routing:
+	@echo "Parameter Routing"
+	@echo ""
+	@: > .param_routing_now.txt
+	@for u in $(ROUTING_UNITS); do \
+	    $(MAKE) --no-print-directory .param-routing-one ROUTING_UNIT=$$u \
+	        >> .param_routing_now.txt || exit 1; \
+	 done
+	@rm -f .param_routing_bin
+	@if diff -u docs/param_routing.txt .param_routing_now.txt > .param_routing_diff.txt; then \
+	    echo "  ok:   `grep -c 'osc\[' .param_routing_now.txt` forwarded mappings unchanged across `grep -c '^#' .param_routing_now.txt` units"; \
+	    rm -f .param_routing_now.txt .param_routing_diff.txt; \
+	    echo ""; echo "=== ALL PASS (0 failures) ==="; \
+	 else \
+	    echo "  FAIL: the panel layout moved"; \
+	    head -40 .param_routing_diff.txt; \
+	    rm -f .param_routing_now.txt .param_routing_diff.txt; \
+	    exit 1; \
+	 fi
+
+.param-routing-one:
+	$(call ROUTING_BUILD,$(ROUTING_UNIT))

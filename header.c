@@ -131,9 +131,177 @@
 
 #include "unit.h"
 #include "drumlogue_guards.h"
+/* userosc.h names the OSC_PARAM slots the route tables below point at. */
+#include "userosc.h"
+#include "drumlogue_param_route.h"
+
+
+/* ===========================================================================
+ * Where each parameter goes
+ *
+ * One table per unit, immediately above the descriptors that give the same
+ * parameters their ranges and names, so a renumbering is one edit in one
+ * place.  This replaced a switch in drumlogue_unit_wrapper.cc that said the
+ * same thing a file away.  `.num_params` below is this table's length, so
+ * that number cannot drift either.
+ *
+ * See drumlogue_param_route.h for the kinds, and `make test-param-routing`
+ * for what keeps a slip here from shipping.
+ * ======================================================================== */
+
+#if defined(CLOUDS_FX)
+/* The FX unit's ids go straight through to clouds_fx_set_param(), so the
+ * route is the identity -- but it is written out anyway, because that is what
+ * gives this unit a .num_params without anyone counting. */
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_fx, 0 },    /*  0 Position */
+    { k_route_fx, 1 },    /*  1 Size */
+    { k_route_fx, 2 },    /*  2 Density */
+    { k_route_fx, 3 },    /*  3 Texture */
+    { k_route_fx, 4 },    /*  4 Pitch */
+    { k_route_fx, 5 },    /*  5 Feedback */
+    { k_route_fx, 6 },    /*  6 Dry/Wet */
+    { k_route_fx, 7 },    /*  7 Reverb */
+    { k_route_fx, 8 },    /*  8 Freeze */
+    { k_route_fx, 9 },    /*  9 Mode */
+    { k_route_fx, 10 },   /* 10 Quality */
+};
+#elif defined(MUSSOLA_VOCAL)
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Phoneme */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 Timbre */
+    { k_route_osc             , k_user_osc_param_id1 },   /*  3 Harmonics */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Morph */
+    { k_route_osc             , 8 },   /*  5 Speed */
+    { k_route_osc             , 9 },   /*  6 Prosody */
+    { k_route_osc             , 10 },   /*  7 Decay */
+    { k_route_osc             , 11 },   /*  8 Mix */
+    { k_route_osc             , 12 },   /*  9 Model */
+    { k_route_osc             , 13 },   /* 10 Gate Mode */
+    { k_route_osc             , 14 },   /* 11 Voices */
+    { k_route_osc             , 15 },   /* 12 Detune */
+    { k_route_osc             , 16 },   /* 13 Spread */
+    { k_route_osc             , 17 },   /* 14 Gender */
+    { k_route_osc             , 18 },   /* 15 Attack */
+    { k_route_osc             , 19 },   /* 16 Style */
+    { k_route_osc             , 20 },   /* 17 Key Mode */
+    { k_route_osc             , 21 },   /* 18 Gliss */
+    { k_route_osc             , 22 },   /* 19 Sustain */
+    { k_route_osc             , 23 },   /* 20 LFO Shape */
+    { k_route_osc             , 24 },   /* 21 LFO Dest */
+    { k_route_osc             , 25 },   /* 22 LFO Rate */
+    { k_route_osc             , 26 },   /* 23 LFO Depth */
+};
+#elif defined(CLOUDS_GRANULAR)
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Position */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 Size */
+    { k_route_osc             , k_user_osc_param_id1 },   /*  3 Density */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Texture */
+    { k_route_osc_signed24    , k_user_osc_param_id3 },   /*  5 Pitch */
+    { k_route_osc             , k_user_osc_param_id4 },   /*  6 Feedback */
+    { k_route_osc             , k_user_osc_param_id5 },   /*  7 Dry/Wet */
+    { k_route_osc             , k_user_osc_param_id6 },   /*  8 Reverb */
+    { k_route_osc             , 8 },   /*  9 Freeze */
+    { k_route_osc             , 9 },   /* 10 Mode */
+    { k_route_osc             , 10 },   /* 11 Quality */
+    { k_route_osc             , 11 },   /* 12 SampleBank */
+    { k_route_osc             , 12 },   /* 13 SampleNum */
+    { k_route_osc             , 13 },   /* 14 SmplStart */
+    { k_route_osc             , 14 },   /* 15 SmplEnd */
+};
+#elif defined(RINGS_RESONATOR)
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Position */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 Structure */
+    { k_route_osc             , k_user_osc_param_id1 },   /*  3 Brightness */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Damping */
+    { k_route_osc             , k_user_osc_param_id3 },   /*  5 Chord */
+    { k_route_osc             , 8 },   /*  6 Model */
+    { k_route_osc             , 9 },   /*  7 Polyphony */
+    { k_route_osc             , 10 },   /*  8 Arp */
+    { k_route_osc             , 11 },   /*  9 Arp Src */
+    { k_route_osc             , 12 },   /* 10 Arp Rate */
+    { k_route_osc             , 13 },   /* 11 Arp Oct */
+    { k_route_osc             , k_user_osc_param_id4 },   /* 12 LFO1 Target */
+    { k_route_osc             , 14 },   /* 13 LFO1 Shape */
+    { k_route_lfo1_rate       , 0 },   /* 14 LFO1 Rate */
+    { k_route_osc             , 17 },   /* 15 LFO1 Depth */
+    { k_route_osc             , 15 },   /* 16 LFO2 Target */
+    { k_route_osc             , 16 },   /* 17 LFO2 Shape */
+    { k_route_osc             , k_user_osc_param_id5 },   /* 18 LFO2 Rate */
+    { k_route_osc             , k_user_osc_param_id6 },   /* 19 LFO2 Depth */
+    { k_route_osc             , 18 },   /* 20 Note Range */
+};
+#elif defined(ELEMENTS_RESONATOR_MODES)
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Position */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 Geometry */
+    { k_route_osc             , k_user_osc_param_id1 },   /*  3 Strength */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Mallet */
+    { k_route_osc             , k_user_osc_param_id3 },   /*  5 Timbre */
+    { k_route_osc             , k_user_osc_param_id4 },   /*  6 Damping */
+    { k_route_osc             , k_user_osc_param_id5 },   /*  7 Brightness */
+    { k_route_osc             , k_user_osc_param_id6 },   /*  8 LFO Target */
+    { k_route_osc             , 11 },   /*  9 LFO1 Shape */
+    { k_route_lfo1_rate       , 0 },   /* 10 LFO1 Rate */
+    { k_route_osc             , 8 },   /* 11 LFO2 Rate */
+    { k_route_osc             , 9 },   /* 12 LFO2 Depth */
+    { k_route_osc             , 10 },   /* 13 LFO2 Target */
+    { k_route_osc             , 12 },   /* 14 LFO2 Shape */
+};
+#elif defined(OSC_STRING)
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Shape */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 ShiftShape */
+    { k_route_osc_double      , k_user_osc_param_id1 },   /*  3 Harmonics */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Attenuate */
+    { k_route_osc             , k_user_osc_param_id3 },   /*  5 LFO Target */
+    { k_route_osc             , 11 },   /*  6 LFO1 Shape */
+    { k_route_lfo1_rate       , 0 },   /*  7 LFO1 Rate */
+    { k_route_osc             , k_user_osc_param_id4 },   /*  8 LFO2 Rate */
+    { k_route_osc             , k_user_osc_param_id5 },   /*  9 LFO2 Depth */
+    { k_route_osc             , k_user_osc_param_id6 },   /* 10 LFO2 Target */
+    { k_route_osc             , 12 },   /* 11 LFO2 Shape */
+    { k_route_osc             , 13 },   /* 12 Gate Mode */
+    { k_route_osc             , 14 },   /* 13 LFO1 Depth */
+    { k_route_osc             , 15 },   /* 14 Pitch Range */
+};
+#else  /* every other Plaits engine shares one layout */
+const unit_param_route_t unit_param_routes[] = {
+    { k_route_base_note       , 0 },   /*  0 Base Note */
+    { k_route_osc_10bit       , k_user_osc_param_shape },   /*  1 Shape */
+    { k_route_osc_10bit       , k_user_osc_param_shiftshape },   /*  2 ShiftShape */
+    { k_route_osc_double      , k_user_osc_param_id1 },   /*  3 Param 1 */
+    { k_route_osc             , k_user_osc_param_id2 },   /*  4 Param 2 */
+    { k_route_osc             , k_user_osc_param_id3 },   /*  5 LFO Target */
+    { k_route_osc             , 11 },   /*  6 LFO1 Shape */
+    { k_route_lfo1_rate       , 0 },   /*  7 LFO1 Rate */
+    { k_route_osc             , k_user_osc_param_id4 },   /*  8 LFO2 Rate */
+    { k_route_osc             , k_user_osc_param_id5 },   /*  9 LFO2 Depth */
+    { k_route_osc             , k_user_osc_param_id6 },   /* 10 LFO2 Target */
+    { k_route_osc             , 12 },   /* 11 LFO2 Shape */
+    { k_route_osc             , 13 },   /* 12 Gate Mode */
+    { k_route_osc             , 14 },   /* 13 LFO1 Depth */
+    { k_route_osc             , 15 },   /* 14 Pitch Range */
+};
+#endif
+
+#define UNIT_PARAM_COUNT \
+    ((uint8_t)(sizeof(unit_param_routes) / sizeof(unit_param_routes[0])))
 
 // ---- Unit header definition  ----------------------------------------------------------------
 
+/* The .params list stops at the last real parameter: what follows is
+ * zero-filled by partial initialization, and k_unit_param_type_none is 0, so
+ * the unused slots are already exactly the blanks that used to be written out
+ * by hand.  Counting those blanks correctly was a chore that had to be redone
+ * every time a parameter was added, and getting it wrong was silent. */
 const __unit_header unit_header_t unit_header = {
     .header_size = sizeof(unit_header_t),
     /* UNIT_OWN_TARGET picks delfx for CloudsFX (an insert effect: it processes
@@ -244,7 +412,7 @@ const __unit_header unit_header_t unit_header = {
      * 11 params: Position, Size, Density, Texture, Pitch, Feedback,
      *            Dry/Wet, Reverb, Freeze, Mode, Quality
      * ================================================================ */
-    .num_params = 11,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Position (granular buffer position) */
@@ -274,20 +442,6 @@ const __unit_header unit_header_t unit_header = {
         /* id 10: Quality (stereo/mono, hi/lo fidelity) */
         {0, 3, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Quality"}},
 
-        // Pages 3-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 
 #elif defined(MUSSOLA_VOCAL)
@@ -300,7 +454,7 @@ const __unit_header unit_header_t unit_header = {
      *            Style, Key Mode, Gliss, Sustain,
      *            LFO Shape, LFO Dest, LFO Rate, LFO Depth
      * ================================================================ */
-    .num_params = 24,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note) */
@@ -371,7 +525,7 @@ const __unit_header unit_header_t unit_header = {
      *            Feedback, Dry/Wet, Reverb, Freeze, Mode, Quality,
      *            SampleBank, SampleNum, SmplStart, SmplEnd
      * ================================================================ */
-    .num_params = 16,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -413,15 +567,6 @@ const __unit_header unit_header_t unit_header = {
         /* id 15: SmplEnd (sample end point, 0-1000 = 0.0%-100.0%) */
         {0, 1000, 0, 1000, k_unit_param_type_percent, 0, 0, 0, {"SmplEnd"}},
 
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 
 #elif defined(RINGS_RESONATOR)
@@ -434,7 +579,7 @@ const __unit_header unit_header_t unit_header = {
      *            LFO2 Target, LFO2 Shape, LFO2 Rate, LFO2 Depth,
      *            Note Range
      * ================================================================ */
-    .num_params = 21,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -511,10 +656,6 @@ const __unit_header unit_header_t unit_header = {
          * out-of-range index. */
         {0, 24, 0, 2, k_unit_param_type_none, 0, 0, 0, {"Note Range"}},
 
-        // Page 6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 
 #elif defined(ELEMENTS_RESONATOR_MODES)
@@ -525,7 +666,7 @@ const __unit_header unit_header_t unit_header = {
      *            Timbre, Damping, Brightness, LFO Target, LFO1 Shape,
      *            LFO1 Rate, LFO2 Rate, LFO2 Depth, LFO2 Target, LFO2 Shape
      * ================================================================ */
-    .num_params = 15,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -564,17 +705,6 @@ const __unit_header unit_header_t unit_header = {
         {0, 6, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 14: LFO2 Shape (waveform for LFO2) */
         {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 
 #elif defined(OSC_STRING)
@@ -589,7 +719,7 @@ const __unit_header unit_header_t unit_header = {
      * makes no / too little sound".  Give String its own table so the
      * knob is named "Attenuate" and defaults to 0 (full level).
      * ================================================================ */
-    .num_params = 15,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -639,16 +769,6 @@ const __unit_header unit_header_t unit_header = {
          * repoint every saved project's knobs. */
         {0, 24, 0, 1, k_unit_param_type_none, 0, 0, 0, {"Pitch Range"}},
 
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 
 #else
@@ -659,7 +779,7 @@ const __unit_header unit_header_t unit_header = {
      *            LFO Target, LFO1 Shape, LFO1 Rate, LFO2 Rate,
      *            LFO2 Depth, LFO2 Target, LFO2 Shape, Gate Mode
      * ================================================================ */
-    .num_params = 15,
+    .num_params = UNIT_PARAM_COUNT,
     .params = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
@@ -709,16 +829,6 @@ const __unit_header unit_header_t unit_header = {
          * repoint every saved project's knobs. */
         {0, 24, 0, 1, k_unit_param_type_none, 0, 0, 0, {"Pitch Range"}},
 
-        // Pages 5-6: blank
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
-        {0, 0, 0, 0, k_unit_param_type_none, 0, 0, 0, {""}},
     }
 #endif
 };
