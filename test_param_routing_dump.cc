@@ -3,7 +3,7 @@
  *
  * Prints where every panel parameter goes, for one unit build.
  *
- * The panel layout lives in one table per unit now (drumlogue_param_table.h),
+ * The panel layout lives in one table per unit now (drumlogue_param_route.h),
  * and that table replaced a 400-line switch in the wrapper. A transcription
  * slip in a change like that does not crash or fail a range check — it sends
  * a knob to the wrong engine parameter and waits to be noticed by ear.

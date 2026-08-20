@@ -611,7 +611,7 @@ package_drumlogue:
 ##############################################################################
 # Parameter routing: where every panel knob actually goes.
 #
-# The panel layout is one table per unit (drumlogue_param_table.h). A slip in
+# The panel layout is one table per unit (drumlogue_param_route.h). A slip in
 # that table does not crash and does not fail a range check -- it sends a knob
 # to the wrong engine parameter and waits to be noticed by ear. So the routing
 # is captured, not argued: this dumps id -> destination for every parameter of
