@@ -52,6 +52,14 @@ static uint32_t s_render_avail = 0; /* samples available */
  * faults.  Latch the request instead and let the renderer do the flush. */
 static volatile int s_flush_pending = 0;
 
+/* Same treatment for the engine reset itself.  unit_reset() is contracted to
+ * put the engine back to neutral -- envelopes released, phases rewound, delay
+ * lines cleared -- and it arrives on the control thread, where clearing a
+ * delay line the renderer is reading is the race that took the audio engine
+ * down when Rings' polyphony was written from there.  Latch it; the renderer
+ * applies it at a block boundary. */
+static volatile int s_engine_reset_pending = 0;
+
 #if defined(MUSSOLA_VOCAL)
 /* Stereo buffers: filled alongside mono when OSC_CYCLE is called.
  * OSC_NATIVE_BLOCK_SIZE must not exceed the oscillator's internal
@@ -131,8 +139,10 @@ void osc_adapter_reset(void) {
   s_adapter.shape_lfo        = 0.0f;
   s_adapter.params.shape_lfo = 0;
 
-  /* Ask the audio thread to flush the render buffer (see s_flush_pending). */
-  s_flush_pending = 1;
+  /* Ask the audio thread to flush the render buffer (see s_flush_pending) and
+   * to put the engine back to neutral (see s_engine_reset_pending). */
+  s_flush_pending        = 1;
+  s_engine_reset_pending = 1;
 
   OSC_NOTEOFF(&s_adapter.params);
 }
@@ -268,6 +278,13 @@ static void q31_buf_to_float(const int32_t *src, float *dst, uint32_t count) {
  */
 static void render_one_block(void) {
   alignas(16) int32_t q31_buf[OSC_NATIVE_BLOCK_SIZE];
+
+  /* A reset latched by the control thread lands here, between blocks, before
+   * the engine is entered. */
+  if (s_engine_reset_pending) {
+    s_engine_reset_pending = 0;
+    OSC_RESET();
+  }
 
   OSC_CYCLE(&s_adapter.params, q31_buf, OSC_NATIVE_BLOCK_SIZE);
 

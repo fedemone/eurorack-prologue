@@ -683,6 +683,42 @@ void OSC_NOTEOFF(const user_osc_param_t *const params)
   gate_ = false;
 }
 
+/* Neutral state, on the audio thread between blocks.  See OSC_RESET in
+ * drumlogue/userosc.h for why it is not done where unit_reset() is called --
+ * Part::Init() re-seats the very buffers Part::Process() reads, which is the
+ * race that took the audio engine down when Polyphony was written from the
+ * control thread.
+ *
+ * Part::Init() is the expensive part: it clears the reverb buffer and
+ * re-initializes eight strings, around 96 KB, and one block is not enough
+ * time for it. That is a single over-budget block on a unit swap, which is
+ * what the SDK has in mind when it says delay lines may be "set to be
+ * cleared" rather than cleared at once -- and it is the same cost the model
+ * and polyphony latches already pay when either changes.
+ *
+ * Init() also puts Part back to its own defaults for model and polyphony, so
+ * both are re-applied through the latch rather than left to drift out of step
+ * with what the panel says. Parameters themselves are untouched. */
+void OSC_RESET(void)
+{
+  gate_          = false;
+  previous_gate_ = false;
+  shape_lfo      = 0.0f;
+  lfo2           = 0.0f;
+  lfo2_phase     = 0.0f;
+  arp_reset();
+
+  performance_state_.strum = false;
+
+  part_.Init(reverb_buffer_);
+  part_.set_model(static_cast<ResonatorModel>(model_value));
+  part_.set_polyphony(polyphony_value);
+
+  std::fill(&in_buffer_[0],  &in_buffer_[kMaxBlockSize],  0.0f);
+  std::fill(&out_buffer_[0], &out_buffer_[kMaxBlockSize], 0.0f);
+  std::fill(&aux_buffer_[0], &aux_buffer_[kMaxBlockSize], 0.0f);
+}
+
 void OSC_PARAM(uint16_t index, uint16_t value)
 {
   switch (index) {

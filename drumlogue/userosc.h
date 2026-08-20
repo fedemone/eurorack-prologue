@@ -152,6 +152,28 @@ void OSC_NOTEON(const user_osc_param_t * const params);
 void OSC_NOTEOFF(const user_osc_param_t * const params);
 void OSC_PARAM(uint16_t index, uint16_t value);
 
+/*
+ * Return the engine to a neutral state: envelopes released, oscillator phases
+ * rewound, delay lines cleared.  Parameter values are *not* touched -- the
+ * drumlogue keeps those and pushes them again itself.
+ *
+ * This one has no prologue counterpart. It exists because the drumlogue's
+ * unit_reset() is contracted to do exactly that (logue-sdk drumlogue README:
+ * "Called when unit must be reset to a neutral state ... delay lines set to
+ * be cleared"), and the firmware calls it when a unit is swapped out or a
+ * project is recalled -- so without it the previous patch's tail rings on
+ * into the next one.
+ *
+ * Called from the audio thread, at a block boundary: unit_reset() arrives on
+ * the control thread, where re-seating buffers the renderer is reading is the
+ * same race that used to take the audio engine down. The adapter latches the
+ * request and calls this instead.
+ *
+ * Prologue builds never reference it, and both platforms link with
+ * --gc-sections, so an unused definition costs nothing there.
+ */
+void OSC_RESET(void);
+
 #ifdef __cplusplus
 }
 #endif

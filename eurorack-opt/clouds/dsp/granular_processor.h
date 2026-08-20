@@ -102,6 +102,19 @@ class GranularProcessor {
 
   void Process(ShortFrame* input, ShortFrame* output, size_t size);
   void Prepare();
+
+  // Ask the next Prepare() to take the full re-initialization path -- audio
+  // buffers cleared, FX workspace re-allocated, filters and pitch shifter
+  // reset -- the same one a channel-count change takes.
+  //
+  // Added for the port. The drumlogue's unit_reset() is contracted to return
+  // the engine to a neutral state, and it arrives on the control thread,
+  // where clearing a buffer the renderer is reading is a race. Prepare()
+  // already runs on the audio thread once per block, so setting the flag is
+  // the whole handshake.
+  inline void RequestBufferReset() {
+    reset_buffers_ = true;
+  }
   
   inline Parameters* mutable_parameters() {
     return &parameters_;
