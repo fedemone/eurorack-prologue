@@ -28,9 +28,14 @@ test_clouds_engine_opt_fork
 .engine_opt_*.txt
 test_clouds_fft
 test_clouds_fft_arm
+test_clouds_pvoc_worker_on
+test_clouds_pvoc_worker_off
+test_clouds_pvoc_defer_0
+test_clouds_pvoc_defer_n
+test_clouds_tsan
+bench_clouds_spike_arm
 test_clouds_pvoc_rr_0
 test_clouds_pvoc_rr_1
-bench_clouds_spike_arm
 bench_units_arm
 test_clouds_cola
 test_clouds_grain_window_stock

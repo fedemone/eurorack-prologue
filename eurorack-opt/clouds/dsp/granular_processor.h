@@ -103,6 +103,13 @@ class GranularProcessor {
   void Process(ShortFrame* input, ShortFrame* output, size_t size);
   void Prepare();
 
+  // Return with no phase-vocoder transform running or scheduled.  Init() and
+  // Prepare()'s reallocation path call it themselves; it is public because a
+  // caller that means to clear or reuse the buffers it handed this engine has
+  // to stop the worker before touching them, and only the caller knows when
+  // that is.  Nothing to do in a build without the worker.
+  void Quiesce() { phase_vocoder_.Quiesce(); }
+
   // Ask the next Prepare() to take the full re-initialization path -- audio
   // buffers cleared, FX workspace re-allocated, filters and pitch shifter
   // reset -- the same one a channel-count change takes.

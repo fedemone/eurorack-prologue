@@ -22,7 +22,8 @@ commit **58b9125**.
 | `clouds/dsp/correlator.cc` | **no shift by 32 when a candidate lands on a word boundary** | Stretch |
 | `clouds/dsp/pvoc/frame_transformation.cc` | **spectral warp skipped when its polynomial is the identity** | Spectral |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
-| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2** | Spectral, stereo |
+| `clouds/dsp/pvoc/stft.cc` | **`Buffer()` can take the `Parameters` to use** | Spectral |
+| `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2**; **transform moved to a worker thread** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 | `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
@@ -394,14 +395,109 @@ places, against **9.48 dB at ratio 1** — the last being the control, without
 which a test that reported no ripple everywhere would look like a pass rather
 than a broken measurement.
 
-**The default stays at upstream's 4.** What halving the overlap costs is not
-reconstruction but phase-vocoder artifacts on *modified* spectra — fewer
-overlapping frames means less averaging in the phase reconstruction, so
-transients smear differently and heavy Warp/Quantize/Pitch settings get
-grainier. That is most of what Spectral is for, and Spectral's character has
-already been cut once by the 4096 → 512 change. Spending the rest of it is a
-decision about how the instrument should sound, not an optimisation to apply
-quietly. Build with `-DCLOUDS_PVOC_HOP_RATIO=2` to take it.
+**The default is 2, not upstream's 4.** It was 4 here for exactly the reason
+below, and hardware overruled it: Spectral still clicked with the smaller FFT
+in place, and this is the only lever left that changes the cost by a factor.
+
+What halving the overlap costs is not reconstruction but phase-vocoder
+artifacts on *modified* spectra — fewer overlapping frames means less
+averaging in the phase reconstruction, so transients smear differently and
+heavy Warp/Quantize/Pitch settings get grainier. That is most of what Spectral
+is for, and Spectral's character had already been cut once by the 4096 → 512
+change. The judgement made here is that a mode which clicks is worth less than
+a mode which is grainier. Build with `-DCLOUDS_PVOC_HOP_RATIO=4` to get
+upstream's overlap back, at upstream's cost.
+
+#### `CLOUDS_PVOC_WORKER` — the transform on a worker thread
+
+The other three levers on Spectral made the work smaller. This one moves work
+that is already small enough off the deadline, and it is the last of any size.
+
+What overran was never the total. Spectral's mean is a few percent of a block.
+It is that the whole transform lands inside *one* audio block, once per hop,
+and that block has to fit in a render alongside everything else. Upstream does
+not have this problem because it calls `Buffer()` from its main idle loop,
+where a spike costs nothing; the port put it on the audio thread because it
+had no idle loop. A thread at `SCHED_OTHER` is an idle loop.
+
+Enabled automatically on `__linux__`, which is the drumlogue and nothing else —
+prologue, minilogue-xd and NTS-1 are bare-metal Cortex-M4 with no pthreads and
+no scheduler to exploit. It is gated on a predefined macro rather than a `-D`
+on purpose: it changes `sizeof(PhaseVocoder)`, so it has to be identical in
+every translation unit, and that is the footgun `stft.h` warns about for
+`CLOUDS_FFT_SIZE`.
+
+The safety argument is the slack the round-robin already spends. A transform
+may run any time within one hop of being scheduled and still read and write
+exactly what it would have — `make test-clouds-pvoc-defer` defers every
+transform by N calls, on the audio thread so the result is deterministic, and
+the fixed-parameter hashes do not move at any N it sweeps. Three properties
+carry it, and each is checked rather than argued:
+
+* **The audio thread never blocks on the worker, and never takes a lock to
+  reach it.** It posts with a release store and a `sem_post`; if the slot is
+  busy it returns and tries again next call. There is deliberately no path
+  where the render waits on a `SCHED_OTHER` thread — on a single core that is
+  a livelock, the renderer burning the budget the worker needs in order to
+  release it. `Quiesce()` is the one exception and it is a mode change, not
+  deadline work.
+* **A transform runs on exactly one thread at a time.** Both channels share
+  the FFT scratch, so this is not a formality. `make test-tsan` runs the
+  handoff under ThreadSanitizer and reports nothing.
+* **The worst case is the previous behaviour.** If the thread cannot be
+  created every transform runs inline, exactly as before. If the worker falls
+  behind, the catch-up valve takes back *one* transform — capped, because an
+  earlier version drained the whole backlog in one call and that was measurably
+  worse than having no worker at all.
+
+Measured with `make bench-clouds-spike`, ARM under QEMU, Spectral, per
+32-sample block against a 1 ms deadline. The worker is starved in this bench —
+it drives blocks flat out, so there is no wall clock for a lower-priority
+thread to run in — which makes these the *pessimistic* numbers, the fallback
+path rather than the intended one:
+
+| | mean | p99 | p99.9 | max | over deadline |
+|---|---|---|---|---|---|
+| worker off | 7.50% | 34.02% | 40.02% | 41.35% | 0.00% |
+| worker on, valve capped | 5.45% | 22.74% | 29.06% | 39.72% | 0.00% |
+| worker on, uncapped | 5.49% | 60.56% | 80.56% | **540.22%** | 0.04% |
+
+The third row is the version that drained the backlog in one call. It is kept
+because it is the reason the cap exists, and because it is the shape a
+plausible-looking design had before it was measured.
+
+Given real time the picture changes again. `make test-clouds-pvoc-worker`
+drives the engine at the sample rate: the worker takes **every** transform,
+none forced back, and the output is bit-identical to the same build with the
+worker switched off. That is what this change stands on, and QEMU cannot show
+it, because what it depends on is the scheduler.
+
+Build with `-DCLOUDS_PVOC_WORKER=0` to put the transform back on the audio
+thread. That is the first thing to try if Spectral misbehaves on hardware, and
+it restores exactly the code that shipped before this existed.
+
+### `clouds/dsp/pvoc/stft.cc` — `Buffer()` can take its `Parameters`
+
+Upstream stores a `const Parameters*` in `Process()` and dereferences it in
+`Buffer()`, so a transform reads the knobs as they are at the moment it runs.
+Fine when both are on one thread; a plain data race once the transform moves to
+a worker, because the audio thread rewrites that struct at the top of every
+block.
+
+Taking the `Parameters` by value at the point the transform is *scheduled*
+removes the race and, less obviously, removes a difference that was already
+there. The old round-robin's one non-bit-identical effect was inter-channel
+skew from exactly this live read; snapshotting means a deferred or offloaded
+transform uses precisely the values the synchronous path would have used, so
+`test_clouds_pvoc_rr.cc`'s swept scenarios go from a small non-zero difference
+to 0.000%.
+
+The fork also adds `BufferReady()`, which skips re-checking that a hop is
+pending. That check reads `ready_`, which the audio thread writes — the last
+genuine race in the handoff, and unnecessary, since the scheduler established
+`pending() > 0` before handing the job over. Not reading it removes the race
+rather than excusing it. The no-argument `Buffer()` is untouched, so a build
+with the worker and the deferral both off behaves exactly as before.
 
 ### `clouds/dsp/pvoc/stft.h` — LUT twiddle factors
 
@@ -486,11 +582,22 @@ So the rule is all-or-nothing, and it is enforced:
    `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if the
    first is set without the second, so a half-configured build fails at compile
    time instead of at run time.
-4. Rings has no such guard, because it needs none: `part.cc` is the only file
-   that reads the chord table, and it is the file that is forked. A build that
-   picked up the wrong `performance_state.h` would be caught by `make
-   test-arm`, which walks the Chord parameter over its declared range and
-   requires every value to name a chord.
+4. Rings has no `#error` guard, and it turns out to need one more than the
+   note here used to admit. `part.cc` is the only file that reads the chord
+   table and it is the file that is forked, so a build that lists the
+   submodule's `part.cc` alongside the forked `performance_state.h` compiles
+   and links, then reads past the end of the chord table at run time.
+
+   That is not hypothetical: `generate_sdk_projects.sh` emitted
+   `eurorack/rings/dsp/part.cc` for exactly this reason, so anyone
+   regenerating the projects silently reverted the fork. It was caught by
+   `make test-asan` — `index 12 out of bounds for type 'float [11][8]'` in the
+   submodule's `part.cc` — which is also the answer to how it would be caught
+   again. `make test-arm` walks the Chord parameter over its declared range
+   and requires every value to name a chord, and would catch it too.
+
+   **Both source lists have to name the fork**: `drumlogue/rings/config.mk`
+   and `RINGS_SOURCES` in `generate_sdk_projects.sh`, which regenerates it.
 
 Wired up in `Makefile` (`CLOUDS_OPT_FLAGS`, `CLOUDS_FX_ENGINE`),
 `osc_clouds.mk`, `makefile.inc` (`DINCDIR`, which is why the entry goes

@@ -56,7 +56,7 @@ jobs:
         run: git diff --no-index docs/param_routing.txt .param_routing_now.txt || true
 
   sanitizers:
-    name: AddressSanitizer + UndefinedBehaviorSanitizer
+    name: AddressSanitizer + UndefinedBehaviorSanitizer + ThreadSanitizer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +67,12 @@ jobs:
 
       - name: make test-asan
         run: make test-asan
+
+      # The phase vocoder's worker thread.  Run against the synchronised
+      # handoff, which is where TSan can say something: see the note on the
+      # test-tsan target for why it is not run free-running.
+      - name: make test-tsan
+        run: make test-tsan
 
       - name: Upload the sanitizer log
         if: failure()

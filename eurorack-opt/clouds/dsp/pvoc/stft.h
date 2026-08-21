@@ -154,6 +154,17 @@ class STFT {
 
   void Buffer();
 
+  // Transform the pending hop using these Parameters rather than the live
+  // pointer Process() left behind.  See the fork note in stft.cc: this is
+  // what lets the transform move off the audio thread without racing the
+  // struct the audio thread is writing.
+  void Buffer(const Parameters& parameters);
+
+  // As Buffer(const Parameters&), but skips re-checking that a hop is pending.
+  // For callers that have already established it and must not read ready_,
+  // which the audio thread writes -- see the note in stft.cc.
+  void BufferReady(const Parameters& parameters);
+
   // Hops that have arrived but not yet been transformed; 0 means Buffer()
   // would return immediately.  Added for the round-robin scheduler in
   // phase_vocoder.cc, which needs to know when a deferred channel has fallen
@@ -161,6 +172,8 @@ class STFT {
   inline size_t pending() const { return ready_ - done_; }
 
  private:
+  void BufferWith(const Parameters* parameters, bool guard);
+
   FFT* fft_;
   size_t fft_size_;
   size_t fft_num_passes_;
