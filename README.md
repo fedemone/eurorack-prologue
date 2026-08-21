@@ -24,8 +24,20 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > (`make test-clouds-cola`); what it costs is a grainier, less smoothed sound
 > on heavily modified spectra, which is a deliberate trade.
 >
-> **That build has not been back to hardware.** Until it has, still treat
-> Mode 3 as a mode to use deliberately:
+> **That build has since been tested on hardware and passed.**
+>
+> On top of it, the transform now runs on a **worker thread** rather than on
+> the audio thread — which is where upstream has always had it, in its idle
+> loop. That removes the once-per-hop burst from the render deadline instead
+> of making it smaller. Driven at the sample rate the worker takes every
+> transform and the output is bit-identical to the same build without it
+> (`make test-clouds-pvoc-worker`); if it ever fails to keep up, one transform
+> falls back onto the audio thread, which is where it used to be anyway.
+> **The worker has not been to hardware yet** — it is the one part of Mode 3
+> that is still unproven there. Build with `-DCLOUDS_PVOC_WORKER=0` to switch
+> it off.
+>
+> Until it has, still treat Mode 3 as a mode to use deliberately:
 >
 > - Expect clicks may remain, more so with other parts and effects running.
 > - **Avoid fast parameter changes while Spectral is playing.** This has not
@@ -742,10 +754,18 @@ make test-clouds-warp           # Spectral with the identity-warp skip on and
 make test-clouds-pvoc-rr        # phase vocoder scheduling: one channel per
                                 # call vs upstream's loop, sample for sample
                                 # at every FFT size from 256 to 4096
+make test-clouds-pvoc-worker    # the transform on a worker thread, driven at
+                                # the sample rate: output bit-identical to the
+                                # same build without it, and nothing forced
+                                # back onto the audio thread
+make test-clouds-pvoc-defer     # how much slack a transform really has --
+                                # defers every one by N blocks and checks the
+                                # fixed-parameter output does not move
+make test-tsan                  # ThreadSanitizer over the worker handoff
 make test-clouds-cola           # STFT overlap-add reconstruction at hop ratio
                                 # 4, 2 and 1 -- what backs CLOUDS_PVOC_HOP_RATIO
 
-# All three of the above run on every push -- see .github/workflows/ci.yml.
+# All of the above run on every push -- see .github/workflows/ci.yml.
 # The ARM job runs the battery twice with the units in opposite orders,
 # because they share one dynamic scope on the device and install order has
 # already hidden one bug.

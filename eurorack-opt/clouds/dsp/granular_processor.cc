@@ -85,6 +85,12 @@ static const float kDiffuserFadeRate = 1.0f / 8192.0f;
 void GranularProcessor::Init(
     void* large_buffer, size_t large_buffer_size,
     void* small_buffer, size_t small_buffer_size) {
+  // Re-pointing the engine at its buffers while a phase-vocoder transform is
+  // still in flight would pull the memory out from under it.  Prepare() ->
+  // PhaseVocoder::Init() quiesces for the same reason, but this entry point
+  // reaches the same state without going through Prepare(), so it has to do
+  // it too.  No-op unless a worker is running.
+  Quiesce();
   buffer_[0] = large_buffer;
   buffer_[1] = small_buffer;
   buffer_size_[0] = large_buffer_size;

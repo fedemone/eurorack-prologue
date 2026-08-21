@@ -101,6 +101,14 @@ static void engine_init(PlaybackMode mode, int quality) {
    * the generator one draw apart from the other build and every later
    * scenario inherits the divergence, including mono ones the scheduler
    * cannot touch. */
+  /* Stop the phase vocoder's worker before wiping the buffers it is reading
+   * and writing.  A scenario can end with a transform still outstanding --
+   * that is the point of the scheduling under test -- and the memsets below
+   * are this harness reaching straight into the engine's memory, which no
+   * caller on the device does.  Without this the next scenario's setup races
+   * the previous scenario's transform.  No-op in a build without the
+   * worker. */
+  processor_.Quiesce();
   stmlib::Random::Seed(0x12345678u);
   memset(large_buffer_, 0, kLargeBufferSize);
   memset(small_buffer_, 0, kSmallBufferSize);

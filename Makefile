@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-pvoc-worker test-clouds-pvoc-defer test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -122,14 +122,30 @@ test-mussola:
 # eurorack-opt/ fork; everything else is the submodule.  -Ieurorack-opt must
 # precede -Ieurorack so the forked headers shadow the submodule's -- see
 # eurorack-opt/README.md.
-CLOUDS_OPT_FLAGS = -Ieurorack-opt -Ieurorack -DCLOUDS_OPT_ENGINE
+# The host tests build the clouds engine with the phase vocoder's worker
+# thread switched off, and that default is deliberate.  Those tests compare
+# renders against each other, or against a golden hash, and a worker changes
+# when a transform lands relative to the render loop -- which in a harness
+# driving blocks flat out, with no wall clock, is not a fixed relationship at
+# all.  They would stop being deterministic while testing nothing new.
+#
+# The two targets that are about the worker turn it back on with a
+# target-specific override (see test-clouds-pvoc-worker and test-tsan), and
+# the drumlogue units are unaffected: they build from drumlogue/*/config.mk,
+# which does not use these flags, so they take the __linux__ default in
+# phase_vocoder.h.  `make test-asan` builds those real units, worker included.
+#
+# To bench or run any of these with the worker on:
+#     make <target> CLOUDS_WORKER_FLAG=
+CLOUDS_WORKER_FLAG ?= -DCLOUDS_PVOC_WORKER=0
+CLOUDS_OPT_FLAGS = -Ieurorack-opt -Ieurorack -DCLOUDS_OPT_ENGINE $(CLOUDS_WORKER_FLAG)
 CLOUDS_FX_ENGINE = \
     eurorack-opt/clouds/dsp/granular_processor.cc \
     eurorack-opt/clouds/dsp/correlator.cc \
     eurorack/clouds/dsp/mu_law.cc \
     eurorack-opt/clouds/dsp/pvoc/phase_vocoder.cc \
     eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc \
-    eurorack/clouds/dsp/pvoc/stft.cc \
+    eurorack-opt/clouds/dsp/pvoc/stft.cc \
     eurorack/clouds/resources.cc \
     eurorack/stmlib/dsp/units.cc \
     eurorack/stmlib/dsp/atan.cc \
@@ -324,6 +340,159 @@ test-clouds-pvoc-rr:
 	 if [ $$fail -ne 0 ]; then echo "=== FAILURES ==="; exit 1; fi; \
 	 echo "=== ALL PASS (0 failures) ==="
 
+# Phase vocoder worker: does the transform actually run off the audio thread,
+# and does moving it there change the audio?
+#
+# Two builds of the same file, worker on and worker off, driven at the sample
+# rate rather than flat out.  The pacing is the whole point.  The ring geometry
+# gives a transform one hop -- 8 ms at 32 kHz -- to finish before Process()
+# overwrites the window it is reading, and a host test with no wall clock
+# issues a thousand blocks in the time one transform takes, so it starves the
+# worker by construction and proves nothing.  Paced, the two builds must agree
+# bit for bit, and nothing may be forced back onto the audio thread.
+#
+# The forced count is the part the hash cannot tell you: a worker that never
+# keeps up still produces correct audio, because the catch-up valve takes over,
+# and buys exactly nothing.
+# Usage: make test-clouds-pvoc-worker
+test-clouds-pvoc-worker: CLOUDS_WORKER_FLAG =
+test-clouds-pvoc-worker:
+	@echo "Clouds Phase Vocoder Worker Test"
+	@echo ""
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) -pthread \
+	    test_clouds_pvoc_worker.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_pvoc_worker_on -lm
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) -pthread \
+	    -DCLOUDS_PVOC_WORKER=0 test_clouds_pvoc_worker.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_pvoc_worker_off -lm
+	@./test_clouds_pvoc_worker_on  > .pvoc_worker_on.txt  || exit 1
+	@./test_clouds_pvoc_worker_off > .pvoc_worker_off.txt || exit 1
+	@fail=0; \
+	 on=`grep '^H paced' .pvoc_worker_on.txt`; \
+	 off=`grep '^H paced' .pvoc_worker_off.txt`; \
+	 if [ "$$on" = "$$off" ]; then \
+	   echo "  ok:   paced output bit-identical with the transform on the worker"; \
+	 else \
+	   echo "  FAIL: moving the transform off the audio thread changed the audio"; \
+	   echo "        worker on:  $$on"; \
+	   echo "        worker off: $$off"; fail=1; \
+	 fi; \
+	 ran=`awk '/^C paced/{print $$4}' .pvoc_worker_on.txt`; \
+	 forced=`awk '/^C paced/{print $$6}' .pvoc_worker_on.txt`; \
+	 if [ "$$ran" -gt 0 ] 2>/dev/null && [ "$$forced" -eq 0 ] 2>/dev/null; then \
+	   echo "  ok:   $$ran transforms on the worker, 0 forced back onto the audio thread"; \
+	 else \
+	   echo "  FAIL: $$ran on the worker, $$forced forced -- the worker is not keeping up"; \
+	   echo "        (a loaded machine can cause this; it is a real failure on an idle one)"; \
+	   fail=1; \
+	 fi; \
+	 rm -f .pvoc_worker_on.txt .pvoc_worker_off.txt; \
+	 echo ""; \
+	 if [ $$fail -ne 0 ]; then echo "=== FAILURES ==="; exit 1; fi; \
+	 echo "=== ALL PASS (0 failures) ==="
+
+# Deferral sweep: how much slack a transform actually has before running it
+# late changes the output.
+#
+# The worker's whole safety argument is that a transform may run any time
+# within one hop of being scheduled and still read and write exactly what it
+# would have.  This measures that instead of asserting it, by deferring every
+# transform by N Buffer() calls -- still on the audio thread, so no thread
+# timing is involved and the result is deterministic.
+#
+# The fixed-parameter hashes must not move at any N.  Past the slack they
+# still do not, because the catch-up valve reclaims the transform before the
+# window is lost: overrunning costs the CPU saving, never correctness.  What
+# does move is the split between transforms that ran on time and transforms
+# the valve had to take back, which is what the table reports.
+# Usage: make test-clouds-pvoc-defer
+PVOC_DEFER_DEPTHS = 1 2 3 4 5 6 8 9 12
+test-clouds-pvoc-defer:
+	@echo "Clouds Phase Vocoder Deferral Sweep"
+	@echo ""
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_pvoc_rr.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_pvoc_defer_0 -lm
+	@./test_clouds_pvoc_defer_0 > .pvoc_defer_0.txt || exit 1
+	@fail=0; \
+	 for n in $(PVOC_DEFER_DEPTHS); do \
+	   $(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	       -DCLOUDS_PVOC_DEFER_BLOCKS=$$n \
+	       test_clouds_pvoc_rr.cc $(CLOUDS_FX_ENGINE) \
+	       -o test_clouds_pvoc_defer_n -lm || exit 1; \
+	   ./test_clouds_pvoc_defer_n > .pvoc_defer_n.txt || exit 1; \
+	   grep '^H ' .pvoc_defer_0.txt > .pvoc_defer_0h.txt; \
+	   grep '^H ' .pvoc_defer_n.txt > .pvoc_defer_nh.txt; \
+	   if cmp -s .pvoc_defer_0h.txt .pvoc_defer_nh.txt; then \
+	     echo "  ok:   deferred $$n blocks: fixed-parameter output unchanged"; \
+	   else \
+	     echo "  FAIL: deferred $$n blocks: fixed-parameter output changed"; \
+	     diff .pvoc_defer_0h.txt .pvoc_defer_nh.txt || true; \
+	     fail=1; \
+	   fi; \
+	   paste .pvoc_defer_0.txt .pvoc_defer_n.txt | awk -v n=$$n ' \
+	     /^S / { d = ($$10 - $$4) / ($$4 == 0 ? 1 : $$4); if (d < 0) d = -d; \
+	       if (d > 0.03) { \
+	         printf("  FAIL: deferred %s blocks: %s rms differs by %.3f%%\n", \
+	                n, $$2, 100*d); exit 1 } }' || fail=1; \
+	 done; \
+	 rm -f .pvoc_defer_0.txt .pvoc_defer_n.txt \
+	       .pvoc_defer_0h.txt .pvoc_defer_nh.txt; \
+	 echo ""; \
+	 if [ $$fail -ne 0 ]; then echo "=== FAILURES ==="; exit 1; fi; \
+	 echo "=== ALL PASS (0 failures) ==="
+
+##############################################################################
+# ThreadSanitizer: the worker handoff.
+#
+# What this can and cannot prove is worth being exact about, because the
+# obvious reading of a dirty TSan run here would be wrong.
+#
+# It is run against CLOUDS_PVOC_WORKER_SYNC=1, where the audio thread waits for
+# each transform to land.  That leaves the handoff itself -- the job slot, the
+# acquire/release pairing, the semaphore, thread startup and shutdown, and the
+# quiesce that Init() depends on -- fully exercised and fully ordered, and it
+# must come out clean.
+#
+# It is NOT run free-running, and that is deliberate rather than a dodge.  The
+# analysis and synthesis rings are read and written by both threads by design:
+# the safety argument is that the ring is one hop longer than the window, so
+# the two are always working on different parts of it.  That is a claim about
+# *timing*, and a host harness has no wall clock -- it issues blocks as fast as
+# the CPU allows, so the worker falls arbitrarily far behind and the accesses
+# genuinely do overlap.  TSan would be reporting a real overlap caused by the
+# harness, and suppressing it would silence exactly the reports that a real
+# geometry bug would produce.
+#
+# So the ring is measured where timing is meaningful instead:
+# `make test-clouds-pvoc-defer` sweeps the deferral deterministically, and
+# `make test-clouds-pvoc-worker` drives the engine at the sample rate and
+# checks nothing gets forced back onto the audio thread.
+#
+# Usage: make test-tsan
+##############################################################################
+.PHONY: test-tsan
+test-tsan: CLOUDS_WORKER_FLAG =
+test-tsan:
+	@echo "ThreadSanitizer (phase vocoder worker handoff)"
+	@echo ""
+	@$(CXX) $(COMMON_TEST_FLAGS) -O1 -g -DTEST $(CLOUDS_OPT_FLAGS) \
+	    -DCLOUDS_PVOC_WORKER_SYNC=1 \
+	    -fsanitize=thread -fno-omit-frame-pointer -pthread \
+	    test_clouds_pvoc_rr.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_tsan -lm
+	@TSAN_OPTIONS=halt_on_error=0 ./test_clouds_tsan > .tsan.txt 2>&1; \
+	 n=`grep -c "WARNING: ThreadSanitizer" .tsan.txt || true`; \
+	 if [ "$$n" -eq 0 ]; then \
+	   echo "  ok:   no ThreadSanitizer reports across the handoff"; \
+	   rm -f .tsan.txt; echo ""; echo "=== ALL PASS (0 failures) ==="; \
+	 else \
+	   echo "  FAIL: $$n ThreadSanitizer reports"; \
+	   grep "^SUMMARY: ThreadSanitizer" .tsan.txt | sort -u | head -20; \
+	   echo ""; echo "=== FAILURES ==="; exit 1; \
+	 fi
+
+
 # Overlap-add reconstruction test: drives the real STFT with the modifier
 # disabled and measures the ripple of a steady tone, at hop ratio 4, 2 and 1.
 # This is what backs CLOUDS_PVOC_HOP_RATIO -- halving the overlap halves most
@@ -333,7 +502,7 @@ test-clouds-pvoc-rr:
 test-clouds-cola:
 	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
 	    test_clouds_cola.cc \
-	    eurorack/clouds/dsp/pvoc/stft.cc \
+	    eurorack-opt/clouds/dsp/pvoc/stft.cc \
 	    eurorack-opt/clouds/dsp/pvoc/frame_transformation.cc \
 	    eurorack/clouds/resources.cc \
 	    eurorack/stmlib/dsp/units.cc \
@@ -361,7 +530,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -562,7 +731,7 @@ bench-clouds-spike:
 	    { echo "SKIP bench-clouds-spike: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
 	arm-linux-gnueabihf-g++ -std=c++11 -O2 -march=armv7-a -mtune=cortex-a7 \
 	    -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math -fsigned-char -DTEST \
-	    $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. \
+	    $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. -pthread \
 	    bench_clouds_spike.cc $(CLOUDS_FX_ENGINE) \
 	    -o bench_clouds_spike_arm -lm
 	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_clouds_spike_arm
