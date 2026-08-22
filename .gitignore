@@ -32,6 +32,11 @@ test_clouds_pvoc_worker_on
 test_clouds_pvoc_worker_off
 test_clouds_pvoc_defer_0
 test_clouds_pvoc_defer_n
+test_clouds_wsola_split_none
+test_clouds_wsola_split_on
+test_clouds_wsola_split_guard
+test_clouds_stretch_clicks
+bench_clouds_stretch_arm
 test_clouds_tsan
 bench_clouds_spike_arm
 test_clouds_pvoc_rr_0

@@ -81,6 +81,13 @@ namespace clouds {
 
 const int32_t kMaxWSOLASize = 4096;
 
+// How the split actually resolved, for test_clouds_wsola_split.cc to report.
+// A differential that comes out identical because the split never engaged
+// would be no evidence at all, and which way that goes depends on where
+// window_size_ has slewed to -- which is not obvious from the SIZE knob.
+extern uint32_t g_wsola_split_taken;
+extern uint32_t g_wsola_split_refused;
+
 using namespace stmlib;
 
 class WSOLASamplePlayer {
@@ -228,22 +235,58 @@ class WSOLASamplePlayer {
   // the gap varies from window to window, so a long interval followed by a
   // short one lets a split through that does not fit. It differed from
   // upstream in 18 of 90 sweep points, against 0 for this one.
-  static const int32_t kCorrelatorSplitWindow = 1024;
+  // Settable at build time so test_clouds_wsola_split.cc can compare the
+  // split against no split at all, and so the head-margin rule below can be
+  // varied without editing this file.  A very large value disables splitting.
+#ifndef CLOUDS_WSOLA_SPLIT_WINDOW
+#define CLOUDS_WSOLA_SPLIT_WINDOW 1024
+#endif
+  static const int32_t kCorrelatorSplitWindow = CLOUDS_WSOLA_SPLIT_WINDOW;
 
-  // ...and only when the destination window's top edge is at least this far
-  // behind the buffer's write head.
+  // ...and, formerly, only when the destination window's top edge was at
+  // least this far behind the buffer's write head.  The default is now 0,
+  // which disables that second condition; the reasoning that put it there is
+  // kept because it is sound, and because it explains what the flag is for.
   //
   // That edge sits at head - limit * POSITION, so at POSITION 0 it *is* the
   // head, and deferring the read by a block reads a block of audio recorded
   // since the window was scheduled -- 32 samples of a 2048-sample correlation
-  // window, occasionally enough to flip the best match.  This is what the
-  // differential sweep was still catching at POSITION 0 with +-24 semitones,
-  // where the pitch ratio pulls the read hardest against the head.  Two
-  // blocks of margin covers the one-block deferral with room over.
+  // window, occasionally enough to flip the best match.  Refusing the split
+  // there kept the port's output identical to upstream's at the one end of
+  // the one knob where the two could diverge.
   //
-  // The cost is that POSITION 0 does not get the split.  It is one end of one
-  // knob, and correctness there is worth more than the burst.
-  static const int32_t kCorrelatorHeadMargin = 2 * kMaxBlockSize;
+  // What that cost was never measured until Stretch was reported clicking on
+  // hardware.  POSITION 0 is not an edge case -- it is the setting that
+  // stretches the most recent audio, which is what the mode is for -- and
+  // refusing the split there is the only place in the mode that misses the
+  // deadline.  Measured with `make bench-clouds-stretch`, ARM under QEMU, per
+  // 32-sample block:
+  //
+  //                          p99     p99.9      max    over deadline
+  //   SIZE 0.80  POS 0.00   63.81%   84.45%   109.85%     0.05%
+  //   SIZE 0.80  POS 0.25   49.49%   52.82%    57.05%     0.00%
+  //
+  // and the same gap at SIZE 0.65 and 1.00.  A missed deadline is a dropout;
+  // a flipped best match is a splice a few samples further along in a signal
+  // that is being spliced regardless.
+  //
+  // What the guard actually bought is now measurable too, and it is nothing
+  // that shows: `make test-clouds-wsola-split` sweeps 200 points of SIZE x
+  // POSITION x PITCH x quality against a build that never splits, and with
+  // the guard off the split engages 42110 times against 33703 with it on --
+  // 8407 more, all at POSITION 0 -- with every one of the 200 points still
+  // bit-identical.
+  //
+  // Set CLOUDS_WSOLA_HEAD_MARGIN back to 2 * kMaxBlockSize to restore it.
+  // Worth knowing before doing so: a shorter settle in that test *does* find
+  // differences, three of 200 points at PITCH +24, none larger than 0.25% rms.
+  // They are real but they are transient-state -- window_size_ slews toward
+  // SIZE over tens of thousands of blocks -- so the guard protects a
+  // condition that exists on the way to a setting rather than at it.
+#ifndef CLOUDS_WSOLA_HEAD_MARGIN
+#define CLOUDS_WSOLA_HEAD_MARGIN 0
+#endif
+  static const int32_t kCorrelatorHeadMargin = CLOUDS_WSOLA_HEAD_MARGIN;
 
   template<Resolution resolution>
   void LoadCorrelator(const AudioBuffer<resolution>* buffer) {
@@ -286,8 +329,10 @@ class WSOLASamplePlayer {
       load_stage_ = 1;
       if (window_size_ >= kCorrelatorSplitWindow &&
           head_margin_ >= kCorrelatorHeadMargin) {
+        ++g_wsola_split_taken;
         return;                 // destination window on the next call
       }
+      ++g_wsola_split_refused;
     }
 
     if (num_channels_ == 1) {

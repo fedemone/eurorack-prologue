@@ -46,15 +46,24 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > - Do not use it in a live set, or anywhere a dropout would cost you
 >   something.
 >
-> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware
-> throughout. Stretch has since had its own burst — the WSOLA correlator's
-> window load — split across two blocks, which cuts its worst case at large
-> Size settings and leaves output bit-identical. Every other oscillator in
-> this repository is unaffected by all of it.
+> Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware through
+> the Spectral work, but **Mode 1 (Stretch) has since been reported clicking**,
+> and it had a cause of its own. Its per-window WSOLA correlator load was
+> already split across two blocks; that split was refused whenever POSITION sat
+> at the write head, which is the setting that stretches the most recent audio
+> and so the one people leave it on. Refusing it there was the only setting in
+> the mode that missed the render deadline — p99 63.8% of budget against 49.5%
+> a quarter turn away, worst block 110%. The refusal is gone, and 200 points of
+> SIZE × POSITION × PITCH × quality come back bit-identical to never splitting
+> at all (`make test-clouds-wsola-split`).
 >
-> Full measurements, and the two structural options still on the table (a
-> transform spread across several audio blocks, or moved to a worker thread),
-> are in
+> Turning a knob is not the cause: POSITION, SIZE and PITCH sweeps put no edge
+> in the output that holding the same knob anywhere does not
+> (`make test-clouds-stretch-clicks`). TEXTURE is the one exception, and it is
+> the LP/HP cutoff swept over 216 semitones, so sweeping it is a filter sweep.
+> Every other oscillator in this repository is unaffected by all of it.
+>
+> Full measurements are in
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
 **Platforms supported:**
@@ -762,6 +771,13 @@ make test-clouds-pvoc-defer     # how much slack a transform really has --
                                 # defers every one by N blocks and checks the
                                 # fixed-parameter output does not move
 make test-tsan                  # ThreadSanitizer over the worker handoff
+make test-clouds-wsola-split    # Stretch's correlator load split across two
+                                # blocks: 200 points of SIZE x POSITION x
+                                # PITCH x quality against never splitting,
+                                # and how many times the split engaged
+make test-clouds-stretch-clicks # whether a swept knob puts an edge in
+                                # Stretch's output, against the same knob
+                                # held anywhere in its range
 make test-clouds-cola           # STFT overlap-add reconstruction at hop ratio
                                 # 4, 2 and 1 -- what backs CLOUDS_PVOC_HOP_RATIO
 
