@@ -124,3 +124,10 @@ void Correlator::StartSearch(
 }
 
 }  // namespace clouds
+
+namespace clouds {
+// Counters for the WSOLA split differential; declared in
+// wsola_sample_player.h, which is a header and so cannot define them.
+uint32_t g_wsola_split_taken = 0;
+uint32_t g_wsola_split_refused = 0;
+}  // namespace clouds

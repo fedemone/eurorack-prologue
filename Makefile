@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-pvoc-worker test-clouds-pvoc-defer test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -493,6 +493,77 @@ test-tsan:
 	 fi
 
 
+# WSOLA correlator split: does deferring half the load change the audio?
+#
+# Stretch's per-window correlator load is the largest burst left in the engine.
+# The fork splits it across two blocks, which means the deferred half reads the
+# buffer one block later -- so whether it reads the same samples depends on
+# SIZE, POSITION and PITCH together, and cannot be settled by argument.
+#
+# Three builds: no split at all, the shipped split, and the shipped split with
+# the head-margin guard restored.  All compared against the no-split build,
+# across 200 points of SIZE x POSITION x PITCH x quality.
+#
+# The engagement counters are not decoration.  A differential that comes out
+# identical because the split never ran would be no evidence at all, and
+# whether it runs depends on where window_size_ has slewed to rather than on
+# the SIZE knob -- so the test reports how many times it actually split.
+# Usage: make test-clouds-wsola-split
+test-clouds-wsola-split:
+	@echo "Clouds WSOLA Correlator Split Differential"
+	@echo ""
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    -DCLOUDS_WSOLA_SPLIT_WINDOW=1000000000 \
+	    test_clouds_wsola_split.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_wsola_split_none -lm
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_wsola_split.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_wsola_split_on -lm
+	@$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    -DCLOUDS_WSOLA_HEAD_MARGIN="(2 * kMaxBlockSize)" \
+	    test_clouds_wsola_split.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_wsola_split_guard -lm
+	@./test_clouds_wsola_split_none  > .wsola_none.txt
+	@./test_clouds_wsola_split_on    > .wsola_on.txt
+	@./test_clouds_wsola_split_guard > .wsola_guard.txt
+	@fail=0; \
+	 for v in on guard; do \
+	   grep '^P ' .wsola_none.txt > .wsola_a.txt; \
+	   grep "^P " .wsola_$$v.txt  > .wsola_b.txt; \
+	   n=`paste .wsola_a.txt .wsola_b.txt | awk '$$9 != $$22' | wc -l`; \
+	   t=`awk '/^S /{s+=$$11} END{print s+0}' .wsola_$$v.txt`; \
+	   if [ "$$t" -eq 0 ]; then \
+	     echo "  FAIL: $$v: the split never engaged -- the comparison is vacuous"; \
+	     fail=1; \
+	   elif [ "$$n" -eq 0 ]; then \
+	     echo "  ok:   $$v: 200 points bit-identical to never splitting ($$t splits taken)"; \
+	   else \
+	     echo "  FAIL: $$v: $$n of 200 points differ from never splitting"; \
+	     paste .wsola_a.txt .wsola_b.txt | awk '$$9 != $$22 { \
+	       d = ($$24 - $$11) / ($$11 == 0 ? 1 : $$11); if (d < 0) d = -d; \
+	       printf("          %s size %s pos %s pitch %s  rms %.4f%%\n", \
+	              $$2, $$4, $$6, $$8, 100*d) }'; \
+	     fail=1; \
+	   fi; \
+	 done; \
+	 rm -f .wsola_none.txt .wsola_on.txt .wsola_guard.txt .wsola_a.txt .wsola_b.txt; \
+	 echo ""; \
+	 if [ $$fail -ne 0 ]; then echo "=== FAILURES ==="; exit 1; fi; \
+	 echo "=== ALL PASS (0 failures) ==="
+
+# Does Stretch step when a knob moves?  Separates a click that is a missed
+# deadline from a click that is a discontinuity -- see the file header, and
+# note that the control is the knob held at each point of its own range, not
+# the resting render, because PITCH changes the signal's frequency and so its
+# slew rate whether or not anything is wrong.
+# Usage: make test-clouds-stretch-clicks
+test-clouds-stretch-clicks:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_stretch_clicks.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_stretch_clicks -lm
+	./test_clouds_stretch_clicks
+
+
 # Overlap-add reconstruction test: drives the real STFT with the modifier
 # disabled and measures the ripple of a steady tone, at hop ratio 4, 2 and 1.
 # This is what backs CLOUDS_PVOC_HOP_RATIO -- halving the overlap halves most
@@ -530,7 +601,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -735,6 +806,22 @@ bench-clouds-spike:
 	    bench_clouds_spike.cc $(CLOUDS_FX_ENGINE) \
 	    -o bench_clouds_spike_arm -lm
 	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_clouds_spike_arm
+
+# Where Stretch's cost sits across the knobs that decide it -- SIZE sets the
+# window length and so the burst, POSITION decides whether the split is
+# allowed, PITCH decides how fast a window is consumed.  bench-clouds-spike
+# holds all three at one point, which for this mode is not neutral.
+# Usage: make bench-clouds-stretch
+.PHONY: bench-clouds-stretch
+bench-clouds-stretch:
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP bench-clouds-stretch: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
+	arm-linux-gnueabihf-g++ -std=c++11 -O2 -march=armv7-a -mtune=cortex-a7 \
+	    -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math -fsigned-char -DTEST \
+	    $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. -pthread \
+	    bench_clouds_stretch.cc $(CLOUDS_FX_ENGINE) \
+	    -o bench_clouds_stretch_arm -lm
+	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_clouds_stretch_arm
 
 PROLOGUE_PACKAGE=eurorack_prologue
 MINILOGUE_XD_PACKAGE=eurorack_minilogue-xd

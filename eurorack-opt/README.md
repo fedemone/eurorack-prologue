@@ -24,7 +24,7 @@ commit **58b9125**.
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `clouds/dsp/pvoc/stft.cc` | **`Buffer()` can take the `Parameters` to use** | Spectral |
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2**; **transform moved to a worker thread** | Spectral, stereo |
-| `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks** | Stretch |
+| `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks**, including at POSITION 0 | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 | `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
 
@@ -124,6 +124,65 @@ behaviour out of the loop, so the sweep means what it says.
 
 Found by `make test-asan` — UndefinedBehaviorSanitizer, on the ordinary
 parameter sweeps, no new scenario required.
+
+### `clouds/dsp/wsola_sample_player.h` — the correlator load, split across two blocks
+
+Stretch schedules a WSOLA window and then packs sign bits for a
+`window_size_` source window and a `2 * window_size_` destination window —
+around 6144 interpolated buffer reads at the default size, doubled in stereo.
+Upstream does all of it in whichever block follows, and can afford to, because
+it runs from the idle loop. This port drives `Prepare()` from the audio
+thread, so it lands as one spike per window, and with Spectral's transform now
+on a worker it is the largest burst left in the engine.
+
+The fork does the source window on one call and the destination window on the
+next, which leaves the worst block paying about two thirds of what it did. The
+split only engages above `kCorrelatorSplitWindow` (1024): the burst scales with
+`window_size_` and so does the gap between windows, so at small sizes there is
+both nothing worth splitting and no room to split into.
+
+**The head-margin guard was removed after hardware reported Stretch
+clicking.** It refused the split whenever the destination window's top edge
+was within two blocks of the write head — which at POSITION 0 it always is,
+because that edge *is* the head. The reasoning was sound and the cost was
+never measured: POSITION 0 is not an edge case, it is the setting that
+stretches the most recent audio, which is what the mode is for. Measured with
+`make bench-clouds-stretch`, ARM under QEMU, per 32-sample block:
+
+| | p99 | p99.9 | max | over deadline |
+|---|---|---|---|---|
+| SIZE 0.80, POSITION 0.00, guard on | 63.81% | 84.45% | 109.85% | **0.05%** |
+| SIZE 0.80, POSITION 0.00, guard off | 49.78% | 55.19% | 102.38% | 0.00% |
+| SIZE 0.80, POSITION 0.25 (reference) | 50.48% | 62.02% | 89.41% | 0.00% |
+
+with the same gap at SIZE 0.65 and 1.00. POSITION 0 was the only setting in
+the sweep that missed the deadline, and with the guard off it now tracks the
+rest of the knob. A missed deadline is a dropout; what the guard prevented is
+a splice landing a few samples further along in a signal that is being spliced
+anyway.
+
+What the guard bought is now measurable, and it is nothing that shows.
+`make test-clouds-wsola-split` sweeps 200 points of SIZE × POSITION × PITCH ×
+quality against a build that never splits. With the guard off the split
+engages 42110 times against 33703 with it on — 8407 more, all at POSITION 0 —
+and every one of the 200 points is still bit-identical.
+
+That test is also the answer to a gap in this file. The numbers the notes in
+`wsola_sample_player.h` quote for the stage order — "12 of 90 points" against
+"3 of 90", and "18 of 90" for a rejected guard — came from a sweep run once by
+hand and never committed, so nothing here could be re-checked. It is committed
+now, and it reports how many times the split actually engaged, because a
+differential that comes out identical because the split never ran would be no
+evidence at all.
+
+One caveat worth carrying: a *shorter* settle in that test does find
+differences — three of 200 points at PITCH +24, none larger than 0.25% rms.
+They are real, and they are transient-state. `window_size_` is not set from
+SIZE but slewed toward it, by `(target - current) >> 5` and only inside
+`ScheduleAlignedWindow()`, so at large SIZE it converges over tens of
+thousands of blocks. The guard was protecting a condition that exists on the
+way to a setting rather than at it. Build with
+`-DCLOUDS_WSOLA_HEAD_MARGIN="(2 * kMaxBlockSize)"` to restore it.
 
 ### `clouds/dsp/pvoc/frame_transformation.cc` — the identity warp
 
