@@ -39,6 +39,7 @@
 #endif
 
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
@@ -114,17 +115,46 @@ static inline float density_to_clouds(float knob01) {
  * audio path writes into processor_'s Parameters, so a knob move can never
  * land in the middle of a Process() call.  Each is a single aligned word,
  * and a block rendered with the previous value is inaudible.
+ *
+ * Relaxed atomics rather than `volatile`, which is what these used to be.
+ * The paragraph above is the whole safety argument and it is unchanged --
+ * one word, no tearing, no ordering claimed against anything else -- but
+ * `volatile` does not actually say that in C++.  It orders accesses against
+ * other volatile accesses and nothing more; two threads touching the same
+ * volatile object concurrently is a data race, and a race is undefined
+ * behaviour whatever the generated code happens to look like.  A relaxed
+ * atomic says exactly what the comment says and makes it true by
+ * definition, which also lets `make test-tsan` run this file: TSan reports
+ * the volatile version, correctly, and a suppression would have hidden the
+ * worker races the target exists to find.
+ *
+ * It costs nothing.  On ARMv7 a relaxed load or store of an aligned 32-bit
+ * type is the same single LDR/STR the volatile access compiled to.  Measured
+ * on the object file, same flags as the shipped unit: clouds_fx_process()
+ * (engine_block() inlines into it) goes from 700 ARM instructions to 696,
+ * with the same 5 `dmb`s before and after -- those are the existing
+ * __atomic_* builtins on engine_state_ and render_phase_, and the knob
+ * accesses add none -- and no libatomic call appears in either build.  The
+ * instruction mix shifts slightly because the scheduler is free to move a
+ * relaxed access where it could not move a volatile one, which is the only
+ * respect in which the generated code differs at all.
  * ==================================================================== */
 
-static volatile float knob_position_ = 0.5f;
-static volatile float knob_size_ = 0.5f;
-static volatile float knob_density_ = 0.0f;   /* already mapped */
-static volatile float knob_texture_ = 0.5f;
-static volatile float knob_pitch_ = 0.0f;     /* semitones */
-static volatile float knob_feedback_ = 0.0f;
-static volatile float knob_dry_wet_ = 0.5f;   /* 50 % wet: sensible for an insert */
-static volatile float knob_reverb_ = 0.0f;
-static volatile int32_t knob_freeze_ = 0;
+static std::atomic<float> knob_position_{0.5f};
+static std::atomic<float> knob_size_{0.5f};
+static std::atomic<float> knob_density_{0.0f};   /* already mapped */
+static std::atomic<float> knob_texture_{0.5f};
+static std::atomic<float> knob_pitch_{0.0f};     /* semitones */
+static std::atomic<float> knob_feedback_{0.0f};
+static std::atomic<float> knob_dry_wet_{0.5f};   /* 50 % wet for an insert */
+static std::atomic<float> knob_reverb_{0.0f};
+static std::atomic<int32_t> knob_freeze_{0};
+
+/* The memory order is spelled out at every use below rather than wrapped in
+ * a helper or left to std::atomic's implicit conversions, which are
+ * sequentially consistent and would put a barrier in the audio path.  It is
+ * the entire content of the change above; a reader who cannot see it at the
+ * access has to take this comment's word for it. */
 
 /* ======================================================================
  * Engine reconfiguration handshake
@@ -161,9 +191,26 @@ static volatile int32_t knob_freeze_ = 0;
  *
  * The wait is bounded, because the audio thread may not be running at all:
  * the unit can be suspended, or not yet rendering, or a host could call
- * unit_reset() from the render thread itself.  render_count_ separates those
+ * unit_reset() from the render thread itself.  render_phase_ separates those
  * cases — if it has not moved for the whole timeout then no callback
  * happened, and reconfiguring is safe whatever the park state says.
+ *
+ * render_phase_ counts half-calls, not calls, and that is the whole of it:
+ * the renderer bumps it on entry and again on every exit, so an odd value
+ * means a render is inside clouds_fx_process() right now and an even one
+ * means it is not.  A plain per-call counter cannot say that.  It only moves
+ * at entry, so a renderer that is running but *slow* — preempted, or
+ * descheduled mid-call — looks exactly like a renderer that is not running
+ * at all, and the idle timeout then hands the engine to the control thread
+ * while Process() is still reading through it.  That is the precise race the
+ * park exists to prevent, reintroduced by its own escape hatch.
+ *
+ * It is not hypothetical: it is what `make test-tsan` reports against the
+ * per-call version, whose 10 ms idle timeout a TSan-instrumented render
+ * exceeds routinely.  On hardware a 10 ms callback would already be eight
+ * times over budget, so this was never the likely failure — but "unlikely"
+ * is not the standard the rest of this handshake is held to, and the fix is
+ * one extra store per callback.
  * ==================================================================== */
 
 enum {
@@ -173,7 +220,7 @@ enum {
 };
 
 static volatile int32_t engine_state_ = kRunning;
-static volatile uint32_t render_count_ = 0;
+static volatile uint32_t render_phase_ = 0;   /* odd == inside a render */
 
 /* Latched engine configuration, applied by the control thread under the park. */
 static volatile int32_t pending_mode_ = 0;
@@ -184,28 +231,34 @@ static volatile int32_t pending_quality_ = 0;
  * buffer size — so this normally blocks for one poll interval.
  *
  * Two ceilings bound the pathological cases.  kIdleTimeoutNs decides "the
- * audio thread is not running": if render_count_ has not moved at all in that
- * time, no callback happened, and the engine is ours whatever the park state
- * says.  kParkTimeoutNs is the hard ceiling for a renderer that is running
- * but somehow never parks; reconfiguring under that would be exactly the race
- * this exists to prevent, so the reconfiguration is abandoned instead.
- * pending_mode_ / pending_quality_ stay latched, so the next successful park
- * picks up whatever was missed. */
+ * audio thread is not running": if render_phase_ has not moved at all in that
+ * time *and* it is even, no callback happened and none is in flight, so the
+ * engine is ours whatever the park state says.  Both halves are needed — see
+ * the note on render_phase_ above for what a stalled render looks like
+ * without the parity check.  kParkTimeoutNs is the hard ceiling for a
+ * renderer that is running but somehow never parks; reconfiguring under that
+ * would be exactly the race this exists to prevent, so the reconfiguration is
+ * abandoned instead.  pending_mode_ / pending_quality_ stay latched, so the
+ * next successful park picks up whatever was missed. */
 static const long kParkPollNs = 200000L;      /* 0.2 ms between polls */
 static const long kIdleTimeoutNs = 10000000L; /* 10 ms with no render at all */
 static const long kParkTimeoutNs = 50000000L; /* 50 ms hard ceiling */
 
 static void with_engine_parked(void (*fn)(void)) {
-  const uint32_t seen = __atomic_load_n(&render_count_, __ATOMIC_ACQUIRE);
+  const uint32_t seen = __atomic_load_n(&render_phase_, __ATOMIC_ACQUIRE);
   __atomic_store_n(&engine_state_, kParkReq, __ATOMIC_RELEASE);
 
   long waited = 0;
   bool rendered = false;
   while (__atomic_load_n(&engine_state_, __ATOMIC_ACQUIRE) != kParked) {
-    if (__atomic_load_n(&render_count_, __ATOMIC_ACQUIRE) != seen)
+    const uint32_t phase = __atomic_load_n(&render_phase_, __ATOMIC_ACQUIRE);
+    if (phase != seen)
       rendered = true;
-    if (!rendered && waited >= kIdleTimeoutNs)
-      break;                    /* nothing is rendering; take the engine */
+    /* Nothing has rendered since the request, and nothing is inside a render
+     * now: take the engine.  The acquire above pairs with the renderer's
+     * release on its way out, so everything its last call did is visible. */
+    if (!rendered && (phase & 1u) == 0u && waited >= kIdleTimeoutNs)
+      break;
     if (waited >= kParkTimeoutNs) {
       /* Renders are happening but the park never landed.  Leave the engine
        * alone.  Store kRunning with a compare-exchange from kParkReq so a
@@ -335,20 +388,20 @@ static void engine_block(void) {
   }
 
   Parameters *p = processor_.mutable_parameters();
-  p->position = knob_position_;
-  p->size = knob_size_;
-  p->density = knob_density_;
-  p->texture = knob_texture_;
-  p->pitch = knob_pitch_;
-  p->feedback = knob_feedback_;
-  p->dry_wet = knob_dry_wet_;
-  p->reverb = knob_reverb_;
+  p->position = knob_position_.load(std::memory_order_relaxed);
+  p->size = knob_size_.load(std::memory_order_relaxed);
+  p->density = knob_density_.load(std::memory_order_relaxed);
+  p->texture = knob_texture_.load(std::memory_order_relaxed);
+  p->pitch = knob_pitch_.load(std::memory_order_relaxed);
+  p->feedback = knob_feedback_.load(std::memory_order_relaxed);
+  p->dry_wet = knob_dry_wet_.load(std::memory_order_relaxed);
+  p->reverb = knob_reverb_.load(std::memory_order_relaxed);
   p->stereo_spread = 0.5f;
   /* As an insert FX the engine is always "sounding", and there is no
    * external trigger on the FX bus: the grain clock comes from DENSITY. */
   p->gate = true;
   p->trigger = false;
-  processor_.set_freeze(knob_freeze_ != 0);
+  processor_.set_freeze(knob_freeze_.load(std::memory_order_relaxed) != 0);
 
   processor_.Prepare();
   processor_.Process(input, output, kMaxBlockSize);
@@ -380,7 +433,7 @@ static void engine_reconfigure(void) {
   processor_.set_quality(pending_quality_);
   processor_.set_bypass(false);
   processor_.set_silence(false);
-  processor_.set_freeze(knob_freeze_ != 0);
+  processor_.set_freeze(knob_freeze_.load(std::memory_order_relaxed) != 0);
 
   Parameters *p = processor_.mutable_parameters();
   p->trigger = false;
@@ -398,21 +451,21 @@ extern "C" void clouds_fx_init(void) {
   memset(large_buffer_, 0, kLargeBufferSize);
   memset(small_buffer_, 0, kSmallBufferSize);
 
-  knob_position_ = 0.5f;
-  knob_size_ = 0.5f;
-  knob_density_ = density_to_clouds(0.5f);
-  knob_texture_ = 0.5f;
-  knob_pitch_ = 0.0f;
-  knob_feedback_ = 0.0f;
-  knob_dry_wet_ = 0.5f;
-  knob_reverb_ = 0.0f;
-  knob_freeze_ = 0;
+  knob_position_.store(0.5f, std::memory_order_relaxed);
+  knob_size_.store(0.5f, std::memory_order_relaxed);
+  knob_density_.store(density_to_clouds(0.5f), std::memory_order_relaxed);
+  knob_texture_.store(0.5f, std::memory_order_relaxed);
+  knob_pitch_.store(0.0f, std::memory_order_relaxed);
+  knob_feedback_.store(0.0f, std::memory_order_relaxed);
+  knob_dry_wet_.store(0.5f, std::memory_order_relaxed);
+  knob_reverb_.store(0.0f, std::memory_order_relaxed);
+  knob_freeze_.store(0, std::memory_order_relaxed);
 
   pending_mode_ = PLAYBACK_MODE_GRANULAR;
   pending_quality_ = 0;   /* Stereo, high fidelity */
 
   engine_state_ = kRunning;
-  render_count_ = 0;
+  render_phase_ = 0;
 
   /* Nothing is rendering yet, so this one needs no handshake. */
   engine_reconfigure();
@@ -427,31 +480,32 @@ extern "C" void clouds_fx_request_reset(void) {
 extern "C" void clouds_fx_set_param(uint8_t id, int32_t value) {
   switch (id) {
     case 0: /* Position: 0-100 % */
-      knob_position_ = clamp01(value * 0.01f);
+      knob_position_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 1: /* Size: 0-100 % */
-      knob_size_ = clamp01(value * 0.01f);
+      knob_size_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 2: /* Density: 0-100 % */
-      knob_density_ = density_to_clouds(value * 0.01f);
+      knob_density_.store(density_to_clouds(value * 0.01f),
+                          std::memory_order_relaxed);
       break;
     case 3: /* Texture: 0-100 % */
-      knob_texture_ = clamp01(value * 0.01f);
+      knob_texture_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 4: /* Pitch: 0-48, centered at 24 = 0 semitones */
-      knob_pitch_ = (float)(value - 24);
+      knob_pitch_.store((float)(value - 24), std::memory_order_relaxed);
       break;
     case 5: /* Feedback: 0-100 % */
-      knob_feedback_ = clamp01(value * 0.01f);
+      knob_feedback_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 6: /* Dry/Wet: 0-100 % */
-      knob_dry_wet_ = clamp01(value * 0.01f);
+      knob_dry_wet_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 7: /* Reverb: 0-100 % */
-      knob_reverb_ = clamp01(value * 0.01f);
+      knob_reverb_.store(clamp01(value * 0.01f), std::memory_order_relaxed);
       break;
     case 8: /* Freeze: 0/1 — cheap, no reallocation */
-      knob_freeze_ = (value != 0) ? 1 : 0;
+      knob_freeze_.store((value != 0) ? 1 : 0, std::memory_order_relaxed);
       break;
     /* Mode and Quality both push Prepare() down its reallocating path, so
      * they are applied here, on the control thread, with the renderer
@@ -476,7 +530,10 @@ extern "C" void clouds_fx_set_param(uint8_t id, int32_t value) {
 /* Process interleaved stereo float in -> interleaved stereo float out. */
 extern "C" void clouds_fx_process(const float *in, float *out,
                                   uint32_t frames) {
-  __atomic_fetch_add(&render_count_, 1u, __ATOMIC_ACQ_REL);
+  /* Enter: render_phase_ goes odd.  Every path out of this function has to
+   * bump it again — the park early-return below included, or a control
+   * thread would see a render permanently in flight and never reconfigure. */
+  __atomic_fetch_add(&render_phase_, 1u, __ATOMIC_ACQ_REL);
 
   if (__atomic_load_n(&engine_state_, __ATOMIC_ACQUIRE) != kRunning) {
     /* Stand down and say so.  The engine belongs to the control thread until
@@ -491,6 +548,7 @@ extern "C" void clouds_fx_process(const float *in, float *out,
     __atomic_compare_exchange_n(&engine_state_, &expect, kParked, false,
                                 __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
     memset(out, 0, (size_t)frames * 2 * sizeof(float));
+    __atomic_fetch_add(&render_phase_, 1u, __ATOMIC_ACQ_REL);
     return;
   }
 
@@ -540,6 +598,11 @@ extern "C" void clouds_fx_process(const float *in, float *out,
 
     done += (uint32_t)n;
   }
+
+  /* Leave: render_phase_ goes even again, and the release publishes
+   * everything this call did to a control thread that is about to decide
+   * whether it may touch the engine. */
+  __atomic_fetch_add(&render_phase_, 1u, __ATOMIC_ACQ_REL);
 }
 
 /* Test/inspection hooks (host builds only). */
@@ -548,6 +611,8 @@ extern "C" {
 int clouds_fx_test_mode(void) {
   return (int)processor_.playback_mode();
 }
-float clouds_fx_test_pitch(void) { return knob_pitch_; }
+float clouds_fx_test_pitch(void) {
+  return knob_pitch_.load(std::memory_order_relaxed);
+}
 }
 #endif

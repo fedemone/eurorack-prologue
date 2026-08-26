@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -181,6 +181,28 @@ test-clouds-fx-reconfig:
 	    $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_fx_reconfig -lm
 	./test_clouds_fx_reconfig
+
+# The same test with the phase vocoder's worker compiled in -- which is how
+# the unit actually ships, and the only configuration where three threads
+# meet: the renderer, the control thread holding the park, and a worker that
+# the park knows nothing about.  Init() reallocates the buffers a transform
+# reads, so PhaseVocoder::Quiesce() has to catch a running one from a thread
+# that never posted it.  Nothing else in the port reaches that combination.
+#
+# It is a separate target rather than the default because the rest of
+# test-all wants determinism (see the CLOUDS_WORKER_FLAG note above) -- but
+# this test asserts bounds and liveness, never a hash, so a free-running
+# worker is exactly what it should be measuring.
+# Usage: make test-clouds-fx-worker
+.PHONY: test-clouds-fx-worker
+test-clouds-fx-worker: CLOUDS_WORKER_FLAG =
+test-clouds-fx-worker:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -DTEST -DCLOUDS_FX -DCLOUDS_FX_TEST \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 $(CLOUDS_OPT_FLAGS) -pthread \
+	    test_clouds_fx_reconfig.cc clouds-fx.cc \
+	    $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_fx_worker -lm
+	./test_clouds_fx_worker
 
 # Engine fork differential test: the same rendering compiled against the
 # submodule and against eurorack-opt/, compared sample for sample.  Proves the
@@ -471,6 +493,29 @@ test-clouds-pvoc-defer:
 #
 # Usage: make test-tsan
 ##############################################################################
+# The second binary is CloudsFX, and it is here for a different reason.  The
+# first covers two threads passing a transform between them.  CloudsFX adds a
+# third -- the control thread, which parks the renderer and then calls Init(),
+# reallocating every buffer a transform reads, from a thread that never posted
+# one.  test_clouds_fx_reconfig.cc drives exactly that, and the reason it is
+# under TSan rather than only under `make test-clouds-fx-worker` is that the
+# failure it looks for has no signature in the output: a reconfiguration that
+# lands a microsecond early produces audio, not silence or a NaN.
+#
+# It is pinned with CLOUDS_PVOC_WORKER_SYNC=1 for the same reason the first
+# binary is, and the reason is worth repeating because it looks like a dodge.
+# Free-running, this harness renders faster than the wall clock, the worker
+# falls behind, and STFT::BufferWith() genuinely reads a window Process() has
+# already overwritten -- measured: 4 reports in 1 run of 3, all of them
+# either that overlap or a consequence of it.  That is the harness outrunning
+# the design's timing assumption, not a defect in the handshake, and
+# suppressing it would blind exactly the reports this target exists for.  The
+# ring geometry is measured where timing is meaningful instead, by
+# test-clouds-pvoc-defer and test-clouds-pvoc-worker.  Pinning changes none of
+# the park/Quiesce interleavings, which are what this binary is here to check.
+#
+# Usage: make test-tsan
+##############################################################################
 .PHONY: test-tsan
 test-tsan: CLOUDS_WORKER_FLAG =
 test-tsan:
@@ -481,16 +526,29 @@ test-tsan:
 	    -fsanitize=thread -fno-omit-frame-pointer -pthread \
 	    test_clouds_pvoc_rr.cc $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_tsan -lm
-	@TSAN_OPTIONS=halt_on_error=0 ./test_clouds_tsan > .tsan.txt 2>&1; \
-	 n=`grep -c "WARNING: ThreadSanitizer" .tsan.txt || true`; \
-	 if [ "$$n" -eq 0 ]; then \
-	   echo "  ok:   no ThreadSanitizer reports across the handoff"; \
-	   rm -f .tsan.txt; echo ""; echo "=== ALL PASS (0 failures) ==="; \
-	 else \
-	   echo "  FAIL: $$n ThreadSanitizer reports"; \
-	   grep "^SUMMARY: ThreadSanitizer" .tsan.txt | sort -u | head -20; \
-	   echo ""; echo "=== FAILURES ==="; exit 1; \
-	 fi
+	@$(CXX) $(COMMON_TEST_FLAGS) -O1 -g -DTEST -DCLOUDS_FX -DCLOUDS_FX_TEST \
+	    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32 $(CLOUDS_OPT_FLAGS) \
+	    -DCLOUDS_PVOC_WORKER_SYNC=1 \
+	    -fsanitize=thread -fno-omit-frame-pointer -pthread \
+	    test_clouds_fx_reconfig.cc clouds-fx.cc $(CLOUDS_FX_ENGINE) \
+	    -o test_clouds_fx_tsan -lm
+	@fail=0; \
+	 for t in "handoff:test_clouds_tsan" \
+	          "CloudsFX park + reconfiguration:test_clouds_fx_tsan"; do \
+	   name=$${t%%:*}; bin=$${t#*:}; \
+	   TSAN_OPTIONS=halt_on_error=0 ./$$bin > .tsan.txt 2>&1; \
+	   n=`grep -c "WARNING: ThreadSanitizer" .tsan.txt || true`; \
+	   if [ "$$n" -eq 0 ]; then \
+	     echo "  ok:   no ThreadSanitizer reports across the $$name"; \
+	   else \
+	     echo "  FAIL: $$n ThreadSanitizer reports across the $$name"; \
+	     grep "^SUMMARY: ThreadSanitizer" .tsan.txt | sort -u | head -20; \
+	     fail=1; \
+	   fi; \
+	 done; \
+	 rm -f .tsan.txt; echo ""; \
+	 if [ "$$fail" -eq 0 ]; then echo "=== ALL PASS (0 failures) ==="; \
+	 else echo "=== FAILURES ==="; exit 1; fi
 
 
 # WSOLA correlator split: does deferring half the load change the audio?
@@ -601,7 +659,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

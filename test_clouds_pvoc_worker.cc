@@ -41,8 +41,8 @@ using namespace clouds;
 
 namespace clouds {
 #if CLOUDS_PVOC_WORKER
-extern uint32_t g_pvoc_worker_ran;
-extern uint32_t g_pvoc_worker_forced;
+extern std::atomic<uint32_t> g_pvoc_worker_ran;
+extern std::atomic<uint32_t> g_pvoc_worker_forced;
 #endif
 }
 
@@ -123,15 +123,16 @@ int main(void) {
   engine_init();
   run(120, 12345u, true);                       /* settle */
 #if CLOUDS_PVOC_WORKER
-  g_pvoc_worker_ran = 0;
-  g_pvoc_worker_forced = 0;
+  g_pvoc_worker_ran.store(0, std::memory_order_relaxed);
+  g_pvoc_worker_forced.store(0, std::memory_order_relaxed);
 #endif
   const uint64_t paced_hash = run(600, 999u, true);
   printf("H paced %016llx\n", (unsigned long long)paced_hash);
 #if CLOUDS_PVOC_WORKER
   printf("C paced worker %u forced %u\n",
-         g_pvoc_worker_ran, g_pvoc_worker_forced);
-  if (g_pvoc_worker_ran == 0) {
+         g_pvoc_worker_ran.load(std::memory_order_relaxed),
+         g_pvoc_worker_forced.load(std::memory_order_relaxed));
+  if (g_pvoc_worker_ran.load(std::memory_order_relaxed) == 0) {
     printf("FAIL the worker ran no transforms at all -- "
            "it is not doing the work this build claims it does\n");
     ++failures_;

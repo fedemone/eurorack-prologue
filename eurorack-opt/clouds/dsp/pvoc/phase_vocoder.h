@@ -400,11 +400,27 @@ class PhaseVocoder {
 
   pthread_t worker_;
   sem_t worker_wake_;
-  // Not atomic<bool>: only ever written before the thread starts and after
-  // it is joined, or read by the worker between waits.
+  // Not atomic: only ever written before the thread starts and after it is
+  // joined, both of which are ordered against the worker by pthread_create
+  // and pthread_join.
   bool worker_started_;
   bool worker_ok_;                    // false => everything runs inline
-  volatile bool worker_stop_;
+
+  // The stop flag is different, and it took TSan to show why.  The obvious
+  // reading is that StopWorker() writes it and then sem_post()s, and
+  // sem_post/sem_wait is a synchronisation point -- so the worker's read is
+  // ordered after the write and a plain bool would do.  That holds only for
+  // the wakeup StopWorker() itself sends.  The semaphore counts, so the
+  // worker can still be working through wakeups BufferWorker() posted
+  // earlier, and each of those iterations reads the flag ordered against its
+  // own post and nothing else.  A read genuinely concurrent with the write.
+  //
+  // Benign in effect -- worst case the worker takes one more turn round the
+  // loop before it sees the flag, which is what the join is for -- but
+  // `volatile` does not make a concurrent access defined, and it is reported.
+  // Relaxed is the right order: no data travels with this flag, only the
+  // fact of it, and the join provides the ordering that matters.
+  std::atomic<bool> worker_stop_;
   std::atomic<int> job_state_;
   int32_t job_channel_;               // written before job_state_ is released
 #endif

@@ -5,9 +5,10 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
-> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is CPU-marginal
+> ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is the expensive one
 >
-> **The freeze is fixed. Spectral is still not comfortable to use.**
+> **The freeze is fixed and the clicking is fixed. Spectral is still the mode
+> with the least margin.**
 >
 > Spectral used to crackle and then **lock the whole drumlogue up within
 > seconds — the power cable had to be pulled.** Shrinking the phase vocoder's
@@ -33,29 +34,28 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > transform and the output is bit-identical to the same build without it
 > (`make test-clouds-pvoc-worker`); if it ever fails to keep up, one transform
 > falls back onto the audio thread, which is where it used to be anyway.
-> **The worker has not been to hardware yet** — it is the one part of Mode 3
-> that is still unproven there. Build with `-DCLOUDS_PVOC_WORKER=0` to switch
-> it off.
+> **That build has been tested on hardware and passed.** Build with
+> `-DCLOUDS_PVOC_WORKER=0` to switch the worker off.
 >
-> Until it has, still treat Mode 3 as a mode to use deliberately:
+> Mode 3 is no longer the mode that hangs the instrument, and the last two
+> hardware tests of it were clean. It is still the most expensive of the four
+> and the one with the least margin, so:
 >
-> - Expect clicks may remain, more so with other parts and effects running.
-> - **Avoid fast parameter changes while Spectral is playing.** This has not
->   been seen to crash, but the margin was thin and knob sweeps are the
->   obvious way to spend what is left of it.
+> - Expect it to be the first thing to suffer with a full kit and other
+>   effects running.
 > - Do not use it in a live set, or anywhere a dropout would cost you
->   something.
+>   something, without trying it in that context first.
 >
 > Modes 0-2 (Granular, Stretch, Looping Delay) were fine on hardware through
-> the Spectral work, but **Mode 1 (Stretch) has since been reported clicking**,
-> and it had a cause of its own. Its per-window WSOLA correlator load was
+> the Spectral work, but **Mode 1 (Stretch) was then reported clicking**, and
+> it had a cause of its own. Its per-window WSOLA correlator load was
 > already split across two blocks; that split was refused whenever POSITION sat
 > at the write head, which is the setting that stretches the most recent audio
 > and so the one people leave it on. Refusing it there was the only setting in
 > the mode that missed the render deadline — p99 63.8% of budget against 49.5%
 > a quarter turn away, worst block 110%. The refusal is gone, and 200 points of
 > SIZE × POSITION × PITCH × quality come back bit-identical to never splitting
-> at all (`make test-clouds-wsola-split`).
+> at all (`make test-clouds-wsola-split`). **Tested on hardware and passed.**
 >
 > Turning a knob is not the cause: POSITION, SIZE and PITCH sweeps put no edge
 > in the output that holding the same knob anywhere does not
@@ -751,6 +751,9 @@ make test-clouds-synth          # real engine behind OSC_*: pitch across the
 make test-clouds-fx             # FX bus in -> engine -> out, dry and wet
 make test-clouds-fx-reconfig    # render thread vs control thread doing
                                 # Mode/Quality/reset (the park handshake)
+make test-clouds-fx-worker      # the same, with the spectral worker compiled
+                                # in as it ships: three threads, and the park
+                                # holder is a stranger to the job slot
 make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
                                 # engine, compared sample for sample
 make test-clouds-grain-window   # grain envelope, fork vs stock, plus an ASan
@@ -770,7 +773,9 @@ make test-clouds-pvoc-worker    # the transform on a worker thread, driven at
 make test-clouds-pvoc-defer     # how much slack a transform really has --
                                 # defers every one by N blocks and checks the
                                 # fixed-parameter output does not move
-make test-tsan                  # ThreadSanitizer over the worker handoff
+make test-tsan                  # ThreadSanitizer over the worker handoff, and
+                                # over CloudsFX's park + reconfiguration with
+                                # the worker live (three threads)
 make test-clouds-wsola-split    # Stretch's correlator load split across two
                                 # blocks: 200 points of SIZE x POSITION x
                                 # PITCH x quality against never splitting,
@@ -900,6 +905,29 @@ real threads at three buffer sizes. The protocol, including why the park
 transition has to be a compare-exchange and why the wait needs two different
 timeouts, is written up in
 [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
+
+Two threads was the design; the shipped unit has three, because the phase
+vocoder's worker is compiled in. The park does not cover it — parking the
+renderer says nothing to a thread the renderer does not own — and what covers
+it instead is that `Init()` calls `PhaseVocoder::Quiesce()`, so the control
+thread waits out any transform before it touches a buffer. `make
+test-clouds-fx-worker` runs the handshake against a live worker (Spectral
+held, reset hammered at it, and a check that the worker actually ran, because
+a pass with it asleep would prove nothing), and `make test-tsan` now includes
+the same scenario so a reconfiguration that lands a microsecond early is
+caught by the race detector rather than by listening — it produces audio, not
+silence or a NaN, so there is nothing in the output to notice.
+
+That is also how the escape hatch in the wait was found. It let the control
+thread take the engine when no render had happened for 10 ms, and it decided
+"no render" from a counter that only moved when a callback *started* — so a
+render that was merely slow or preempted looked exactly like one that was not
+running, and the reconfiguration went in underneath it. The counter now
+counts half-calls, bumped on entry and on every exit, and the hatch also
+requires it to be even. On hardware a 10 ms callback would already be eight
+times over budget, so this was never the likely failure; under TSan a slowed
+render exceeds 10 ms routinely, which is how a latent hole in the handshake
+became a reproducible one.
 
 **What a unit owes the instrument (`drumlogue_guards.h`):**
 

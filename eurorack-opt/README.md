@@ -502,7 +502,11 @@ carry it, and each is checked rather than argued:
   deadline work.
 * **A transform runs on exactly one thread at a time.** Both channels share
   the FFT scratch, so this is not a formality. `make test-tsan` runs the
-  handoff under ThreadSanitizer and reports nothing.
+  handoff under ThreadSanitizer and reports nothing. It also runs CloudsFX's
+  park-and-reconfigure against a live worker, which is the one place a
+  *third* thread reaches the job slot: the control thread parks the renderer
+  and then calls `Init()`, and `Quiesce()` is what stops it reallocating
+  under a transform it never posted.
 * **The worst case is the previous behaviour.** If the thread cannot be
   created every transform runs inline, exactly as before. If the worker falls
   behind, the catch-up valve takes back *one* transform — capped, because an
@@ -530,6 +534,19 @@ drives the engine at the sample rate: the worker takes **every** transform,
 none forced back, and the output is bit-identical to the same build with the
 worker switched off. That is what this change stands on, and QEMU cannot show
 it, because what it depends on is the scheduler.
+
+Two members that look like they could be plain are not, and both were caught
+by ThreadSanitizer rather than by reading the code. `worker_stop_` is read by
+the worker on every loop iteration: the obvious argument is that `StopWorker()`
+writes it and then `sem_post()`s, and sem_post/sem_wait synchronise — but the
+semaphore *counts*, so the worker can be working through wakeups
+`BufferWorker()` posted earlier, and those iterations read the flag ordered
+against their own post and nothing else. The scheduling counters
+(`g_pvoc_worker_ran`, `g_pvoc_worker_forced`) are incremented from both
+threads by construction. Both are now relaxed atomics: the effect of a race on
+either was always harmless — one extra turn round the loop, a misreported
+total — but harmless is not the same as defined, and a suppression in the
+target that exists to find worker races is not a trade worth making.
 
 Build with `-DCLOUDS_PVOC_WORKER=0` to put the transform back on the audio
 thread. That is the first thing to try if Spectral misbehaves on hardware, and

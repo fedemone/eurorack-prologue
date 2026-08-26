@@ -47,12 +47,21 @@ using namespace stmlib;
 
 #if CLOUDS_PVOC_WORKER
 
-// How the scheduling actually played out, for the tests to report.  Plain
-// counters, not atomics: they are incremented from both threads and a lost
-// update would only misreport a total.  Nothing reads them to make a
-// decision, and no shipping code reads them at all.
-uint32_t g_pvoc_worker_ran = 0;      // transforms done by the worker
-uint32_t g_pvoc_worker_forced = 0;   // transforms the audio thread had to take
+// How the scheduling actually played out, for the tests to report.  Nothing
+// reads them to make a decision, and no shipping code reads them at all.
+//
+// Relaxed atomics rather than plain uint32_t, which is what these were.  The
+// original note said a lost update would only misreport a total, and that is
+// still the only consequence -- but "only misreports a total" describes a
+// lost update, not undefined behaviour, and unsynchronised increments from
+// two threads are the latter.  It also showed up as a TSan report the moment
+// a test read a counter while the worker was still alive, which is exactly
+// how a test that reports on threading should not fail.
+//
+// Relaxed keeps the cost where the old note assumed it was: one LDREX/STREX
+// pair per transform, a few times a millisecond, ordered against nothing.
+std::atomic<uint32_t> g_pvoc_worker_ran(0);     // transforms done by the worker
+std::atomic<uint32_t> g_pvoc_worker_forced(0);  // ones the renderer had to take
 
 // Bring the worker up.  Called from Init(), which is a mode change and not
 // deadline work, so it is allowed to be slow; it happens once per process
@@ -85,7 +94,7 @@ bool PhaseVocoder::StartWorker() {
     ok = false;
   }
   if (ok) {
-    worker_stop_ = false;
+    worker_stop_.store(false, std::memory_order_relaxed);
     if (pthread_create(&worker_, &attr, &PhaseVocoder::WorkerEntry, this) != 0) {
       sem_destroy(&worker_wake_);
       ok = false;
@@ -100,7 +109,7 @@ void PhaseVocoder::StopWorker() {
     return;
   }
   worker_ok_ = false;
-  worker_stop_ = true;
+  worker_stop_.store(true, std::memory_order_relaxed);
   sem_post(&worker_wake_);
   pthread_join(worker_, NULL);
   sem_destroy(&worker_wake_);
@@ -119,7 +128,7 @@ void PhaseVocoder::WorkerLoop() {
       // the state check below decide.
       break;
     }
-    if (worker_stop_) {
+    if (worker_stop_.load(std::memory_order_relaxed)) {
       return;
     }
     // A wakeup with nothing posted is normal: the audio thread may have taken
@@ -131,7 +140,7 @@ void PhaseVocoder::WorkerLoop() {
                                             std::memory_order_relaxed)) {
       continue;
     }
-    ++g_pvoc_worker_ran;
+    g_pvoc_worker_ran.fetch_add(1, std::memory_order_relaxed);
     RunTransform(job_channel_);
     // Release, so everything the transform wrote -- the synthesis ring, done_,
     // process_ptr_ -- is visible to the audio thread once it sees kJobIdle.
@@ -187,7 +196,7 @@ void PhaseVocoder::BufferWorker() {
   // over the following calls instead of in one.
   for (int32_t j = 0; j < num_channels_; ++j) {
     if (stft_[j].pending() > 1) {
-      ++g_pvoc_worker_forced;
+      g_pvoc_worker_forced.fetch_add(1, std::memory_order_relaxed);
       Snapshot(j);
       RunTransform(j);
       return;                 // spike taken; schedule nothing else this call

@@ -23,8 +23,34 @@
  *      silence" failure this replaces.
  *   3. Reconfiguration requests actually take effect.
  *
- * Build/run: make test-clouds-fx-reconfig
+ * A third thread, when the phase vocoder's worker is compiled in
+ * ------------------------------------------------------------------
+ * The park handshake was written when the engine was two threads, and it is
+ * the only place in the port where a *third* one matters.  Reconfiguring
+ * calls GranularProcessor::Init(), which reallocates every buffer a spectral
+ * transform reads and writes, and with the worker on that transform can be
+ * running on a thread the handshake knows nothing about.  Parking the
+ * renderer does not park the worker: PhaseVocoder::Quiesce() does, and it is
+ * reached from Init() on whichever thread got there -- here, the control
+ * thread, mid-park.
+ *
+ * The synth has no equivalent: it reconfigures from the render itself, so
+ * Quiesce() is only ever called by the thread that also posts the jobs.  Two
+ * threads, one of which is the producer.  CloudsFX makes the caller a
+ * stranger to the job slot, and that combination is only reachable here.
+ *
+ * So when the worker is compiled in this file runs a second phase that aims
+ * at it directly -- Spectral, held, with reconfiguration hammered at it --
+ * and reports how many transforms actually ran.  A pass with the worker idle
+ * would be a pass proving nothing, which is the failure mode this test has
+ * to avoid rather than the one it is looking for.
+ *
+ * Build/run: make test-clouds-fx-reconfig       (worker off, deterministic)
+ *            make test-clouds-fx-worker         (worker on, as it ships)
+ *            make test-tsan                     (worker on, under TSan)
  */
+
+#include "clouds/dsp/pvoc/phase_vocoder.h"   /* CLOUDS_PVOC_WORKER */
 
 #include <cstdio>
 #include <cstdint>
@@ -40,6 +66,13 @@ void clouds_fx_request_reset(void);
 void clouds_fx_set_param(uint8_t id, int32_t value);
 void clouds_fx_process(const float *in, float *out, uint32_t frames);
 int clouds_fx_test_mode(void);
+}
+
+namespace clouds {
+#if CLOUDS_PVOC_WORKER
+extern std::atomic<uint32_t> g_pvoc_worker_ran;     /* transforms done on the worker */
+extern std::atomic<uint32_t> g_pvoc_worker_forced;  /* transforms the renderer had to take */
+#endif
 }
 
 static int g_fail = 0;
@@ -160,6 +193,87 @@ int main(void) {
           max_silent_run_.load());
     CHECK(clouds_fx_test_mode() == last_mode,
           "last mode request took effect (mode %d)", clouds_fx_test_mode());
+    printf("\n");
+  }
+
+  /* Spectral, held, with reconfiguration aimed at it.
+   *
+   * The phase above picks its mode at random, so Spectral gets a share of the
+   * run and the worker gets whatever transforms fit in it.  That is enough to
+   * say the handshake survives a worker; it is not enough to say it survives
+   * one under pressure, because the interesting window is narrow: Init() has
+   * to land while a transform is actually in flight for Quiesce() to have
+   * anything to wait for.
+   *
+   * So: stay in Spectral, which is the only mode that runs transforms at all,
+   * and fire reconfiguration at it as fast as the handshake will take it.
+   * unit_reset() is the vehicle rather than a mode change, because it
+   * reconfigures without leaving Spectral -- every request lands with the
+   * transform pipeline full.  Quality alternates underneath to also exercise
+   * the reallocation that changes the buffer geometry.
+   *
+   * Two things are being watched, and neither is about the audio.  Reading
+   * through buffers freed under a running FFT is what the bad_ counter and
+   * the range check catch; a Quiesce() that deadlocks against its own worker
+   * is what max_silent_run_ and the join catch. */
+  {
+    printf("[Spectral, reconfiguration under load]\n");
+
+    clouds_fx_init();
+    clouds_fx_set_param(9, 3);            /* Mode = Spectral */
+    stop_.store(false);
+    blocks_.store(0);
+    bad_.store(0);
+    max_silent_run_.store(0);
+#if CLOUDS_PVOC_WORKER
+    clouds::g_pvoc_worker_ran.store(0, std::memory_order_relaxed);
+    clouds::g_pvoc_worker_forced.store(0, std::memory_order_relaxed);
+#endif
+
+    std::thread audio(audio_thread, 64);
+
+    /* Render before touching anything, so the first reset already has a
+     * transform pipeline to interrupt rather than an empty one. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    int resets = 0;
+    auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (std::chrono::steady_clock::now() < end) {
+      clouds_fx_request_reset();
+      ++resets;
+      clouds_fx_set_param(10, resets & 1);   /* Quality: StHi <-> MoHi */
+      std::this_thread::sleep_for(std::chrono::milliseconds(rr(1, 4)));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    stop_.store(true);
+    audio.join();
+
+    printf("  (%ld blocks, %d resets while in Spectral)\n",
+           blocks_.load(), resets);
+    CHECK(blocks_.load() > 100, "renderer made progress (%ld blocks)",
+          blocks_.load());
+    CHECK(bad_.load() == 0, "no non-finite or out-of-range output (%ld bad)",
+          bad_.load());
+    CHECK(max_silent_run_.load() < 60,
+          "renderer never stuck parked (longest silent run %ld blocks)",
+          max_silent_run_.load());
+    CHECK(clouds_fx_test_mode() == 3,
+          "still in Spectral after %d resets (mode %d)",
+          resets, clouds_fx_test_mode());
+#if CLOUDS_PVOC_WORKER
+    printf("  worker transforms %u, forced onto the renderer %u\n",
+           clouds::g_pvoc_worker_ran.load(std::memory_order_relaxed),
+           clouds::g_pvoc_worker_forced.load(std::memory_order_relaxed));
+    /* Without this the whole phase can pass with the worker asleep, which
+     * would be a green tick for a race that was never run. */
+    CHECK(clouds::g_pvoc_worker_ran.load(std::memory_order_relaxed) > 0,
+          "the worker actually ran during the phase aimed at it (%u)",
+          clouds::g_pvoc_worker_ran.load(std::memory_order_relaxed));
+#else
+    printf("  (worker not compiled in; this phase exercises the "
+           "handshake alone)\n");
+#endif
     printf("\n");
   }
 
