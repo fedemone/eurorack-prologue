@@ -803,6 +803,11 @@ make bench-clouds-spike
 # bench-clouds-spike benches the Clouds engine; this benches units, which is
 # the only scale on which two different units can be compared
 make bench-units ARM_UNITS="mo2_va mussola rings clouds clouds_fx"
+
+# CloudsFX costs more per render than the synth in every mode, and both build
+# the same engine.  This measures the difference directly rather than by
+# subtraction: the 48 <-> 32 kHz conversion and its FIFOs, engine removed
+make bench-clouds-src
 ```
 
 **Testing the real unit binaries (`make test-arm`):**

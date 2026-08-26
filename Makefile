@@ -870,6 +870,21 @@ bench-clouds-spike:
 # allowed, PITCH decides how fast a window is consumed.  bench-clouds-spike
 # holds all three at one point, which for this mode is not neutral.
 # Usage: make bench-clouds-stretch
+# CloudsFX's 48 <-> 32 kHz conversion, on its own.  The FX unit costs more per
+# render than the synth in every mode; this is the direct measurement of the
+# part that is not the engine, rather than the subtraction between two runs.
+# Usage: make bench-clouds-src
+.PHONY: bench-clouds-src
+bench-clouds-src:
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP bench-clouds-src: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
+	arm-linux-gnueabihf-g++ -std=c++11 -O2 -march=armv7-a -mtune=cortex-a7 \
+	    -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math -fsigned-char -Wno-psabi \
+	    -Idrumlogue -I. \
+	    bench_clouds_src.cc \
+	    -o bench_clouds_src_arm -lm
+	$(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_clouds_src_arm
+
 .PHONY: bench-clouds-stretch
 bench-clouds-stretch:
 	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \

@@ -1213,3 +1213,63 @@ Ruled out — do not re-investigate without new evidence
   verified; all indices explicitly handled with `default: break`.
 - **Output clipping.** Output is scaled by `kOutGain` (~-3 dB) and passed
   through `SoftConvert`; levels were checked and are not the problem.
+
+---
+
+## Where both units stand now
+
+Everything above is a change made in response to something. This is the state
+after all of them, measured the same way for every row so the modes can be
+compared with each other rather than only with their own history:
+`make bench-units`, the real `.drmlgunit` binaries loaded with `dlopen()` and
+driven through `unit_render()`, 64-frame renders against a 1.33 ms deadline,
+4000 renders per row, ARM under QEMU. Three runs; the spread is the run-to-run
+variation, which is host scheduling and not the unit.
+
+| Mode | `clouds` p99.9 | `clouds_fx` p99.9 | over deadline |
+|------|---------------:|------------------:|--------------:|
+| 0 Granular | 41% | 54% | 0.00% |
+| 1 Stretch | 57-66% | **69-79%** | 0.00% |
+| 2 Looping Delay | 21-29% | 37-40% | 0.00% |
+| 3 Spectral | 37-40% | 26-36% | 0.00% |
+
+Two things in that table are worth saying out loud.
+
+**Spectral is no longer the expensive mode.** On CloudsFX it is now the
+*cheapest* of the four, below Granular. It began this work at 380-442% of
+deadline with 3.12% of blocks missed, and hung the instrument. The FFT size,
+the hop ratio and the worker thread each took a piece of that, and the
+remainder is no longer the thing to look at.
+
+**Stretch is, and its margin is the smallest anywhere in either unit.** Nothing
+misses a deadline -- 0.00% over, in every run of every mode -- but CloudsFX
+Stretch at p99.9 79% is the one row where a busier kit could plausibly change
+the answer. The correlator split covers the burst; what is left is the
+mode's ordinary per-window cost.
+
+### What is left to optimise, and why it has not been
+
+One identified block of cost remains, and it is CloudsFX's alone: the
+48 kHz <-> 32 kHz conversion. Driving the exact call pattern of
+`clouds_fx_process()` with the engine removed -- both `SrcDown`s, both
+`SrcUp`s, and the FIFO bookkeeping around them -- costs **6.7-7.8% mean,
+17.3-21.0% p99.9** of the same deadline over five runs
+(`make bench-clouds-src`). That is essentially the whole of CloudsFX's
+overhead over the synth, which runs 4.6-6.7 points of mean higher across the
+four modes and one converter instead of four.
+
+So it is real, and it is about a third of the FX's mean cost. It has been left
+alone for two reasons. It is mean cost, not tail cost -- a p99.9 of ~20% under
+a p99.9 that sits at 79% -- and the tail is what drops audio. And every way of making it
+cheaper is a quality trade: a shorter kernel, or dropping the dry path's
+conversion and accepting the comb filter that
+[the note on the SRC in `clouds-fx.cc`](../clouds-fx.cc) rejects. Neither is
+worth spending while nothing misses a deadline.
+
+The same applies to the port's unsmoothed parameters. Upstream's `cv_scaler`
+smooths every parameter before `GranularProcessor` sees it; both units here
+feed the panel value straight through. `make test-clouds-stretch-clicks`
+says that is not currently audible as an edge -- POSITION, SIZE and PITCH
+sweeps measure within 2% of holding the same knob still -- so adding
+smoothing would change how every knob feels in exchange for fixing something
+that has not been shown to be broken.
