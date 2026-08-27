@@ -837,6 +837,55 @@ bench-units:
 	    -f $(BENCH_FRAMES) -n $(BENCH_RENDERS) \
 	    $(foreach u,$(ARM_UNITS),drumlogue/$(u)/build/$(u).drmlgunit)
 
+# What does the Quality knob actually cost?
+#
+# Quality is the panel control anyone reaches for when a unit is struggling,
+# and it is the obvious fallback if Clouds ever needs one on hardware.  It is
+# labelled StHi / MoHi / StLo / MoLo, so it reads as a ladder from most
+# expensive to least.  It is not one, and that is the reason this target
+# exists rather than a note saying "try lowering Quality".
+#
+# `low_fidelity` (the Lo half) runs ProcessGranular at half rate through an
+# extra SrcDown/SrcUp pair inside GranularProcessor and stores the buffers as
+# 8-bit mu-law, so every interpolated tap becomes a dependent LUT load.  What
+# it does *not* downsample is the diffuser, the pitch shifter or the filters
+# -- those run on out_ at full size, outside the branch.  So it halves one
+# stage and adds three costs around it, and on this SoC that does not pay.
+# Sizing which of the three dominates would be a separate job; what a user
+# needs is the direction, and the direction is reproducible.
+#
+# Run it before believing any advice about Quality, this file's included.
+# Usage: make bench-clouds-quality
+.PHONY: bench-clouds-quality
+bench-clouds-quality:
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP bench-clouds-quality: need $(ARM_CC) and $(QEMU_ARM)"; exit 0; }
+	@test -d $(SDK_COMMON) || \
+	    { echo "SKIP bench-clouds-quality: run 'git submodule update --init logue-sdk'"; exit 0; }
+	@for u in clouds clouds_fx; do \
+	    $(MAKE) -C drumlogue/$$u CROSS_COMPILE=arm-linux-gnueabihf- \
+	        USER_ID=0 GROUP_ID=0 \
+	        USE_COPT="$(ARM_UNIT_OPT)" \
+	        USE_CXXOPT="$(ARM_UNIT_OPT) -fno-threadsafe-statics" >/dev/null || exit 1; \
+	done
+	@$(ARM_CC) -std=gnu11 -O2 -march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard \
+	    -I$(SDK_COMMON) bench_units.c -o bench_units_arm -ldl -lm
+	@echo "Cost of each Quality setting, $(BENCH_FRAMES)-frame renders."
+	@echo "Q0 StHi  Q1 MoHi  Q2 StLo  Q3 MoLo   (Lo = half-rate granular + 8-bit mu-law)"
+	@echo "Mean is the statistic to read: the QEMU tail moves 20% run to run."
+	@echo ""
+	@printf "%-6s %-4s %-10s %8s %8s %8s\n" mode qual unit mean p99 p99.9
+	@for m in 0 1 2 3; do \
+	  for q in 0 1 2 3; do \
+	    $(QEMU_ARM) -L $(ARM_SYSROOT) ./bench_units_arm \
+	        -f $(BENCH_FRAMES) -n $(BENCH_RENDERS) -p Mode=$$m -p Quality=$$q \
+	        drumlogue/clouds/build/clouds.drmlgunit \
+	        drumlogue/clouds_fx/build/clouds_fx.drmlgunit 2>/dev/null \
+	      | awk -v m=$$m -v q=$$q '/^Clouds/ { \
+	          printf "%-6s %-4s %-10s %8s %8s %8s\n", m, "Q" q, $$1, $$2, $$3, $$4 }'; \
+	  done; \
+	done
+
 # Benchmark: measure host-side render throughput for VirtualAnalog engine
 # Reports frames/sec, us/frame, and real-time ratio
 # Usage: make bench
