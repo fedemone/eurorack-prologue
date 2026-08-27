@@ -1273,3 +1273,47 @@ says that is not currently audible as an edge -- POSITION, SIZE and PITCH
 sweeps measure within 2% of holding the same knob still -- so adding
 smoothing would change how every knob feels in exchange for fixing something
 that has not been shown to be broken.
+
+### The Quality knob is not a ladder
+
+Quality is the control anyone reaches for when a unit is struggling, and it is
+the obvious fallback if Clouds ever needs one on hardware. It is labelled
+StHi / MoHi / StLo / MoLo, which reads as most expensive to least. It is not.
+
+`make bench-clouds-quality`, both units, all four modes, 64-frame renders.
+Mean is the statistic to read -- the QEMU tail moves 20% run to run, the mean
+does not, and the ordering below held over four independent runs:
+
+| Mode | | Q0 StHi | Q1 MoHi | Q2 StLo | Q3 MoLo |
+|------|-|--------:|--------:|--------:|--------:|
+| 0 Granular | `clouds` | 14.2% | **12.2%** | 14.9% | 13.6% |
+| | `clouds_fx` | 20.7% | **18.7%** | 20.7% | 19.2% |
+| 1 Stretch | `clouds` | 12.3% | **10.0%** | 11.9% | 11.2% |
+| | `clouds_fx` | 17.6% | **16.3%** | 18.4% | 17.5% |
+| 2 Looping Delay | `clouds` | 10.2% | **9.4%** | 12.2% | 11.5% |
+| | `clouds_fx` | **15.1%** | 15.6% | 17.4% | 17.3% |
+| 3 Spectral | `clouds` | 6.9% | **5.0%** | 7.7% | 7.4% |
+| | `clouds_fx` | **11.1%** | 11.7% | 13.9% | 13.6% |
+
+**The Lo half costs more than the Hi half in all eight rows.** Going StHi ->
+StLo -- the intuitive "turn the quality down" -- makes the unit *more*
+expensive every time. Mono is where the saving is: MoHi is the cheapest
+setting in six of eight rows and within half a point in the other two.
+
+The mechanism is visible in `GranularProcessor::Process()`. `low_fidelity_`
+runs `ProcessGranular()` at half rate through an extra `SrcDown`/`SrcUp` pair
+and switches the buffers to `RESOLUTION_8_BIT_MU_LAW`, so every interpolated
+tap becomes a dependent LUT load through `lut_ulaw` instead of a raw int16.
+What it does *not* downsample is the diffuser, the pitch shifter or the
+filters -- those run on `out_` at full `size`, outside the branch. So it
+halves one stage and adds three costs around it.
+
+That trade made sense on the original hardware, where the constraint was
+64 KB of SRAM and 8-bit buffers bought twice the recording time. On the
+drumlogue the buffer is a static array in a process with room to spare, and
+the memory saving buys nothing the CPU does not pay for twice.
+
+Sizing which of the three added costs dominates would be a separate job. What
+matters for using the instrument is the direction, and the direction is
+reproducible: **if Clouds needs headroom, the setting to reach for is MoHi,
+not either Lo.**
