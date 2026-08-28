@@ -57,3 +57,5 @@ test_clouds_warp_off
 test_clouds_warp_on
 .warp_off.raw
 bench_clouds_src_arm
+test_clouds_fx_preset
+test_clouds_fx_preset_worker

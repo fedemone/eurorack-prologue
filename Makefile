@@ -182,6 +182,28 @@ test-clouds-fx-reconfig:
 	    -o test_clouds_fx_reconfig -lm
 	./test_clouds_fx_reconfig
 
+# Reproduction for the hardware report: CloudsFX in Stretch went to clicks and
+# then silence seconds after Quality moved StHi -> MoHi.  Runs the reported
+# settings, paced at real time because the park handshake's timeouts are in
+# wall-clock milliseconds and a flat-out harness takes different branches than
+# the instrument does.
+# Usage: make test-clouds-fx-preset [-worker]
+CLOUDS_FX_PRESET_SRC = test_clouds_fx_preset.cc clouds-fx.cc $(CLOUDS_FX_ENGINE)
+CLOUDS_FX_PRESET_FLAGS = -O2 -DTEST -DCLOUDS_FX -DCLOUDS_FX_TEST \
+    -DOSC_NATIVE_BLOCK_SIZE=32 -DBLOCKSIZE=32
+
+.PHONY: test-clouds-fx-preset test-clouds-fx-preset-worker
+test-clouds-fx-preset:
+	$(CXX) $(COMMON_TEST_FLAGS) $(CLOUDS_FX_PRESET_FLAGS) $(CLOUDS_OPT_FLAGS) \
+	    -pthread $(CLOUDS_FX_PRESET_SRC) -o test_clouds_fx_preset -lm
+	./test_clouds_fx_preset
+
+test-clouds-fx-preset-worker: CLOUDS_WORKER_FLAG =
+test-clouds-fx-preset-worker:
+	$(CXX) $(COMMON_TEST_FLAGS) $(CLOUDS_FX_PRESET_FLAGS) $(CLOUDS_OPT_FLAGS) \
+	    -pthread $(CLOUDS_FX_PRESET_SRC) -o test_clouds_fx_preset_worker -lm
+	./test_clouds_fx_preset_worker
+
 # The same test with the phase vocoder's worker compiled in -- which is how
 # the unit actually ships, and the only configuration where three threads
 # meet: the renderer, the control thread holding the park, and a worker that

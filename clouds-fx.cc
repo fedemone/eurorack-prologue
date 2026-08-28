@@ -244,9 +244,29 @@ static const long kParkPollNs = 200000L;      /* 0.2 ms between polls */
 static const long kIdleTimeoutNs = 10000000L; /* 10 ms with no render at all */
 static const long kParkTimeoutNs = 50000000L; /* 50 ms hard ceiling */
 
+#ifdef CLOUDS_FX_TEST
+/* Which branch a park actually took, for a repro to report.
+ *
+ * Every failure mode of this function looks the same from outside -- the unit
+ * goes quiet -- so a test that only watches the audio cannot say whether the
+ * renderer never parked, the reconfiguration was abandoned, or the engine was
+ * taken while a render was in flight.  These separate them.  Test builds only;
+ * nothing in the shipping unit reads or writes them. */
+extern "C" {
+uint32_t g_park_calls = 0;        /* with_engine_parked() entered */
+uint32_t g_park_normal = 0;       /* renderer acknowledged the park */
+uint32_t g_park_idle_take = 0;    /* nothing was rendering; engine taken */
+uint32_t g_park_abandoned = 0;    /* hard ceiling hit; reconfiguration dropped */
+uint32_t g_park_max_wait_us = 0;  /* longest wait for an acknowledgement */
+}
+#endif
+
 static void with_engine_parked(void (*fn)(void)) {
   const uint32_t seen = __atomic_load_n(&render_phase_, __ATOMIC_ACQUIRE);
   __atomic_store_n(&engine_state_, kParkReq, __ATOMIC_RELEASE);
+#ifdef CLOUDS_FX_TEST
+  ++g_park_calls;
+#endif
 
   long waited = 0;
   bool rendered = false;
@@ -257,8 +277,12 @@ static void with_engine_parked(void (*fn)(void)) {
     /* Nothing has rendered since the request, and nothing is inside a render
      * now: take the engine.  The acquire above pairs with the renderer's
      * release on its way out, so everything its last call did is visible. */
-    if (!rendered && (phase & 1u) == 0u && waited >= kIdleTimeoutNs)
+    if (!rendered && (phase & 1u) == 0u && waited >= kIdleTimeoutNs) {
+#ifdef CLOUDS_FX_TEST
+      ++g_park_idle_take;
+#endif
       break;
+    }
     if (waited >= kParkTimeoutNs) {
       /* Renders are happening but the park never landed.  Leave the engine
        * alone.  Store kRunning with a compare-exchange from kParkReq so a
@@ -270,6 +294,9 @@ static void with_engine_parked(void (*fn)(void)) {
                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
       if (expect == kParked)
         break;                  /* it parked after all — carry on */
+#ifdef CLOUDS_FX_TEST
+      ++g_park_abandoned;
+#endif
       return;
     }
     struct timespec ts;
@@ -278,6 +305,12 @@ static void with_engine_parked(void (*fn)(void)) {
     nanosleep(&ts, nullptr);
     waited += kParkPollNs;
   }
+
+#ifdef CLOUDS_FX_TEST
+  if ((unsigned long)(waited / 1000) > g_park_max_wait_us)
+    g_park_max_wait_us = (uint32_t)(waited / 1000);
+  ++g_park_normal;
+#endif
 
   fn();
 
