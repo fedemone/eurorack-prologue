@@ -1317,3 +1317,58 @@ Sizing which of the three added costs dominates would be a separate job. What
 matters for using the instrument is the direction, and the direction is
 reproducible: **if Clouds needs headroom, the setting to reach for is MoHi,
 not either Lo.**
+
+### A shorter sample-rate converter, for when CloudsFX needs the headroom
+
+The conversion is CloudsFX's largest single cost after the engine itself, and
+`-DCLOUDS_SRC_TAPS=60` halves it. It is off by default; 120 taps is what
+ships.
+
+Measured on the real `.drmlgunit`, at the settings from the hardware report
+(Stretch, Position 67, Size 26, Density 55, Texture 37, Feedback 14, Dry/Wet
+50, Reverb 16, MoHi), three runs of 4000 renders each:
+
+| | mean | p99 | p99.9 |
+|---|-----:|----:|------:|
+| 120 taps | 24.5 / 24.8 / 24.6% | 48.6 / 56.5 / 49.3% | 66.4 / 82.4 / 69.2% |
+| 60 taps | 20.4 / 19.6 / 20.7% | 48.6 / 39.7 / 44.8% | 64.6 / 58.0 / 60.6% |
+
+About 18% off the mean and 16% off the tail. The converters in isolation
+(`make bench-clouds-src`) go 10.6% -> 5.6% mean in the same session, which is
+the halving the tap count predicts; the rest of the unit is unchanged.
+
+**What it costs is passband, not alias rejection**, and that is a choice
+rather than a consequence. A 60-tap Kaiser has about twice the transition
+width of a 120-tap one, and that width has to be spent: either the corner
+stays at 14.4 kHz and rejection at the engine's 16 kHz Nyquist falls from
+-42 dB to -17 dB, or the corner comes down and the rejection is kept. The
+short set takes the second, at beta 7 and a 12.5 kHz corner, so it rejects
+aliases *better* than the shipped filter.
+
+Measured round trip through the real converters (`make
+test-clouds-src-response`), which is two filter passes:
+
+| | 10 kHz | 11 kHz | 12 kHz | 13 kHz | 14 kHz | 15 kHz |
+|---|------:|-------:|-------:|-------:|-------:|-------:|
+| 120 taps | 0.0 | 0.0 | 0.0 | -0.4 | -6.0 | -27.5 |
+| 60 taps | -0.5 | -2.5 | -7.8 | -17.8 | -34.7 | -62.5 |
+
+So: identical below 9 kHz, then a progressive darkening -- 2.5 dB down at
+11 kHz, 8 dB at 12 kHz. On a drum bus that is audible on cymbals and hats as
+a duller effect return. It is the right way round for this instrument: a dark
+return is a tone change a player can compensate for, while aliasing is grit
+that was not in the source and does not land anywhere musical.
+
+Both table sets come from `tools/generate_src_tables.py`. That script exists
+because the shipped tables were computed offline and the script was not kept,
+which left the only description of the filter being a comment about it. Its
+first job is `--verify`: it regenerates the 120-tap tables and diffs them
+against the header, agreeing to 5e-10 -- the header's own 9-decimal print
+rounding. Nothing it emits is trusted until that passes.
+
+To build the units with it:
+
+```
+make -C drumlogue/clouds_fx CROSS_COMPILE=arm-linux-gnueabihf- \
+    USE_CXXOPT="... -DCLOUDS_SRC_TAPS=60"
+```

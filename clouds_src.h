@@ -20,13 +20,16 @@
  * position, and a coefficient set that can be computed once, offline.
  *
  * Both directions share one prototype low-pass, designed at the 96 kHz common
- * multiple: 120 taps, Kaiser (beta = 8), -6 dB at 14.4 kHz.  Measured
- * response: flat to 13 kHz, -42 dB at 16 kHz, -82 dB at 17 kHz, below -95 dB
- * from 18 kHz up.  The 16 kHz figure is the one that matters -- it is the
- * Nyquist of the 32 kHz engine, so it bounds both the aliasing folded in on
- * the way down and the imaging let through on the way up.  The audible cost
- * is a gentle rolloff above 13 kHz, which is roughly what Clouds' own codec
- * does anyway.
+ * multiple: by default 120 taps, Kaiser (beta = 8), -6 dB at 14.4 kHz.
+ * Measured response: flat to 13 kHz, -42 dB at 16 kHz, -82 dB at 17 kHz,
+ * below -95 dB from 18 kHz up.  The 16 kHz figure is the one that matters --
+ * it is the Nyquist of the 32 kHz engine, so it bounds both the aliasing
+ * folded in on the way down and the imaging let through on the way up.  The
+ * audible cost is a gentle rolloff above 13 kHz, which is roughly what
+ * Clouds' own codec does anyway.
+ *
+ * A 60-tap alternative is available for builds that need the CPU back; see
+ * CLOUDS_SRC_TAPS below for what it costs.
  *
  * Polyphase decomposition: for output n, position on the 96 kHz grid is
  * m = n*M, so the phase is m mod L and the base input index is m div L, and
@@ -58,9 +61,47 @@
 
 namespace clouds_src {
 
-/* Taps per polyphase branch: 120 / L. */
-static const int kUpTaps = 40;    /* 32 kHz -> 48 kHz, L = 3, M = 2 */
-static const int kDownTaps = 60;  /* 48 kHz -> 32 kHz, L = 2, M = 3 */
+/* Prototype length: how many taps the shared low-pass has.
+ *
+ * 120 is the shipped design and the default.  60 halves the per-sample cost
+ * of every conversion, which for CloudsFX is the largest single lever there
+ * is -- the four converters and their FIFOs measure 6.7-7.8% of a render
+ * against the whole unit's 17-18% in Stretch (`make bench-clouds-src`,
+ * `make bench-units`).  The synth runs one converter, so it saves
+ * proportionally less.
+ *
+ * What it costs is passband, not alias rejection, and that choice is
+ * deliberate.  A 60-tap Kaiser has roughly twice the transition width of a
+ * 120-tap one, and that width has to be spent somewhere: either the corner
+ * stays at 14.4 kHz and rejection at the engine's 16 kHz Nyquist falls from
+ * -42 dB to -17 dB, or the corner comes down and rejection is kept.  The
+ * short set takes the second, at beta 7 and a 12.5 kHz corner:
+ *
+ *              12 kHz   13 kHz   14 kHz   16 kHz   17 kHz
+ *   120 taps    -0.0     -0.2     -3.0    -41.7    -81.8
+ *    60 taps    -3.9     -8.9    -17.3    -61.4    -86.5
+ *
+ * So the short filter rejects aliases *better* than the shipped one; what it
+ * loses is the top of the passband, a gentle dulling from about 11 kHz up.
+ * That is the right way round for a drum bus: a slightly dark effect return
+ * is a tone change, while aliasing on cymbals is grit that was not in the
+ * source and does not sit anywhere musical.
+ *
+ * Both sets come from tools/generate_src_tables.py, which regenerates the
+ * 120-tap tables and diffs them against the ones below (`--verify`) before it
+ * is trusted to emit anything else.
+ *
+ * Build with -DCLOUDS_SRC_TAPS=60 to select the short set. */
+#ifndef CLOUDS_SRC_TAPS
+#define CLOUDS_SRC_TAPS 120
+#endif
+#if CLOUDS_SRC_TAPS != 120 && CLOUDS_SRC_TAPS != 60
+#error "CLOUDS_SRC_TAPS must be 120 (shipped) or 60 (short); see clouds_src.h"
+#endif
+
+/* Taps per polyphase branch: CLOUDS_SRC_TAPS / L. */
+static const int kUpTaps = CLOUDS_SRC_TAPS / 3;    /* 32 -> 48 kHz, L=3, M=2 */
+static const int kDownTaps = CLOUDS_SRC_TAPS / 2;  /* 48 -> 32 kHz, L=2, M=3 */
 
 /* Largest number of input samples either converter will be asked to absorb in
  * one call.  Up: 64 outputs need (2 + 128)/3 = 43 inputs.  Down: 32 outputs
@@ -70,6 +111,8 @@ static const int kMaxIn = 64;
 /* Largest output block, i.e. the chunk size callers must not exceed. */
 static const int kMaxUpOut = 64;
 static const int kMaxDownOut = 32;
+
+#if CLOUDS_SRC_TAPS == 120
 
 static const float kSrcUpPhase[3][40] = {
   {
@@ -147,6 +190,62 @@ static const float kSrcDownPhase[2][60] = {
   },
 };
 
+#else  /* CLOUDS_SRC_TAPS == 60 */
+
+/* 60 taps, Kaiser beta=7, -6 dB near 12500 Hz, designed at 96000 Hz.
+ * Response: 1k -0.0 dB, 10k -0.2 dB, 12k -3.9 dB, 13k -8.9 dB, 14k -17.3 dB, 15k -31.3 dB, 16k -61.4 dB, 17k -86.5 dB, 18k -88.6 dB, 20k -81.1 dB
+ * 16 kHz is the engine's Nyquist and so the figure that bounds both
+ * the aliasing folded in and the imaging let out. */
+
+static const float kSrcUpPhase[3][20] = {
+  {
+        -0.000337716f,      0.002227496f,     -0.005681324f,      0.006785469f,
+         0.002697106f,     -0.029893369f,      0.070996795f,     -0.103033636f,
+         0.071565468f,      0.758910957f,      0.331932610f,     -0.151494306f,
+         0.053086281f,      0.000815224f,     -0.018548082f,      0.015365663f,
+        -0.006779230f,      0.001223782f,      0.000339335f,     -0.000161363f,
+  },
+  {
+        -0.000385359f,      0.001506034f,     -0.001927022f,     -0.002410855f,
+         0.015487788f,     -0.034575919f,      0.044139652f,     -0.015104100f,
+        -0.101130388f,      0.594383011f,      0.594383011f,     -0.101130388f,
+        -0.015104100f,      0.044139652f,     -0.034575919f,      0.015487788f,
+        -0.002410855f,     -0.001927022f,      0.001506034f,     -0.000385359f,
+  },
+  {
+        -0.000161363f,      0.000339335f,      0.001223782f,     -0.006779230f,
+         0.015365663f,     -0.018548082f,      0.000815224f,      0.053086281f,
+        -0.151494306f,      0.331932610f,      0.758910957f,      0.071565468f,
+        -0.103033636f,      0.070996795f,     -0.029893369f,      0.002697106f,
+         0.006785469f,     -0.005681324f,      0.002227496f,     -0.000337716f,
+  },
+};
+
+static const float kSrcDownPhase[2][30] = {
+  {
+        -0.000256906f,      0.000226223f,      0.001484997f,     -0.001284682f,
+        -0.004519487f,      0.004523646f,      0.010325192f,     -0.012365388f,
+        -0.019928913f,      0.029426434f,      0.035390854f,     -0.068689091f,
+        -0.067420259f,      0.221288406f,      0.505940638f,      0.396255341f,
+         0.047710312f,     -0.100996204f,     -0.010069400f,      0.047331197f,
+         0.000543483f,     -0.023050613f,      0.001798070f,      0.010243775f,
+        -0.001607236f,     -0.003787549f,      0.000815855f,      0.001004022f,
+        -0.000225144f,     -0.000107575f,
+  },
+  {
+        -0.000107575f,     -0.000225144f,      0.001004022f,      0.000815855f,
+        -0.003787549f,     -0.001607236f,      0.010243775f,      0.001798070f,
+        -0.023050613f,      0.000543483f,      0.047331197f,     -0.010069400f,
+        -0.100996204f,      0.047710312f,      0.396255341f,      0.505940638f,
+         0.221288406f,     -0.067420259f,     -0.068689091f,      0.035390854f,
+         0.029426434f,     -0.019928913f,     -0.012365388f,      0.010325192f,
+         0.004523646f,     -0.004519487f,     -0.001284682f,      0.001484997f,
+         0.000226223f,     -0.000256906f,
+  },
+};
+
+#endif  /* CLOUDS_SRC_TAPS */
+
 /* Forward dot product of `n` taps against `n` consecutive samples.
  *
  * Both runs are forward because the coefficient tables above are stored
@@ -155,10 +254,14 @@ static const float kSrcDownPhase[2][60] = {
  * vector ops to do the work of one.
  *
  * Two accumulators, because a single one serialises on the FMA's result
- * latency and the Cortex-A7 has nothing else to issue in the gap.  Both tap
- * counts (40 and 60) are multiples of 4, so the scalar tail is dead code on
- * the paths this file actually uses; it is there so the helper stays correct
- * if the prototype length changes. */
+ * latency and the Cortex-A7 has nothing else to issue in the gap.
+ *
+ * The scalar tail is not decoration.  At the default 120 taps every branch
+ * (40 up, 60 down) is a multiple of 4 and the tail never runs; at
+ * CLOUDS_SRC_TAPS=60 the down branch is 30, so it runs two scalar
+ * multiply-adds per output sample.  That is the cheapest of the shapes on
+ * offer -- keeping the branch a multiple of 4 would mean 120/6=20 down-taps,
+ * which costs a third of the prototype's length for two instructions. */
 static inline float Dot(const float *h, const float *x, int n) {
 #ifdef __ARM_NEON
   float32x4_t a0 = vdupq_n_f32(0.0f);

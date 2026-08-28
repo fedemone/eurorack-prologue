@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -181,6 +181,27 @@ test-clouds-fx-reconfig:
 	    $(CLOUDS_FX_ENGINE) \
 	    -o test_clouds_fx_reconfig -lm
 	./test_clouds_fx_reconfig
+
+# Sample-rate converter response, both prototype lengths.
+#
+# The tables in clouds_src.h are generated, and generated filter tables fail
+# in a way nothing else here would catch: a branch stored in the wrong order
+# still gives continuous, correctly-levelled audio while being the wrong
+# filter.  This measures the converters rather than inspecting them.
+#
+# The companion check is `python3 tools/generate_src_tables.py --verify`,
+# which regenerates the shipped 120-tap tables and diffs them against the
+# header -- so the design is pinned at one end and the wiring at the other.
+# Usage: make test-clouds-src-response
+.PHONY: test-clouds-src-response
+test-clouds-src-response:
+	@python3 tools/generate_src_tables.py --verify
+	@echo ""
+	@for t in 120 60; do \
+	  $(CXX) $(COMMON_TEST_FLAGS) -O2 -DCLOUDS_SRC_TAPS=$$t \
+	      test_clouds_src_response.cc -o test_clouds_src_response_$$t -lm || exit 1; \
+	  ./test_clouds_src_response_$$t || exit 1; \
+	done
 
 # Reproduction for the hardware report: CloudsFX in Stretch went to clicks and
 # then silence seconds after Quality moved StHi -> MoHi.  Runs the reported
@@ -681,7 +702,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
