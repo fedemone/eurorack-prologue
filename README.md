@@ -5,6 +5,108 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
+---
+
+## ⚠ Disclaimer — unofficial software, no warranty, use at your own risk
+
+**These synth engines and effects are an unofficial, community-made project.**
+They are not produced, reviewed, endorsed, supported or certified by KORG Inc.,
+by Mutable Instruments, or by anyone else whose names, trademarks or source
+code appear here. Those names are used only to say what the code is derived
+from and what hardware it runs on. All trademarks belong to their respective
+owners.
+
+**No guarantee of any kind is offered or implied.** The units are supplied
+"as is" and "as available", without warranty of any kind, express or implied,
+including but not limited to the implied warranties of merchantability,
+fitness for a particular purpose, title, and non-infringement. Nobody warrants
+that the software is correct, complete, reliable, secure, uninterrupted, free
+of defects, fit for any particular instrument or firmware version, or that any
+defect will ever be corrected. **Some known defects are described below and
+may never be fixed.**
+
+**To the maximum extent permitted by applicable law, no author, contributor,
+maintainer, packager or distributor of this project shall be liable for any
+claim, damage, loss or other liability of any kind** — whether in contract,
+tort (including negligence), strict liability or otherwise — arising from,
+out of, or in connection with the software, its use, its misuse, or the
+inability to use it. This includes, without limitation and whether or not
+foreseeable:
+
+- damage to, malfunction of, instability in, or loss of use of any instrument,
+  computer or other equipment;
+- interrupted, degraded, distorted or absent audio, including during a
+  performance, rehearsal, recording session, broadcast or installation;
+- loss of or corruption to presets, patches, samples, projects, recordings or
+  any other data;
+- lost time, lost income, lost opportunities, reputational harm, or the cost
+  of substitute equipment or software;
+- any consequence of installing, loading, running, modifying, rebuilding or
+  redistributing these units, in any combination with each other or with any
+  other unit, effect, preset or firmware.
+
+**You install and run these units entirely at your own risk, and you accept
+full responsibility for that decision.** Before relying on any of it, test it
+yourself, on your own instrument, in the way you actually intend to use it.
+Keep backups of anything you would mind losing. Loading third-party units may
+affect your instrument's warranty or your eligibility for manufacturer
+support; that is between you and the manufacturer.
+
+The code derives from sources carrying their own licences and notices — see
+the headers in `eurorack/`, `eurorack-opt/` and the individual port files —
+and those licences' own warranty and liability disclaimers apply in addition
+to this one. Where any part of this disclaimer is held unenforceable, the rest
+continues to apply and liability is limited to the greatest extent the law
+allows.
+
+---
+
+> ## ⚠ Known problem — Clouds **Stretch** (Mode 1) can crash the audio
+>
+> **This affects both `clouds` (synth) and `clouds_fx` (effect), on drumlogue.
+> It has been seen on real hardware. It is not fully understood, it is not
+> fully fixed, and it may never be.**
+>
+> What it looks like: the mode plays, then starts clicking, and then the audio
+> stops — a dead, silent unit rather than a wrong sound. It has been reported
+> after moving knobs, and once immediately after a Quality change.
+>
+> **The instrument itself recovers.** A hard reset — power the drumlogue off
+> and back on — has restored normal operation every time this has been seen.
+> No lasting damage to the hardware has been observed. That is an observation,
+> not a promise; see the disclaimer above.
+>
+> **Why it may not be fixable.** One cause *was* found and fixed: the WSOLA
+> correlator's per-window load was refused a split at POSITION 0, which was
+> the only setting in the mode that missed the render deadline. That fix is in
+> and was confirmed on hardware. A later failure was then reported at settings
+> where that fix provably does nothing, and it has never been reproduced
+> here — not on x86, not on emulated ARM, not under AddressSanitizer,
+> ThreadSanitizer or UndefinedBehaviorSanitizer, and not with the reported
+> preset driven at real time. The remaining suspicion is simply CPU: this is a
+> granular engine written for dedicated 32 kHz hardware, running inside a
+> shared process on an instrument that is also rendering a full kit and
+> whatever else is on the FX bus. That is a structural margin problem, not a
+> bug with a line number, and it may not have a fix.
+>
+> **If you use Stretch anyway:**
+>
+> - Do not use it in a live set, a recording you cannot repeat, or anywhere a
+>   dropout or a silent channel would cost you something.
+> - Expect it to be worse the busier the kit and the effect chain are.
+>   `clouds_fx` is the more expensive of the two.
+> - If it goes silent, power-cycle the instrument.
+> - Quality **MoHi** is the cheapest setting, not `StLo`/`MoLo` — the low
+>   fidelity settings measure *more* expensive, not less (`make
+>   bench-clouds-quality`).
+> - Cheaper builds are available and documented under *Fallbacks and revert
+>   points* in
+>   [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md):
+>   `./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx`.
+>
+> Modes 0 and 2 (Granular, Looping Delay) have not shown this. Every other
+> oscillator in this repository is unaffected.
+
 > ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is the expensive one
 >
 > **The freeze is fixed and the clicking is fixed. Spectral is still the mode
@@ -56,6 +158,11 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > a quarter turn away, worst block 110%. The refusal is gone, and 200 points of
 > SIZE × POSITION × PITCH × quality come back bit-identical to never splitting
 > at all (`make test-clouds-wsola-split`). **Tested on hardware and passed.**
+>
+> **That fixed one cause, not the mode.** Stretch was later reported crashing
+> the audio at settings where the correlator split provably never engages, and
+> that failure is unreproduced and possibly unfixable — see the *Known
+> problem* block above before using Mode 1 for anything that matters.
 >
 > Turning a knob is not the cause: POSITION, SIZE and PITCH sweeps put no edge
 > in the output that holding the same knob anywhere does not

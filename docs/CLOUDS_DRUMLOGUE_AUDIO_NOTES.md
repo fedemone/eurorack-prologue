@@ -1467,3 +1467,43 @@ really usable"* from an earlier hardware session.
 **The experiment that would settle it** is building `0856ff5` and trying the
 same preset. Identical failure means the ceiling, and the answer is headroom;
 survival means a regression inside two commits.
+
+---
+
+## Status of Stretch, plainly
+
+This document is a record of things that were measured and fixed, which makes
+it easy to read as a story that ends well. For Mode 1 it does not, and the
+README carries a user-facing warning that says so. The engineering summary:
+
+**What was fixed.** The WSOLA correlator's per-window load was refused a split
+whenever POSITION sat at the write head. That was the only setting in the mode
+that missed the render deadline (p99 63.8% against 49.5% a quarter-turn away,
+worst block 110%), and removing the refusal is bit-identical across 200 points
+of SIZE x POSITION x PITCH x quality. Confirmed on hardware.
+
+**What is not fixed.** Stretch was subsequently reported crashing the audio on
+`clouds_fx` -- clicks, then silence -- at Position 67 / Size 26, where the
+correlator split is refused 6633 times against 26 taken and the fix therefore
+does nothing at all. That failure has never been reproduced: not on x86, not
+on emulated ARM, not under ASan/UBSan or TSan, and not by
+`make test-clouds-fx-preset` driving those exact settings at real time. The
+park handshake took the correct branch on every one of those runs, the worker
+takes no jobs outside Spectral, and no memory fault or non-finite sample
+appears anywhere.
+
+**Why it may never be fixed.** Everything the harness can see is clean, which
+leaves the thing the harness cannot see: the instrument runs this engine in a
+shared process alongside a full kit and whatever else is on the FX bus, and
+`clouds_fx` Stretch is the highest-tail configuration in either unit (p99.9
+69-79% of deadline, alone, on an unloaded machine). That is a margin problem
+rather than a defect with a location. It can be made *less likely* -- and
+`CLOUDS_SRC_TAPS=60` and `CLOUDS_PVOC_WORKER=0` both do that, measurably --
+but nothing here can be shown to remove it, and no claim is made that it has
+been removed.
+
+**What would move this forward**, if anyone picks it up: build `0856ff5` --
+the last commit before any CloudsFX change, worker and Stretch fix present,
+both hardware-tested -- and try the same preset. An identical failure means
+the ceiling and the answer is headroom. Survival means a regression inside two
+commits, and the bisect is short.
