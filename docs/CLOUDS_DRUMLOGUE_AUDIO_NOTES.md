@@ -1372,3 +1372,45 @@ To build the units with it:
 make -C drumlogue/clouds_fx CROSS_COMPILE=arm-linux-gnueabihf- \
     USE_CXXOPT="... -DCLOUDS_SRC_TAPS=60"
 ```
+
+### Passing build options through the Docker wrapper
+
+The build options above -- `CLOUDS_SRC_TAPS`, `CLOUDS_PVOC_WORKER`, and the
+rest -- used to be reachable only by editing a file or by driving `make`
+inside the container by hand, which is not something to ask of anyone
+chasing a problem on hardware. They now go through the wrapper:
+
+```
+./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx
+```
+
+`-D` is repeatable and has to precede the project names. The route is one
+variable: `build_drumlogue.sh` collects the defines into `UNIT_EXTRA_DEFS`,
+forwards it into the container with `docker run -e`, and every
+`drumlogue/<project>/config.mk` ends with
+
+```make
+UDEFS += $(UNIT_EXTRA_DEFS)
+```
+
+which the SDK's own Makefile folds into `DEFS`. Make imports environment
+variables as variables, so a plain `make -C drumlogue/clouds_fx` outside
+Docker picks the same variable up from the shell.
+
+Two things were checked rather than assumed, because a build-system change
+that quietly alters the default build is worse than no change at all:
+
+* **The default is byte-identical.** A `clouds_fx.drmlgunit` built after the
+  `config.mk` edit `cmp`s equal to one built before it. `UNIT_EXTRA_DEFS` is
+  unset by default, so the append contributes nothing.
+* **The defines actually arrive.** `-D CLOUDS_PVOC_WORKER=0` leaves a binary
+  with no `pthread_create` or `sem_post` in it at all, which is the whole
+  point of asking for it.
+
+`generate_sdk_projects.sh` emits the append line, so regenerating keeps it.
+That script writes the generic template from an *unquoted* heredoc, where
+backticks and `$(...)` are still live shell syntax -- the first version of
+this change had backticks in the comment and `make` genuinely ran during
+generation, landing "make[1]: Entering directory" inside nineteen config
+files. Diff the regenerated `config.mk` files before committing them; this
+is the second time that script has needed it.

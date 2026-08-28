@@ -748,6 +748,11 @@ PLATFORM=prologue make -f osc_fm.mk
 # Build a specific oscillator
 ./build_drumlogue.sh mo2_va
 
+# Add preprocessor defines to a build.  Repeatable, and must come before the
+# project names.  A cheaper CloudsFX: half-length sample-rate converter, and
+# the spectral transform back on the audio thread.
+./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx
+
 # Interactive Docker shell
 ./build_drumlogue.sh --interactive
 

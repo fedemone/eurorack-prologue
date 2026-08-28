@@ -87,3 +87,8 @@ ULIBS += -lc
 UDEFS  = -DOSC_WTE -DOSCILLATOR_TYPE=wte
 UDEFS += -DOSC_NATIVE_BLOCK_SIZE=24
 UDEFS += -DBLOCKSIZE=24
+# Extra defines from the environment, so a build can be varied without editing
+# this file or the sources.  build_drumlogue.sh -D FOO=1 <project> passes them
+# through Docker to here; a plain make picks them up from the shell.
+# Nothing sets it by default, so an ordinary build is unchanged.
+UDEFS += $(UNIT_EXTRA_DEFS)
