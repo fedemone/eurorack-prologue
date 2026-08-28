@@ -465,6 +465,22 @@ CloudsFX (Clouds as an insert effect)
 > the same 32 kHz engine. It adds about 2.2 ms of latency, dry included —
 > passing the dry signal round the conversion would put it ahead of the wet
 > path and comb-filter the mix.
+>
+> **If CloudsFX needs headroom, build it with `-DCLOUDS_SRC_TAPS=60`.** The
+> 48↔32 kHz conversion is the unit's largest cost after the engine, and the
+> short filter halves it — about 18% off the mean and 16% off the tail,
+> measured on the real unit. It buys that with passband, not alias rejection:
+> identical below 9 kHz, then 2.5 dB down at 11 kHz and 8 dB at 12 kHz, so the
+> effect return gets audibly darker on cymbals. It actually rejects aliases
+> *better* than the default. Off unless you ask for it;
+> `make test-clouds-src-response` measures both.
+>
+> Worth knowing about the Quality knob: it is **not** a ladder from expensive
+> to cheap. Both `Lo` settings cost *more* than their `Hi` counterparts in
+> every mode of both units, because low fidelity halves the granular stage's
+> rate through an extra converter pair and 8-bit µ-law buffers while leaving
+> the diffuser, pitch shifter and filters at full rate. **MoHi is the cheap
+> setting.** `make bench-clouds-quality`.
 
 The synth `clouds` above has to invent an input — an internal sawtooth or a
 loaded sample — because a drumlogue **synth** unit's render callback ignores
@@ -754,6 +770,10 @@ make test-clouds-fx-reconfig    # render thread vs control thread doing
 make test-clouds-fx-worker      # the same, with the spectral worker compiled
                                 # in as it ships: three threads, and the park
                                 # holder is a stranger to the job slot
+make test-clouds-fx-preset      # the settings from a hardware failure report,
+                                # paced at real time
+make test-clouds-src-response   # measured round-trip response of the sample
+                                # rate converters, both prototype lengths
 make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
                                 # engine, compared sample for sample
 make test-clouds-grain-window   # grain envelope, fork vs stock, plus an ASan

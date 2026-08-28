@@ -59,3 +59,5 @@ test_clouds_warp_on
 bench_clouds_src_arm
 test_clouds_fx_preset
 test_clouds_fx_preset_worker
+test_clouds_src_response_120
+test_clouds_src_response_60
