@@ -21,6 +21,22 @@
 #   ./build_drumlogue.sh --interactive    # Enter Docker shell
 #   ./build_drumlogue.sh --collect        # Collect .drmlgunit files
 #
+# Build options:
+#   -D <NAME[=VALUE]>   add a preprocessor define to the build.  Repeatable,
+#                       and must come before the project names.
+#
+#     ./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 clouds_fx
+#     ./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx
+#
+#   The defines reach the compiler through UNIT_EXTRA_DEFS, which every
+#   drumlogue/<project>/config.mk appends to UDEFS.  Nothing sets it by
+#   default, so a build without -D is byte-for-byte the ordinary one.
+#
+#   The options worth knowing about are documented where they are defined --
+#   CLOUDS_SRC_TAPS in clouds_src.h, CLOUDS_PVOC_WORKER in
+#   eurorack-opt/clouds/dsp/pvoc/phase_vocoder.h -- and summarised in
+#   docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md.
+#
 
 set -euo pipefail
 
@@ -141,12 +157,14 @@ sdk_docker_run() {
         MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
         docker run --rm -i ${tty_flag} \
             -v "${platform_path}:/workspace" \
+            -e UNIT_EXTRA_DEFS \
             -h logue-sdk \
             "${image}" \
             "$@" 2>&1
     else
         docker run --rm -i ${tty_flag} \
             -v "${platform_path}:/workspace" \
+            -e UNIT_EXTRA_DEFS \
             -h logue-sdk \
             "${image}" \
             "$@" 2>&1
@@ -167,6 +185,9 @@ usage() {
     echo "  --collect       Collect .drmlgunit files to build/drumlogue/"
     echo "  -h, --help      Show this help"
     echo ""
+    echo "Build options (must precede the project names):"
+    echo "  -D NAME[=VALUE] Add a preprocessor define.  Repeatable."
+    echo ""
     echo "If no project names given, builds all oscillators."
     echo ""
     echo "Examples:"
@@ -174,6 +195,11 @@ usage() {
     echo "  $0 mo2_va            # Build Virtual Analog only"
     echo "  $0 mo2_va mo2_fm     # Build VA and FM"
     echo "  $0 --collect         # Gather all .drmlgunit files"
+    echo ""
+    echo "  # A cheaper CloudsFX: half-length sample-rate converter, and the"
+    echo "  # spectral transform back on the audio thread.  See clouds_src.h"
+    echo "  # and eurorack-opt/clouds/dsp/pvoc/phase_vocoder.h."
+    echo "  $0 -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx"
     echo ""
     if $IS_WINDOWS; then
         echo "  (Windows / Git Bash mode active)"
@@ -314,6 +340,42 @@ collect_units() {
 ##############################################################################
 # Main
 ##############################################################################
+
+##############################################################################
+# -D options, consumed before anything else looks at the arguments.
+#
+# They travel to the compiler as UNIT_EXTRA_DEFS, which every
+# drumlogue/<project>/config.mk appends to UDEFS.  Empty unless asked for, so
+# a build without -D is the ordinary build.
+##############################################################################
+
+UNIT_EXTRA_DEFS=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -D)
+            if [ $# -lt 2 ]; then
+                echo -e "${RED}Error: -D needs a define, e.g. -D CLOUDS_SRC_TAPS=60${NC}" >&2
+                exit 1
+            fi
+            UNIT_EXTRA_DEFS="${UNIT_EXTRA_DEFS} -D$2"
+            shift 2
+            ;;
+        -D*)
+            UNIT_EXTRA_DEFS="${UNIT_EXTRA_DEFS} ${1}"
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+UNIT_EXTRA_DEFS="${UNIT_EXTRA_DEFS# }"
+export UNIT_EXTRA_DEFS
+
+if [ -n "$UNIT_EXTRA_DEFS" ]; then
+    echo -e "${YELLOW}Extra defines: ${UNIT_EXTRA_DEFS}${NC}"
+    echo ""
+fi
 
 if [ $# -eq 0 ]; then
     # Build all oscillators
