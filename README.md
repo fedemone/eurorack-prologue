@@ -63,6 +63,14 @@ Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-
 > the LP/HP cutoff swept over 216 semitones, so sweeping it is a filter sweep.
 > Every other oscillator in this repository is unaffected by all of it.
 >
+> **If a Clouds build misbehaves on hardware**, the switches are documented
+> under *Fallbacks and revert points* in
+> [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md)
+> — build flags first (`-D CLOUDS_PVOC_WORKER=0`, `-D CLOUDS_SRC_TAPS=60`,
+> both via `./build_drumlogue.sh -D ...`), then the commits to fall back to.
+> One CloudsFX report — Stretch, clicks then silence after a Quality change —
+> was never reproduced here, and what that rules out is recorded there too.
+>
 > Full measurements are in
 > [docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md](docs/CLOUDS_DRUMLOGUE_AUDIO_NOTES.md).
 
