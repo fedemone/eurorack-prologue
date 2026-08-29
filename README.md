@@ -5,6 +5,62 @@ Eurorack Oscillators for Korg prologue, minilogue xd, Nu:tekt NTS-1, and drumlog
 
 Ports of some of Mutable Instruments (tm) oscillators to the Korg "logue" multi-engine.
 
+---
+
+## ⚠ Disclaimer — unofficial software, no warranty, use at your own risk
+
+**These synth engines and effects are an unofficial, community-made project.**
+They are not produced, reviewed, endorsed, supported or certified by KORG Inc.,
+by Mutable Instruments, or by anyone else whose names, trademarks or source
+code appear here. Those names are used only to say what the code is derived
+from and what hardware it runs on. All trademarks belong to their respective
+owners.
+
+**No guarantee of any kind is offered or implied.** The units are supplied
+"as is" and "as available", without warranty of any kind, express or implied,
+including but not limited to the implied warranties of merchantability,
+fitness for a particular purpose, title, and non-infringement. Nobody warrants
+that the software is correct, complete, reliable, secure, uninterrupted, free
+of defects, fit for any particular instrument or firmware version, or that any
+defect will ever be corrected. **Some known defects are described below and
+may never be fixed.**
+
+**To the maximum extent permitted by applicable law, no author, contributor,
+maintainer, packager or distributor of this project shall be liable for any
+claim, damage, loss or other liability of any kind** — whether in contract,
+tort (including negligence), strict liability or otherwise — arising from,
+out of, or in connection with the software, its use, its misuse, or the
+inability to use it. This includes, without limitation and whether or not
+foreseeable:
+
+- damage to, malfunction of, instability in, or loss of use of any instrument,
+  computer or other equipment;
+- interrupted, degraded, distorted or absent audio, including during a
+  performance, rehearsal, recording session, broadcast or installation;
+- loss of or corruption to presets, patches, samples, projects, recordings or
+  any other data;
+- lost time, lost income, lost opportunities, reputational harm, or the cost
+  of substitute equipment or software;
+- any consequence of installing, loading, running, modifying, rebuilding or
+  redistributing these units, in any combination with each other or with any
+  other unit, effect, preset or firmware.
+
+**You install and run these units entirely at your own risk, and you accept
+full responsibility for that decision.** Before relying on any of it, test it
+yourself, on your own instrument, in the way you actually intend to use it.
+Keep backups of anything you would mind losing. Loading third-party units may
+affect your instrument's warranty or your eligibility for manufacturer
+support; that is between you and the manufacturer.
+
+The code derives from sources carrying their own licences and notices — see
+the headers in `eurorack/`, `eurorack-opt/` and the individual port files —
+and those licences' own warranty and liability disclaimers apply in addition
+to this one. Where any part of this disclaimer is held unenforceable, the rest
+continues to apply and liability is limited to the greatest extent the law
+allows.
+
+---
+
 > ## ⚠ Warning — `clouds` and `clouds_fx` on drumlogue: Mode 3 (Spectral) is the expensive one
 >
 > **The freeze is fixed and the clicking is fixed. Spectral is still the mode
