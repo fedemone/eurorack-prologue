@@ -1,6 +1,7 @@
 [submodule "eurorack"]
 	path = eurorack
 	url = https://github.com/peterall/eurorack.git
+	branch = master
 [submodule "logue-sdk"]
 	path = logue-sdk
 	url = https://github.com/fedemone/logue-sdk.git
