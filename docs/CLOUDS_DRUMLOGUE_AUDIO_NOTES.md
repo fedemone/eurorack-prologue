@@ -1414,3 +1414,96 @@ this change had backticks in the comment and `make` genuinely ran during
 generation, landing "make[1]: Entering directory" inside nineteen config
 files. Diff the regenerated `config.mk` files before committing them; this
 is the second time that script has needed it.
+
+---
+
+## Fallbacks and revert points
+
+Everything in this document that can be switched off, and where to go back to
+if a build misbehaves on hardware. Recorded here rather than left as git tags
+because the tags are local-only -- this repository's remote refuses tag pushes
+(403), so `git fetch` will not bring them and only the commit ids survive.
+
+### Build flags, cheapest to reach first
+
+| Flag | Effect | Cost |
+|------|--------|------|
+| `-D CLOUDS_PVOC_WORKER=0` | Spectral's transform back on the audio thread | None to the sound; it is the code that shipped before the worker. Restores a once-per-hop burst inside the render deadline. |
+| `-D CLOUDS_SRC_TAPS=60` | Half-length sample-rate converter | ~18% off CloudsFX's mean, ~16% off its tail. Audibly darker above 11 kHz. |
+| `-D CLOUDS_WSOLA_HEAD_MARGIN="(2 * kMaxBlockSize)"` | Restores the correlator split's head-margin guard | Undoes the Stretch fix only. Note it is inert below SIZE ~0.55, where the window never reaches the split threshold. |
+
+All three go through the wrapper, and combine:
+
+```
+./build_drumlogue.sh -D CLOUDS_SRC_TAPS=60 -D CLOUDS_PVOC_WORKER=0 clouds_fx
+```
+
+### Commits to fall back to
+
+| Commit | State |
+|--------|-------|
+| `1d5ca69` | Head of this work. |
+| `645f01d` | Before the SRC option (the option is off by default, so this is only for bisecting the build system). |
+| `0856ff5` | **Before any CloudsFX change.** Worker and Stretch fix present, both hardware-tested. The A/B partner for deciding whether a CloudsFX fault is a regression or the unit's known ceiling. |
+| `c39127b` | Worker present, Stretch fix absent. |
+| `54807a0` | Before the worker. |
+
+### The one question still open
+
+A CloudsFX failure was reported in Stretch -- clicks, then silence, seconds
+after Quality moved StHi -> MoHi -- and was never reproduced here.
+`make test-clouds-fx-preset` runs those exact settings paced at real time, on
+x86 and ARM, plain and under ASan/UBSan, worker on and off, and passes. What
+that rules out is recorded in the commit for `2ea5c8e`: the Stretch fix is
+inert at Size 26% (the split is refused 6633 times against 26 taken), the
+worker takes no jobs outside Spectral, every park took the right branch, and
+there is no memory fault or non-finite output.
+
+What it does not rule out is CPU on a loaded bus, which no harness here
+models -- the report had a full kit and a second reverb in the chain, and
+this unit already carried the verdict *"CPU is too high for the unit to be
+really usable"* from an earlier hardware session.
+
+**The experiment that would settle it** is building `0856ff5` and trying the
+same preset. Identical failure means the ceiling, and the answer is headroom;
+survival means a regression inside two commits.
+
+---
+
+## Status of Stretch, plainly
+
+This document is a record of things that were measured and fixed, which makes
+it easy to read as a story that ends well. For Mode 1 it does not, and the
+README carries a user-facing warning that says so. The engineering summary:
+
+**What was fixed.** The WSOLA correlator's per-window load was refused a split
+whenever POSITION sat at the write head. That was the only setting in the mode
+that missed the render deadline (p99 63.8% against 49.5% a quarter-turn away,
+worst block 110%), and removing the refusal is bit-identical across 200 points
+of SIZE x POSITION x PITCH x quality. Confirmed on hardware.
+
+**What is not fixed.** Stretch was subsequently reported crashing the audio on
+`clouds_fx` -- clicks, then silence -- at Position 67 / Size 26, where the
+correlator split is refused 6633 times against 26 taken and the fix therefore
+does nothing at all. That failure has never been reproduced: not on x86, not
+on emulated ARM, not under ASan/UBSan or TSan, and not by
+`make test-clouds-fx-preset` driving those exact settings at real time. The
+park handshake took the correct branch on every one of those runs, the worker
+takes no jobs outside Spectral, and no memory fault or non-finite sample
+appears anywhere.
+
+**Why it may never be fixed.** Everything the harness can see is clean, which
+leaves the thing the harness cannot see: the instrument runs this engine in a
+shared process alongside a full kit and whatever else is on the FX bus, and
+`clouds_fx` Stretch is the highest-tail configuration in either unit (p99.9
+69-79% of deadline, alone, on an unloaded machine). That is a margin problem
+rather than a defect with a location. It can be made *less likely* -- and
+`CLOUDS_SRC_TAPS=60` and `CLOUDS_PVOC_WORKER=0` both do that, measurably --
+but nothing here can be shown to remove it, and no claim is made that it has
+been removed.
+
+**What would move this forward**, if anyone picks it up: build `0856ff5` --
+the last commit before any CloudsFX change, worker and Stretch fix present,
+both hardware-tested -- and try the same preset. An identical failure means
+the ceiling and the answer is headroom. Survival means a regression inside two
+commits, and the bisect is short.
