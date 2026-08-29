@@ -61,3 +61,5 @@ test_clouds_fx_preset
 test_clouds_fx_preset_worker
 test_clouds_src_response_120
 test_clouds_src_response_60
+.pvoc_defer_*.txt
+.tsan.txt
