@@ -48,6 +48,16 @@ jobs:
           # nested submodules, and the drumlogue build touches neither.
           submodules: true
 
+      # ...but eurorack's own stmlib is not optional -- every target that
+      # compiles the engine includes stmlib/stmlib.h, and `submodules: true`
+      # is one level deep, so eurorack/ arrives with stmlib/ empty.  Named
+      # explicitly rather than switching to `submodules: recursive`, which
+      # would pull the emsdk the comment above exists to avoid.  stmlib is
+      # the only nested submodule the build references; eurorack's four
+      # others (avrlib, avrlibx, and the two bootloaders) stay uncheckedout.
+      - name: Check out eurorack/stmlib
+        run: git -C eurorack submodule update --init --depth 1 stmlib
+
       - name: make test-all
         run: make test-all
 
@@ -64,6 +74,16 @@ jobs:
           # Not recursive: logue-sdk carries CMSIS and the whole emsdk as
           # nested submodules, and the drumlogue build touches neither.
           submodules: true
+
+      # ...but eurorack's own stmlib is not optional -- every target that
+      # compiles the engine includes stmlib/stmlib.h, and `submodules: true`
+      # is one level deep, so eurorack/ arrives with stmlib/ empty.  Named
+      # explicitly rather than switching to `submodules: recursive`, which
+      # would pull the emsdk the comment above exists to avoid.  stmlib is
+      # the only nested submodule the build references; eurorack's four
+      # others (avrlib, avrlibx, and the two bootloaders) stay uncheckedout.
+      - name: Check out eurorack/stmlib
+        run: git -C eurorack submodule update --init --depth 1 stmlib
 
       - name: make test-asan
         run: make test-asan
@@ -91,6 +111,16 @@ jobs:
           # Not recursive: logue-sdk carries CMSIS and the whole emsdk as
           # nested submodules, and the drumlogue build touches neither.
           submodules: true
+
+      # ...but eurorack's own stmlib is not optional -- every target that
+      # compiles the engine includes stmlib/stmlib.h, and `submodules: true`
+      # is one level deep, so eurorack/ arrives with stmlib/ empty.  Named
+      # explicitly rather than switching to `submodules: recursive`, which
+      # would pull the emsdk the comment above exists to avoid.  stmlib is
+      # the only nested submodule the build references; eurorack's four
+      # others (avrlib, avrlibx, and the two bootloaders) stay uncheckedout.
+      - name: Check out eurorack/stmlib
+        run: git -C eurorack submodule update --init --depth 1 stmlib
 
       - name: Install the cross toolchain and QEMU
         run: |
