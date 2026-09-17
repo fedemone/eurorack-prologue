@@ -590,8 +590,11 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 |---|-------|-------------|
 | 0 | Naive | Simple formant synthesis — vowel-like tones, smooth |
 | 1 | SAM | Software Automatic Mouth — classic 8-bit speech, robotic |
-| 2 | LPC | Linear Predictive Coding — natural-sounding speech fragments |
-| 3 | Blend | Crossfade between all three models |
+| 2 | LPC | Linear Predictive Coding — scans LPC phoneme space (vowels, plus a consonant on each trigger) |
+| 3 | Blend | Crossfade across all three, and the only setting that reaches the word banks (Harmonics ≥ 43) |
+
+Models 0–2 pin Harmonics to that model, so the Harmonics knob does
+nothing in them. Use **Blend** for anything involving words.
 
 **Parameters (24):**
 
@@ -600,11 +603,11 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
 | 1 | Phoneme | Vowel / phoneme selection; word selection in the LPC word region (0-100%) |
 | 2 | Timbre | Vocal register / formant shift (0-100%) |
-| 3 | Harmonics | Model blend and LPC word-bank selection (0-100%) |
-| 4 | Morph | Morph within current model (0-100%) |
-| 5 | Speed | LPC word playback speed (50=normal) and Staccato burst rate |
+| 3 | Harmonics | Model blend below 43%, LPC word bank above it (0-100%) |
+| 4 | Morph | Fine offset on the phoneme position (0-100%, centre 50). Inactive in the word region |
+| 5 | Speed | LPC word tempo — 50 = recorded tempo, 0 = 4× slower, 100 = 4× faster. Also the Staccato burst rate |
 | 6 | Prosody | Pitch-contour replay amount for LPC words (0-100%) |
-| 7 | Decay | Envelope decay AND release time, 5ms-5s (0-100%) |
+| 7 | Decay | Envelope decay AND release time, 5ms-5s (0-100%). In the word region only the release applies — see below |
 | 8 | Mix | Main/auxiliary output crossfade (0-100%) |
 | 9 | Model | Synthesis model (0-3, see table above) |
 | 10 | Gate Mode | Trigger / Sustain / Continuous / Staccato |
@@ -633,6 +636,23 @@ how the envelope is driven:
 | 2 | Continuous | Drone: always on. In the LPC word region the Phoneme knob scrubs through the word bank as an evolving vocal drone |
 | 3 | Staccato | Free-running bursts of gates (1.5-13.5 Hz, rate set by the Speed knob) — each burst retriggers the engine, the envelope and the current word/syllable |
 
+Staccato and the LPC words share the Speed knob, and share it in the same
+direction: turning Speed up shortens the burst and the word together. The
+burst wins at every setting — at Speed 100 a burst is 74 ms against a
+112 ms "kyrie", at Speed 0 it is 667 ms against a 1.8 s one — so in the
+word region Staccato always stutters the *opening* of the phrase rather
+than chanting it whole. That is a good rhythmic effect and a poor way to
+hear a sentence; use Trigger or Sustain for the sentence.
+
+**In the word region the word is the envelope.** Each LPC phrase carries
+its own energy contour and is encoded ending on a silent frame, so it
+shapes and finishes itself; the ADSR contributes only the attack and the
+release, and Decay/Sustain stop shaping the note. Trigger mode also stops
+honouring note-off there, because a drumlogue pad's gate is a few tens of
+milliseconds against a phrase of half a second or more — the phrase always
+runs to completion. Hold a key in **Sustain** mode if you want to be able
+to cut a phrase short; the release time is still the Decay knob.
+
 **The 6 vocal styles (Style):**
 
 | # | Style | Character |
@@ -649,6 +669,11 @@ For Religious organum, raise Voices: 2 voices = octaves, 3 = adds the
 fifth, 4 = adds a sub-octave drone. Alien does the same with inharmonic
 intervals.
 
+Style and Gender shift formants only — neither changes the tempo of an
+LPC word. Every style can reach every word bank, Robot included: its
+SAM default applies while Harmonics is still in the Naive/SAM half, and
+gives way once the knob asks for LPC.
+
 **The 6 key modes (Key Mode):**
 
 | # | Mode | Behavior |
@@ -661,25 +686,43 @@ intervals.
 | 5 | KeySyl D | As C but transposed assignment |
 
 Key modes 2-5 follow the key both on fresh triggers and on legato /
-Base-Note changes while a note is sounding.
+Base-Note changes while a note is sounding. All six apply in phoneme
+space; with an LPC word bank loaded the Phoneme knob goes back to
+selecting the word, in every key mode.
 
-**LPC word banks (Italian / liturgical):** in Blend mode, Harmonics above
-~38% selects one of 5 word banks and the Phoneme knob selects the word;
-each trigger sings it. The banks are Madama Butterfly fragments and
-liturgical phrases, synthesized as LPC10 bitstreams by
-`tools/generate_lpc_words.py`:
+**LPC word banks (Italian / liturgical):** in **Blend** mode, Harmonics at
+**43% or above** selects one of 5 word banks, and the Phoneme knob selects
+the word within it; each trigger sings it. The banks are Madama Butterfly
+fragments and liturgical phrases, synthesized as LPC10 bitstreams by
+`tools/generate_lpc_words.py`.
 
-| Bank | Words |
-|------|-------|
-| 1 | "un bel dì", "bello" |
-| 2 | "giunto il tempo", "così" |
-| 3 | "fan", "tutto" |
-| 4 | "kyrie", "eleison", "kyrie eleison" |
-| 5 | "oṃ", "maṇi", "padme", "hūṃ", "oṃ maṇi padme hūṃ" |
+The bank boundaries are not evenly guessable, so here they are exactly —
+the Harmonics column is what the knob has to read, and each word's length
+is what it plays for at Speed=50:
+
+| Harmonics | Bank | Words (Phoneme knob, low → high) |
+|-----------|------|----------------------------------|
+| 0–42 | *(none)* | phoneme space: Naive / SAM / LPC vowels, no words |
+| **43**–54 | Puccini I | "un bel dì" (0.95 s) · "bello" (0.58 s) |
+| **55**–66 | Puccini II | "giunto il tempo" (1.15 s) · "così" (0.58 s) |
+| **67**–78 | Puccini III | "fan" (0.50 s) · "tutto" (0.53 s) |
+| **79**–90 | Kyrie | "kyrie" (0.45 s) · "eleison" (0.73 s) · "kyrie eleison" (1.20 s) |
+| **91**–100 | Mantra | "oṃ" · "maṇi" · "padme" · "hūṃ" (~0.5 s each) · "oṃ maṇi padme hūṃ" (2.10 s) |
+
+The Phoneme knob splits evenly across the words in the bank, so the long
+phrases — the ones most people are after — live at the **top** of the knob:
+above 67% for "kyrie eleison", above 81% for the full mantra.
 
 Speed changes the word tempo, Prosody replays each phrase's pitch
 contour (rising "così", falling mantra endings), and Gender/Timbre
-shift the singer's formants.
+shift the singer's formants without touching the tempo.
+
+Word selection belongs to the Phoneme knob alone. Everything else that
+shapes the phoneme control — Key Mode, the vowel-warping styles (Alien,
+Religious), the Morph knob's ±half offset and the Gliss glide — operates
+in *phoneme* space, and steps aside once a bank is loaded. Each of them
+could otherwise pin or displace the word address far enough to put a
+bank's longest phrase out of reach no matter where Phoneme was set.
 
 **The assignable LFO:** LFO Dest offers 15 destinations — Pitch, Phoneme,
 Timbre, Harmonics, Morph, Speed, Prosody, Decay, Mix, Detune, Spread,
@@ -694,17 +737,21 @@ Model=Blend to modulate Harmonics.
 **Glissando (Gliss):** smooths the passage between phonemes (and pitch)
 with a glide time from instant (0%) to about half a second (100%). In the
 Syllable/KeySyl modes it also stretches the consonant→vowel transition.
+It does not affect which word a trigger selects — that reads the knob
+itself, not the glide.
 
 **Sound design tips:**
 - Sweep Phoneme slowly for vowel animation ("aah" to "eee" to "ooh")
 - Model 1 (SAM) at low Phoneme values produces classic robot voice
+- Speed is centred: 50 is the tempo each phrase was written at, 0 stretches it 4× longer, 100 compresses it 4× shorter
 - Voices=4 with Detune=30-50 and Spread=80 creates a wide stereo choir
 - Gender shifts the formant spectrum — low values = bass voice, high = soprano
 - Style=Robot + Key Mode=KeyVow A turns a melody line into robotic vowel speech
 - Key Mode=KeySyl C + Gliss=40 gives chant-like syllabic singing across the keyboard
 - Style=Religious + Voices=4 + Gate=Sustain + long Attack/Decay = gregorian choir pad
-- Blend + Harmonics=75 + Gate=Staccato + Speed=30 chants "kyrie eleison" in rhythm
-- Gate=Continuous + Blend + Harmonics>40: slowly turn Phoneme to scrub through an opera phrase as a drone
+- Blend + Harmonics=85 + Phoneme=90 sings the whole "kyrie eleison"; drop Speed to 30 to draw it out
+- Blend + Harmonics=85 + Gate=Staccato stutters the opening of the phrase in rhythm — see the note under Gate Mode about why you never hear the whole word there
+- Gate=Continuous + Blend + Harmonics≥43: slowly turn Phoneme to scrub through an opera phrase as a drone
 - LFO Sine → Gender at low rate adds a slow male/female morph to any patch
 
 Base Note
@@ -821,6 +868,13 @@ make test-all
 # element past a lookup table, which test-arm cannot see -- the stray
 # read lands in the next table and returns a plausible number.
 make test-asan
+
+# Mussola: does the phrase you dialled in actually come out, and at the
+# length it was encoded at?  Links the real SpeechEngine and the real word
+# banks and times all fourteen words against the durations
+# tools/generate_lpc_words.py wrote them at.  A callback test cannot see any
+# of this -- the question is what the engine does with the parameters
+make test-mussola-words
 
 # Clouds-specific suites (also part of test-all)
 make test-clouds-synth          # real engine behind OSC_*: pitch across the
