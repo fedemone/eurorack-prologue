@@ -15,6 +15,7 @@ eurorack_*
 test_drumlogue_callbacks
 test_drumlogue_callbacks_rings
 test_drumlogue_callbacks_mussola
+test_mussola_words
 test_clouds_sample_playback
 test_sound_production
 bench_render
