@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola test-mussola-words bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -113,6 +113,25 @@ test-mussola:
 	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \
 	    -o test_drumlogue_callbacks_mussola -lm
 	./test_drumlogue_callbacks_mussola
+
+# Mussola word playback: links the REAL Plaits SpeechEngine and the real LPC
+# word banks, and times the phrases that come out against the lengths
+# tools/generate_lpc_words.py encoded them at (40 frames per second, so every
+# word has an exact duration).  This is the target that catches a phrase
+# being truncated, run at the wrong tempo, or replaced by the wrong word --
+# none of which a callback test can see, because the whole question is what
+# the engine does with the parameters, not whether the callback fired.
+# -Ieurorack-opt must precede -Ieurorack, as it does in the unit builds:
+# Mussola's six word banks need eurorack-opt's copy of
+# lpc_speech_synth_words.h, not the submodule's five.
+# Usage: make test-mussola-words
+test-mussola-words:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -Ieurorack-opt -Ieurorack \
+	    -DMUSSOLA_VOCAL -DOSC_NATIVE_BLOCK_SIZE=24 -DBLOCKSIZE=24 \
+	    test_mussola_words.cc mussola.cc $(COMMON_TEST_SRC) \
+	    $(shell cat osc_mussola.sources) \
+	    -o test_mussola_words -lm
+	./test_mussola_words
 
 # CloudsFX delfx test: links the REAL Clouds engine through the delfx wrapper
 # and verifies FX-bus audio input reaches the engine (dry + wet paths).
@@ -702,7 +721,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-mussola-words test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

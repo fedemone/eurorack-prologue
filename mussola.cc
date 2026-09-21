@@ -12,9 +12,12 @@
  *          Italian/liturgical LPC word banks (mussola_words.cc).
  *
  * Three synthesis sub-models blended via Harmonics parameter:
- *   0.0-0.33: NaiveSpeechSynth (formant filters, warm choir pads)
- *   0.33-0.67: SAMSpeechSynth (retro robotic vocalization)
- *   0.67-1.0: LPCSpeechSynth (LPC10 codec, word banks)
+ *   0.00-0.17: NaiveSpeechSynth (formant filters, warm choir pads)
+ *   0.17-0.33: SAMSpeechSynth (retro robotic vocalization)
+ *   0.33-0.41: LPCSpeechSynth scanning phoneme space
+ *   0.41-1.00: LPCSpeechSynth replaying the six word banks, one per
+ *              ~10% of the knob (see word_bank_for()); Phoneme picks
+ *              the word within the bank
  *
  * Parameters:
  *   id 0:  Base Note  (0-127 MIDI)
@@ -22,7 +25,8 @@
  *   id 2:  Timbre     (shiftshape knob, 0-100% -> vocal register/formant)
  *   id 3:  Harmonics  (0-100% -> model blend Naive/SAM/LPC)
  *   id 4:  Morph      (0-100% -> additional phoneme modulation)
- *   id 5:  Speed      (0-100% -> LPC word playback speed / staccato rate)
+ *   id 5:  Speed      (0-100% -> LPC word tempo, 50 = recorded tempo,
+ *                      0 = 4x slower, 100 = 4x faster; also staccato rate)
  *   id 6:  Prosody    (0-100% -> prosody replay amount for LPC words)
  *   id 7:  Decay      (0-100% -> envelope decay AND release time)
  *   id 8:  Mix        (0-100% -> main/aux output crossfade)
@@ -54,6 +58,11 @@
 
 #include "plaits/dsp/engine/engine.h"
 #include "plaits/dsp/engine/speech_engine.h"
+/* For LPC_SPEECH_SYNTH_NUM_WORD_BANKS: speech_engine.h does not pull this
+ * in, and word_bank_for() below has to agree with the engine about how many
+ * banks there are.  eurorack-opt's copy shadows the submodule's and is the
+ * one that says six -- see eurorack-opt/README.md. */
+#include "plaits/dsp/speech/lpc_speech_synth_words.h"
 
 #include <cstring>
 #include <cmath>
@@ -119,7 +128,22 @@ static float amp_ = 0.0f;
 
 /* Custom param storage */
 static float prosody_ = 0.0f;
-static float speed_ = 1.0f;
+/*
+ * Speed, in the two units it is needed in.
+ *
+ * speed_ is what SpeechEngine::set_speed() takes, and that is a bipolar
+ * -1..+1 control centred on 0 = normal: the LPC controller computes
+ * time_stretch = 2^(-speed * 24 / 12), so 0 plays a word at its recorded
+ * tempo, +1 is four times faster and -1 is four times slower. (In Plaits
+ * it is an attenuverter -- see eurorack/plaits/ui.cc, which binds it with
+ * scale 2.0 and offset -1.0.) The knob maps 0..100 onto that, so 50 really
+ * is normal tempo and both halves of the range are usable.
+ *
+ * speed_norm_ keeps the plain 0..1 reading of the same knob, because the
+ * Staccato burst rate wants a unipolar control and must not go negative.
+ */
+static float speed_ = 0.0f;        /* -1..+1, 0 = recorded tempo */
+static float speed_norm_ = 0.5f;   /* 0..1, the same knob undisplaced */
 static float decay_norm_ = 0.3f;   /* 0..1, Decay knob */
 static float attack_norm_ = 0.0f;  /* 0..1, Attack knob */
 static float sustain_ = 1.0f;      /* 0..1, Sustain level */
@@ -146,6 +170,11 @@ static float lfo_phase_ = 0.0f;
 /* --- Envelope (Phase 4: ADSR, release = decay time) --- */
 enum EnvStage { ENV_IDLE = 0, ENV_ATTACK, ENV_DECAY, ENV_RELEASE };
 static uint8_t env_stage_ = ENV_IDLE;
+
+/* Was a word bank replaying its own energy contour last block? Latched,
+ * because the engines report it (already_enveloped) only once the block
+ * has been rendered, and the gate logic runs before that. */
+static bool word_enveloped_ = false;
 
 /* Staccato gate generator */
 static float burst_phase_ = 0.0f;
@@ -180,6 +209,17 @@ static float ap_y_[2][2] = {{0, 0}, {0, 0}};
  */
 static float voice_harmonics_[kMaxVoices] = {0.0f, 0.0f, 0.0f, 0.0f};
 static uint32_t block_counter_ = 0;
+
+/*
+ * Blocks to wait before the render watchdog may reinitialize a voice
+ * again. Reinitializing drops the loaded word bank, so the next block
+ * re-decodes the whole bitstream inside the render callback -- the very
+ * cost the staggering above exists to keep out of a single block. A voice
+ * producing garbage every block would otherwise pay it every block. The
+ * bad block is always dropped; only the repair is rate-limited.
+ */
+static const uint16_t kWatchdogCooldownBlocks = 64;  /* ~32 ms at 24/48k */
+static uint16_t watchdog_cooldown_[kMaxVoices] = {0, 0, 0, 0};
 
 /*
  * Per-style settings. Gender offset shifts the formant spectrum
@@ -285,7 +325,6 @@ alignas(16) static uint8_t engine_buffers_[kMaxVoices][kEngineBufferSize];
 /* Stereo output buffers filled by OSC_CYCLE, read by adapter */
 static float s_stereo_left_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
 static float s_stereo_right_[plaits::kMaxBlockSize] __attribute__((aligned(16)));
-static uint32_t s_stereo_frames_ = 0;
 
 /*
  * Per-voice detune offsets (in units of detune_semitones).
@@ -333,6 +372,75 @@ static void reset_engine(uint16_t v) {
   engines_[v].set_speed(speed_);
 }
 
+/*
+ * Which word bank `harmonics` selects, or -1 for the phoneme region.
+ *
+ * A mirror of what SpeechEngine::Render does with the same value:
+ *
+ *   group = harmonics * 6
+ *   group <= 2            -> naive/SAM/LPC-phoneme crossfade, no bank
+ *   else  word_bank = HysteresisQuantizer((group - 2) * 0.275,
+ *                                         NUM_WORD_BANKS + 1) - 1
+ *
+ * carried here -- hysteresis state and all, and left untouched below
+ * group 2 exactly as the engine leaves it -- because the unit has to know
+ * which of the two things `morph` currently means before it computes it.
+ * The engine gives no way to ask.
+ *
+ * Fed the shared harmonics value, while the voices get theirs staggered one
+ * block apart (see voice_harmonics_). So for up to three blocks after the
+ * knob crosses a boundary, a voice can still be on the other side of it from
+ * what this says -- 1.5 ms, and only within the quantizer's own ±3%
+ * hysteresis band. Tracking it per voice would mean four quantizer states
+ * chasing four staggered inputs to decide one shared address.
+ */
+static int word_bank_quantized_ = 0;
+
+/* The engine's num_steps, so the knob's bank boundaries follow the bank
+ * count instead of being written out at one particular value of it. */
+static const int kWordBankSteps = LPC_SPEECH_SYNTH_NUM_WORD_BANKS + 1;
+
+/* Building without eurorack-opt/ ahead of eurorack/ on the include path
+ * takes upstream's 5 and mussola_words.cc stops matching its own array
+ * declaration.  That is already a compile error there; this one says why. */
+static_assert(LPC_SPEECH_SYNTH_NUM_WORD_BANKS == 6,
+              "Mussola's banks are generated for 6; put eurorack-opt/ "
+              "before eurorack/ on the include path");
+
+static int word_bank_for(float harmonics) {
+  const float group = harmonics * 6.0f;
+  if (group <= 2.0f) {
+    return -1;  /* engine does not call the quantizer here; nor do we */
+  }
+  /* HysteresisQuantizer::Process(value, kWordBankSteps, hysteresis = 0.25) */
+  float value = (group - 2.0f) * 0.275f * (float)(kWordBankSteps - 1);
+  value += (value > (float)word_bank_quantized_) ? -0.25f : 0.25f;
+  int q = (int)(value + 0.5f);
+  if (q < 0) q = 0;
+  if (q > kWordBankSteps - 1) q = kWordBankSteps - 1;
+  word_bank_quantized_ = q;
+  return q - 1;
+}
+
+/*
+ * The semitone term the LPC controller folds into its time stretch on
+ * account of the formant shift:
+ *
+ *   time_stretch = 2^((-speed * 24 + F(formant_shift)) / 12)
+ *
+ * It models a shorter vocal tract speaking faster, and it is worth up to
+ * ±18 semitones — a 0.35x..2.8x swing in word tempo driven by Gender and
+ * by the Style gender offset, neither of which is presented as a tempo
+ * control. Added back into `speed` per voice it cancels, leaving Speed
+ * the only thing that sets tempo and the formant shift itself
+ * (rate_ratio, a separate term) exactly as it was.
+ */
+static inline float formant_stretch_semitones(float formant_shift) {
+  if (formant_shift < 0.4f) return (formant_shift - 0.4f) * -45.0f;
+  if (formant_shift > 0.6f) return (formant_shift - 0.6f) * -45.0f;
+  return 0.0f;
+}
+
 /* True if the block contains NaN, inf, or runaway samples (|x| > 8).
  * Bit-level test: all of those have (bits & 0x7FFFFFFF) > 0x41000000
  * (8.0f). Works under -ffast-math, where isnan()/isfinite() may be
@@ -366,6 +474,14 @@ static void reset_engine_state(void)
   parameters_.morph = 0.5f;
   parameters_.harmonics = 0.0f;
   parameters_.accent = 0.5f;
+
+  for (uint16_t v = 0; v < kMaxVoices; ++v) {
+    voice_harmonics_[v] = 0.0f;
+    watchdog_cooldown_[v] = 0;
+  }
+  block_counter_ = 0;
+  word_bank_quantized_ = 0;
+  word_enveloped_ = false;
 
   smooth_valid_ = false;
   syllable_time_ = 1.0f;
@@ -437,7 +553,8 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   #define LFO_MOD(dest) ((lfo_dest_ == (dest)) ? lfo : 0.0f)
 
   /* Effective (LFO-modulated) parameter values for this block */
-  const float speed_eff   = clipminmaxf(0.0f, speed_ + 2.0f * LFO_MOD(k_lfo_dest_speed), 2.0f);
+  const float speed_eff   = clipminmaxf(-1.0f, speed_ + 2.0f * LFO_MOD(k_lfo_dest_speed), 1.0f);
+  const float speed_norm_eff = clip01f(speed_norm_ + LFO_MOD(k_lfo_dest_speed));
   const float prosody_eff = clip01f(prosody_ + LFO_MOD(k_lfo_dest_prosody));
   const float mix_eff     = clip01f(mix_ + LFO_MOD(k_lfo_dest_mix));
   const float detune_eff  = clip01f(detune_ + LFO_MOD(k_lfo_dest_detune));
@@ -483,7 +600,9 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     if (gate_mode_ == 2) {          /* Continuous: always on */
       effective_gate = true;
     } else if (gate_mode_ == 3) {   /* Staccato: free-running gate bursts */
-      const float burst_rate = 1.5f + speed_eff * 6.0f;  /* 1.5..13.5 Hz */
+      /* Unipolar reading of the Speed knob: speed_eff is centred on 0 and
+       * would put the low half of the knob at a negative burst rate. */
+      const float burst_rate = 1.5f + speed_norm_eff * 12.0f;  /* 1.5..13.5 Hz */
       burst_phase_ += burst_rate * block_dt;
       if (burst_phase_ >= 1.0f) burst_phase_ -= (float)(int)burst_phase_;
       effective_gate = burst_phase_ < 0.6f;
@@ -496,7 +615,15 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     } else {
       parameters_.trigger = plaits::TRIGGER_LOW;
       if (!effective_gate && previous_gate_) {
-        env_stage_ = ENV_RELEASE;
+        /* Trigger mode is a one-shot, and in the word region the shot is
+         * the whole phrase: a drumlogue pad's gate is a few tens of ms
+         * against a word of half a second or more, so honouring its
+         * note-off would cut every phrase short. The word ends itself
+         * (see the envelope below). Sustain and Staccato do release --
+         * a held key and a burst gate both mean what they say. */
+        if (!(word_enveloped_ && gate_mode_ == 0)) {
+          env_stage_ = ENV_RELEASE;
+        }
       }
     }
     if (gate_mode_ == 2) {
@@ -542,13 +669,70 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     }
   }
 
+  /* ---- Harmonics: model blend, and which region `morph` addresses ----
+   * Decided before the phoneme target, because it is what says whether
+   * `morph` is a word address or a position in phoneme space. */
+  if (model_select_ < 3) {
+    /* Force: 0=Naive(0.0), 1=SAM(0.166), 2=LPC(0.35).
+     * SAM sits at group 0.996 (just below 1.0): the engine then renders
+     * Naive+SAM with the blend at ~100% SAM - audibly pure SAM, but it
+     * avoids the much more expensive LPC controller, whose internal
+     * clock rate scales with formant shift (Gender). At the previous
+     * 0.17 (group 1.02), Gender=100% with 4 voices tripled the LPC call
+     * rate and overran the render deadline on hardware.
+     * LPC sits at group 2.1, in the narrow band above the Naive/SAM
+     * crossfade but below the first word bank, which is the engine's
+     * pure-LPC *phoneme* mode. The previous 0.5 (group 3.0) quantized
+     * to word bank 0, so Model=LPC always sang "un bel di"/"bello" and
+     * could reach nothing else; 0.35 clears the bank-0 threshold in
+     * both hysteresis directions. */
+    static const float model_harmonics[] = {0.0f, 0.166f, 0.35f};
+    parameters_.harmonics = model_harmonics[model_select_];
+  } else {
+    /* Blend mode: Param 1 (id3) controls harmonics, scaled 0-100 -> 0.0-1.0.
+     * The LFO can only reach Harmonics in Blend mode: in forced-model
+     * mode the value is pinned to keep the engine on its cheap path. */
+    float h = clip01f(p_values_[k_user_osc_param_id1] * 0.01f
+                      + LFO_MOD(k_lfo_dest_harmonics));
+    /* Robot style with Model=Blend defaults to the SAM (robotic) model --
+     * but only while the knob is still in the Naive/SAM half. Pinning it
+     * unconditionally put the word banks out of reach in this style, so
+     * once the knob asks for LPC the knob wins. */
+    if (style.quantize_pitch && h * 6.0f <= 2.0f) h = 0.166f;
+    parameters_.harmonics = h;
+  }
+
+  /* Which word bank the engine will pick, if any (-1 = phoneme space). */
+  const int word_bank = word_bank_for(parameters_.harmonics);
+
   /* Morph fine modulation from the Morph parameter (id4) */
   const float morph_mod = p_values_[k_user_osc_param_id2] * 0.01f - 0.5f
       + LFO_MOD(k_lfo_dest_morph);
 
-  /* ---- Phoneme source selection (Key Mode) ---- */
+  /*
+   * The word address: the Phoneme knob and nothing else.
+   *
+   * Morph is deliberately absent. It is a fine modulation of position in
+   * phoneme space, and it enters as morph_mod = knob/100 - 0.5 -- a plus or
+   * minus half offset, which over a word address is not fine at all but half
+   * a bank. Left in, Morph anywhere below ~40 put a bank's last and longest
+   * phrase out of reach however far the Phoneme knob was turned. Same
+   * reasoning as the key modes and warping styles below.
+   */
+  const float word_address = clip01f(shape_eff + shape_lfo_);
+
+  /* ---- Phoneme source selection (Key Mode) ----
+   * Key modes and the vowel-warping styles all remap `morph` inside
+   * *phoneme* space, where the value means a vowel. With a word bank
+   * loaded the same value means "which word", so those remappings are
+   * skipped: they pinned the address to a vowel constant (KeyVow), to a
+   * syllable's consonant (KeySyl), or squeezed it into the chant range
+   * (Religious, which then could not reach a bank's last phrase at all),
+   * and the Phoneme knob stopped selecting anything. */
   float morph_target;
-  switch (key_mode_) {
+  if (word_bank >= 0) {
+    morph_target = word_address;
+  } else switch (key_mode_) {
     default:
     case 0: /* Normal: Phoneme knob + LFO + Morph */
       morph_target = clip01f(shape_eff + shape_lfo_ + morph_mod);
@@ -586,13 +770,13 @@ void OSC_CYCLE(const user_osc_param_t *const params,
 
   /* Alien: snap the phoneme target to unusual off-vowel positions.
    * The glissando smoothing below turns the snaps into slides. */
-  if (style.warp_phonemes) {
+  if (style.warp_phonemes && word_bank < 0) {
     uint16_t widx = (uint16_t)(morph_target * 6.999f);
     morph_target = kAlienMorph[widx];
   }
 
   /* Religious: compress into the open-vowel chant range (a/o/e) */
-  if (style.chant_vowels) {
+  if (style.chant_vowels && word_bank < 0) {
     morph_target = 0.12f + morph_target * 0.62f;
   }
 
@@ -637,32 +821,20 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   }
 
   parameters_.note = note_final;
-  parameters_.morph = clip01f(morph_z_);
+  /*
+   * The glided value is what the engine wants while it is *scanning*
+   * phoneme space, where `morph` is read every block and the glide is the
+   * audible slide between vowels. A word bank reads `morph` once, on the
+   * rising edge, to pick the word -- and there the glide is a liability:
+   * it hands the trigger a value still on its way from the knob's previous
+   * position, so the note sings the previous word. Any Gliss above ~13%
+   * was enough to make the Phoneme knob select the wrong phrase. On a
+   * trigger block, address the target directly; the glide carries on for
+   * the blocks after it.
+   */
+  parameters_.morph = clip01f(triggered ? morph_target : morph_z_);
   parameters_.timbre = clip01f(shiftshape_ + style_timbre_mod
                                + LFO_MOD(k_lfo_dest_timbre)); /* Timbre → vocal register/formant */
-
-  /* Harmonics controls model blend (0-1)
-   * Model select overrides: force harmonics into the sub-range for that model */
-  if (model_select_ < 3) {
-    /* Force: 0=Naive(0.0), 1=SAM(0.166), 2=LPC(0.5).
-     * SAM sits at group 0.996 (just below 1.0): the engine then renders
-     * Naive+SAM with the blend at ~100% SAM - audibly pure SAM, but it
-     * avoids the much more expensive LPC controller, whose internal
-     * clock rate scales with formant shift (Gender). At the previous
-     * 0.17 (group 1.02), Gender=100% with 4 voices tripled the LPC call
-     * rate and overran the render deadline on hardware. */
-    static const float model_harmonics[] = {0.0f, 0.166f, 0.5f};
-    parameters_.harmonics = model_harmonics[model_select_];
-  } else if (style.quantize_pitch) {
-    /* Robot style with Model=Blend: default to the SAM (robotic) model */
-    parameters_.harmonics = 0.166f;
-  } else {
-    /* Blend mode: Param 1 (id3) controls harmonics, scaled 0-100 -> 0.0-1.0.
-     * The LFO can only reach Harmonics in Blend mode: in forced-model
-     * mode the value is pinned to keep the engine on its cheap path. */
-    parameters_.harmonics = clip01f(p_values_[k_user_osc_param_id1] * 0.01f
-                                    + LFO_MOD(k_lfo_dest_harmonics));
-  }
 
   /* Stagger harmonics across voices: at most one voice picks up a new
    * value per block, so word-bank decodes never pile up in one block. */
@@ -693,9 +865,10 @@ void OSC_CYCLE(const user_osc_param_t *const params,
     float pan = 0.5f + (kVoicePan[vi][v] - 0.5f) * spread_eff;
     gain_l[v] = sqrtf(1.0f - pan) * voice_gain;
     gain_r[v] = sqrtf(pan) * voice_gain;
-    /* Set engine params once (invariant across frames) */
+    /* Set engine params once (invariant across frames).  set_speed is per
+     * voice and lives in the render loop below, because its formant
+     * compensation needs that voice's timbre. */
     engines_[v].set_prosody_amount(prosody_eff);
-    engines_[v].set_speed(speed_eff);
   }
 
   for (uint16_t v = 0; v < num_voices_; ++v) {
@@ -712,6 +885,14 @@ void OSC_CYCLE(const user_osc_param_t *const params,
      * the style's gender/formant character */
     vp.timbre = clip01f(vp.timbre + (gender_eff + style.gender_offset) * 0.5f);
 
+    /* Keep word tempo on the Speed knob alone: cancel the formant-driven
+     * term the controller would otherwise add (see
+     * formant_stretch_semitones). Not clipped back to the knob's -1..+1 --
+     * the sum inside the controller is what has to stay in range, and it
+     * lands back on -speed_eff * 24 semitones by construction. */
+    engines_[v].set_speed(speed_eff +
+                          formant_stretch_semitones(vp.timbre) * (1.0f / 24.0f));
+
     /* Render this voice */
     float vout[plaits::kMaxBlockSize], vaux[plaits::kMaxBlockSize];
     bool venveloped = false;
@@ -723,9 +904,13 @@ void OSC_CYCLE(const user_osc_param_t *const params,
      * reinitialize the engine - it recovers on the next block instead
      * of going silent forever. */
     if (block_invalid(vout, nframes) || block_invalid(vaux, nframes)) {
-      reset_engine(v);
+      if (watchdog_cooldown_[v] == 0) {
+        reset_engine(v);
+        watchdog_cooldown_[v] = kWatchdogCooldownBlocks;
+      }
       continue;
     }
+    if (watchdog_cooldown_[v]) --watchdog_cooldown_[v];
 
     /* Mix out/aux per voice, accumulate into L/R */
     const float gl = gain_l[v], gr = gain_r[v];
@@ -773,17 +958,31 @@ void OSC_CYCLE(const user_osc_param_t *const params,
   }
 
   /* ---- ADSR envelope + output gain ----
-   * Applied unconditionally: the LPC word replay envelopes its own
-   * energy contour (any_enveloped), but its controller holds the last
-   * frame forever after the word ends, so without the ADSR a note-off
-   * in the word region would never end the note. */
-  (void)any_enveloped;
+   *
+   * In the word region the LPC replay carries its own energy contour
+   * (any_enveloped), and every word in mussola_words.cc is generated
+   * ending on a zero-energy frame -- which is exactly the frame the
+   * controller latches and repeats once the word is done. So the word
+   * both shapes and ends itself, and the ADSR's job there shrinks to
+   * attack and release: it holds at full level in between instead of
+   * running Decay/Sustain over the top. It used to run them, on the
+   * belief that the held last frame was audible and only the envelope
+   * could stop the note; with these banks it is silence, and all the
+   * envelope did was truncate. At the factory Decay of 30 (a ~40 ms
+   * time constant) "kyrie eleison" -- 1.2 s of speech -- was audible
+   * for 190 ms.
+   *
+   * Everywhere else (phoneme space, and the word region running free in
+   * Continuous, which scrubs rather than replays) nothing supplies an
+   * envelope, so the full ADSR applies as before. */
+  word_enveloped_ = any_enveloped;
   {
     const float out_gain = 0.8f;
     /* Decay target: Trigger mode is a one-shot AD (falls to zero even
      * while the gate is held); the other modes decay to the Sustain
      * level. Release always uses the Decay time. */
-    const float decay_target = (gate_mode_ == 0) ? 0.0f : sustain_eff;
+    const float decay_target = any_enveloped ? 1.0f
+                             : (gate_mode_ == 0) ? 0.0f : sustain_eff;
     for (uint32_t i = 0; i < nframes; ++i) {
       switch (env_stage_) {
         case ENV_ATTACK:
@@ -812,8 +1011,6 @@ void OSC_CYCLE(const user_osc_param_t *const params,
       right[i] *= g;
     }
   }
-
-  s_stereo_frames_ = nframes;
 
   #undef LFO_MOD
 
@@ -862,8 +1059,9 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       shiftshape_ = param_val_to_f32(value);
       break;
 
-    case k_mussola_param_speed: /* Speed: 0-100 -> 0.0-2.0 (50 = 1.0 normal) */
-      speed_ = value * 0.02f;
+    case k_mussola_param_speed: /* Speed: 0-100 -> -1.0..+1.0, 50 = normal */
+      speed_ = (value - 50) * 0.02f;
+      speed_norm_ = value * 0.01f;
       break;
 
     case k_mussola_param_prosody: /* Prosody: 0-100 -> 0.0-1.0 */
@@ -886,11 +1084,17 @@ void OSC_PARAM(uint16_t index, uint16_t value)
       gate_mode_ = (value > 3) ? 3 : value;
       break;
 
-    case k_mussola_param_voices: /* Voices: 1-4 */
-      num_voices_ = value;
-      if (num_voices_ < 1) num_voices_ = 1;
-      if (num_voices_ > kMaxVoices) num_voices_ = kMaxVoices;
+    case k_mussola_param_voices: { /* Voices: 1-4 */
+      /* Clamped before the store, not after: the render callback reads this
+       * on the audio thread and indexes kVoiceDetune/kVoicePan with
+       * num_voices_ - 1, so it must never observe 0 or a value past the
+       * tables, not even between two statements here. */
+      uint16_t n = value;
+      if (n < 1) n = 1;
+      if (n > kMaxVoices) n = kMaxVoices;
+      num_voices_ = n;
       break;
+    }
 
     case k_mussola_param_detune: /* Detune: 0-100 -> 0.0-1.0 */
       detune_ = value * 0.01f;

@@ -104,6 +104,7 @@
  *    id 3:  Harmonics   (0-100%)     -> k_user_osc_param_id1
  *    id 4:  Morph       (0-100%)     -> k_user_osc_param_id2
  *    id 5:  Speed       (0-100%)     -> custom OSC_PARAM index 8
+ *                                      (50 = the recorded word tempo)
  *    id 6:  Prosody     (0-100%)     -> custom OSC_PARAM index 9
  *    id 7:  Decay       (0-100%)     -> custom OSC_PARAM index 10
  *    id 8:  Mix         (0-100%)     -> custom OSC_PARAM index 11
@@ -463,13 +464,18 @@ const __unit_header unit_header_t unit_header = {
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Phoneme"}},
         /* id 2: Timbre (vocal register / formant shift) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Timbre"}},
-        /* id 3: Harmonics (model blend: Naive/SAM/LPC) */
+        /* id 3: Harmonics (model blend, and the word-bank selector:
+         * 0-40 Naive/SAM/LPC phoneme space, then one of the six LPC
+         * word banks per step at 41 / 52 / 62 / 72 / 82 / 92) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
 
         // Page 2
-        /* id 4: Morph (morph within current model) */
+        /* id 4: Morph (fine offset on the phoneme position, centre 50;
+         * no effect in the word region, where the address is a word) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Morph"}},
-        /* id 5: Speed (LPC playback speed, 50=normal) */
+        /* id 5: Speed (LPC word tempo: 50 = the tempo the word was
+         * recorded at, 0 = four times slower, 100 = four times faster.
+         * Also sets the Staccato burst rate, 1.5-13.5 Hz.) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Speed"}},
         /* id 6: Prosody (prosody replay amount) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Prosody"}},
