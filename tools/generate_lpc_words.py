@@ -2,9 +2,11 @@
 """Generate mussola_words.cc: custom LPC10 word banks for Mussola.
 
 Replaces the Plaits TI-ROM word banks with Italian opera fragments
-(Madama Butterfly: "un bel di'", "bello", "giunto il tempo", "cosi'",
-"fan", "tutto") and liturgical phrases ("kyrie eleison",
-"om mani padme hum").
+(Madama Butterfly: "un bel", "di'", "bello", "giunto", "il tempo",
+"cosi'", "fan", "tutto", "pronto", "dolce", "notte", "quante", "stelle")
+and liturgical phrases ("kyrie eleison", "om mani padme hum").
+
+Six banks, against upstream Plaits' five -- see NUM_WORD_BANKS below.
 
 Pipeline:
   formant targets -> all-pole filter A(z) -> reflection coefficients
@@ -253,20 +255,30 @@ def seg(ph, n, en=1.0, st=0.0):
 
 PHRASES = {
     # --- Madama Butterfly fragments ---
-    'un bel di': [
+    # "un bel di" and "giunto il tempo" are held as their separate words
+    # rather than as one utterance each: a bank's words are what the Phoneme
+    # knob selects between, so splitting them is what makes the halves
+    # playable on their own (and they still concatenate, by triggering one
+    # after the other). Every phrase gets its own trailing silence frame
+    # from phrase_to_frames, so each half ends cleanly.
+    'un bel': [
         seg('u', 4, 0.9, 0.0), seg('n', 3, 0.5, 0.0),
         seg('_', 1), seg('b', 1, 0.3), seg('e', 6, 1.0, 0.0),
         seg('l', 3, 0.6, 0.0),
-        seg('_', 1), seg('d', 1, 0.3), seg('T', 1, 0.5),
+    ],
+    'di': [
+        seg('d', 1, 0.3), seg('T', 1, 0.5),
         seg('i', 12, 1.0, (2.0, 4.0)), seg('i', 4, 0.7, (4.0, 3.0)),
     ],
     'bello': [
         seg('b', 1, 0.3), seg('e', 8, 1.0, (0.0, 1.0)),
         seg('l', 4, 0.6, 1.0), seg('o', 9, 1.0, (0.0, -1.0)),
     ],
-    'giunto il tempo': [
+    'giunto': [
         seg('S', 2, 0.8), seg('u', 6, 1.0, 0.0), seg('n', 3, 0.5),
         seg('_', 1), seg('T', 1, 0.5), seg('o', 5, 0.9, 0.0),
+    ],
+    'il tempo': [
         seg('i', 3, 0.7, 0.0), seg('l', 3, 0.5),
         seg('_', 1), seg('T', 1, 0.6), seg('e', 6, 1.0, (1.0, 0.0)),
         seg('m', 3, 0.5), seg('_', 1), seg('P', 1, 0.5),
@@ -283,6 +295,34 @@ PHRASES = {
     'tutto': [
         seg('T', 1, 0.7), seg('u', 7, 1.0, 0.0),
         seg('_', 2), seg('T', 1, 0.7), seg('o', 9, 1.0, (0.0, -1.0)),
+    ],
+    'pronto': [
+        seg('P', 1, 0.6), seg('r', 2, 0.5), seg('o', 7, 1.0, (0.0, 1.0)),
+        seg('n', 3, 0.5), seg('_', 1), seg('T', 1, 0.6),
+        seg('o', 7, 0.9, (1.0, -1.0)),
+    ],
+    # --- "Dolce notte! Quante stelle!" (Act I love duet) ---
+    # The line rises through "quante stelle", so the contours climb across
+    # the four words and only fall on the last.
+    'dolce': [
+        seg('d', 1, 0.3), seg('o', 7, 1.0, (0.0, 1.0)), seg('l', 3, 0.6, 1.0),
+        seg('_', 1), seg('T', 1, 0.5), seg('S', 2, 0.5),
+        seg('e', 7, 1.0, (1.0, -1.0)),
+    ],
+    'notte': [
+        seg('n', 3, 0.5), seg('o', 7, 1.0, 0.0),
+        seg('_', 2), seg('T', 1, 0.6),          # geminate: closure + burst
+        seg('e', 7, 1.0, (0.0, -2.0)),
+    ],
+    'quante': [
+        seg('K', 1, 0.7), seg('u', 2, 0.7, 0.0),   # the /w/ of "qu"
+        seg('a', 7, 1.0, (0.0, 1.0)),
+        seg('n', 3, 0.5), seg('_', 1), seg('T', 1, 0.6),
+        seg('e', 6, 1.0, (1.0, 0.0)),
+    ],
+    'stelle': [
+        seg('s', 3, 0.5), seg('T', 1, 0.6), seg('e', 8, 1.0, (0.0, 2.0)),
+        seg('l', 4, 0.6, 2.0), seg('e', 7, 1.0, (2.0, 0.0)),
     ],
     # --- Kyrie ---
     'kyrie': [
@@ -320,14 +360,21 @@ PHRASES['om mani padme hum'] = (PHRASES['om'] + [seg('_', 2)] +
                                 PHRASES['padme'] + [seg('_', 2)] +
                                 PHRASES['hum'])
 
-# Bank layout: Harmonics selects the bank, Phoneme/Morph selects the word.
+# Bank layout: Harmonics selects the bank, Phoneme selects the word within
+# it. The count must match LPC_SPEECH_SYNTH_NUM_WORD_BANKS, which the build
+# takes from eurorack-opt's shadowing copy of lpc_speech_synth_words.h --
+# upstream Plaits ships five and this is six.
+NUM_WORD_BANKS = 6
+
 BANKS = [
-    ('Puccini I',  ['un bel di', 'bello']),
-    ('Puccini II', ['giunto il tempo', 'cosi']),
-    ('Puccini III', ['fan', 'tutto']),
-    ('Kyrie',      ['kyrie', 'eleison', 'kyrie eleison']),
-    ('Mantra',     ['om', 'mani', 'padme', 'hum', 'om mani padme hum']),
+    ('Puccini I',   ['un bel', 'di', 'bello']),
+    ('Puccini II',  ['giunto', 'il tempo', 'cosi']),
+    ('Puccini III', ['fan', 'tutto', 'pronto']),
+    ('Puccini IV',  ['dolce', 'notte', 'quante', 'stelle']),
+    ('Kyrie',       ['kyrie', 'eleison', 'kyrie eleison']),
+    ('Mantra',      ['om', 'mani', 'padme', 'hum', 'om mani padme hum']),
 ]
+assert len(BANKS) == NUM_WORD_BANKS, len(BANKS)
 
 
 # ---------------------------------------------------------------------------

@@ -122,28 +122,39 @@ enum { KEY_NORMAL = 0, KEY_SYLLABLE, KEY_VOW_A, KEY_VOW_B, KEY_SYL_C,
        KEY_SYL_D, KEY_NUM };
 
 /*
- * Harmonics values that land in each word bank. Bank boundaries are at
- * 43 / 55 / 67 / 79 / 91 -- see word_bank_for() in mussola.cc, which mirrors
- * the engine's quantizer; these are the midpoints.
+ * Harmonics values that land in each word bank. With six banks the
+ * boundaries are at 41 / 52 / 62 / 72 / 82 / 92 -- see word_bank_for() in
+ * mussola.cc, which mirrors the engine's quantizer and takes its step count
+ * from LPC_SPEECH_SYNTH_NUM_WORD_BANKS. These are the midpoints.
  */
-static const int kBankHarmonics[5] = { 49, 61, 73, 85, 96 };
-static const int kWordsPerBank[5] = { 2, 2, 2, 3, 5 };
+#define NUM_BANKS 6
+static const int kBankHarmonics[NUM_BANKS] = { 46, 56, 66, 76, 86, 96 };
+static const int kWordsPerBank[NUM_BANKS]  = {  3,  3,  3,  4,  3,  5 };
+
+/* Bank indices, so a test says which bank it means rather than a number. */
+enum { BANK_PUCCINI_I = 0, BANK_PUCCINI_II, BANK_PUCCINI_III,
+       BANK_PUCCINI_IV, BANK_KYRIE, BANK_MANTRA };
 
 /*
- * Every word in the five banks, with the length generate_lpc_words.py
+ * Every word in the six banks, with the length generate_lpc_words.py
  * encoded it at: frames x 25 ms, since the banks are written at 40 fps.
  * Decoding mussola_words.cc reproduces these exactly.
  */
 struct Word { int bank; int index; int encoded_ms; const char *text; };
 static const Word kWords[] = {
-  { 0, 0,  950, "un bel di" },        { 0, 1,  575, "bello" },
-  { 1, 0, 1150, "giunto il tempo" },  { 1, 1,  575, "cosi" },
-  { 2, 0,  500, "fan" },              { 2, 1,  525, "tutto" },
-  { 3, 0,  450, "kyrie" },            { 3, 1,  725, "eleison" },
-  { 3, 2, 1200, "kyrie eleison" },
-  { 4, 0,  475, "om" },               { 4, 1,  525, "mani" },
-  { 4, 2,  500, "padme" },            { 4, 3,  525, "hum" },
-  { 4, 4, 2100, "om mani padme hum" },
+  { 0, 0,  475, "un bel" },     { 0, 1,  475, "di" },
+  { 0, 2,  575, "bello" },
+  { 1, 0,  475, "giunto" },     { 1, 1,  700, "il tempo" },
+  { 1, 2,  575, "cosi" },
+  { 2, 0,  500, "fan" },        { 2, 1,  525, "tutto" },
+  { 2, 2,  575, "pronto" },
+  { 3, 0,  575, "dolce" },      { 3, 1,  525, "notte" },
+  { 3, 2,  550, "quante" },     { 3, 3,  600, "stelle" },
+  { 4, 0,  450, "kyrie" },      { 4, 1,  725, "eleison" },
+  { 4, 2, 1200, "kyrie eleison" },
+  { 5, 0,  475, "om" },         { 5, 1,  525, "mani" },
+  { 5, 2,  500, "padme" },      { 5, 3,  525, "hum" },
+  { 5, 4, 2100, "om mani padme hum" },
 };
 static const int kNumWords = (int)(sizeof(kWords) / sizeof(kWords[0]));
 
@@ -154,8 +165,10 @@ static const int kNumWords = (int)(sizeof(kWords) / sizeof(kWords[0]));
  * belongs to the data rather than to the unit: each word is generated with a
  * zero-energy terminator frame, and the phone before it is usually a nasal or
  * fricative already decaying through the measurement floor. Across all
- * fourteen words the ratio sits between 89.5% and 93.9%, tightly enough to
- * state once here instead of carrying a fat tolerance into every assertion.
+ * twenty-one words the ratio sits between 89.5% and 93.9% -- the same band
+ * the original fourteen spanned, and the seven Puccini words added since
+ * landed inside it -- tightly enough to state once here instead of carrying
+ * a fat tolerance into every assertion.
  * A truncation bug is not a few percent -- the envelope one this file was
  * written for left 16% of "kyrie eleison".
  */
@@ -264,7 +277,7 @@ static int play_word(void) {
 
 WTEST(speed_centre_plays_at_the_recorded_tempo) {
   boot();
-  word_patch(kBankHarmonics[4], 100);        /* "om mani padme hum", 2100 ms */
+  word_patch(kBankHarmonics[BANK_MANTRA], 100);        /* "om mani padme hum", 2100 ms */
   ASSERT_MS_NEAR(audible_ms(2100), play_word(), audible_tol_ms(2100),
                  "mantra at Speed=50");
   unit_teardown();
@@ -272,7 +285,7 @@ WTEST(speed_centre_plays_at_the_recorded_tempo) {
 
 WTEST(speed_below_centre_slows_the_phrase_down) {
   boot();
-  word_patch(kBankHarmonics[3], 100);        /* "kyrie eleison", 1200 ms */
+  word_patch(kBankHarmonics[BANK_KYRIE], 100);        /* "kyrie eleison", 1200 ms */
   set(P_SPEED, 25);                          /* half speed */
   ASSERT_MS_NEAR(audible_ms(2400), word_end_ms(6000, 100, 5900),
                  audible_tol_ms(2400), "kyrie at Speed=25");
@@ -281,7 +294,7 @@ WTEST(speed_below_centre_slows_the_phrase_down) {
 
 WTEST(speed_floor_is_four_times_slower_not_normal) {
   boot();
-  word_patch(kBankHarmonics[3], 100);
+  word_patch(kBankHarmonics[BANK_KYRIE], 100);
   set(P_SPEED, 0);
   ASSERT_MS_NEAR(audible_ms(4800), word_end_ms(9000, 100, 8900),
                  audible_tol_ms(4800), "kyrie at Speed=0");
@@ -290,7 +303,7 @@ WTEST(speed_floor_is_four_times_slower_not_normal) {
 
 WTEST(speed_ceiling_is_four_times_faster) {
   boot();
-  word_patch(kBankHarmonics[3], 100);
+  word_patch(kBankHarmonics[BANK_KYRIE], 100);
   set(P_SPEED, 100);
   ASSERT_MS_NEAR(audible_ms(300), word_end_ms(3000, 100, 2900),
                  audible_tol_ms(300), "kyrie at Speed=100");
@@ -299,11 +312,11 @@ WTEST(speed_ceiling_is_four_times_faster) {
 
 WTEST(speed_knob_is_symmetric_about_its_centre) {
   int slow, fast, centre;
-  boot(); word_patch(kBankHarmonics[4], 100); set(P_SPEED, 25);
+  boot(); word_patch(kBankHarmonics[BANK_MANTRA], 100); set(P_SPEED, 25);
   slow = word_end_ms(9000, 100, 8900); unit_teardown();
-  boot(); word_patch(kBankHarmonics[4], 100); set(P_SPEED, 50);
+  boot(); word_patch(kBankHarmonics[BANK_MANTRA], 100); set(P_SPEED, 50);
   centre = word_end_ms(9000, 100, 8900); unit_teardown();
-  boot(); word_patch(kBankHarmonics[4], 100); set(P_SPEED, 75);
+  boot(); word_patch(kBankHarmonics[BANK_MANTRA], 100); set(P_SPEED, 75);
   fast = word_end_ms(9000, 100, 8900); unit_teardown();
 
   /* 25 and 75 sit one octave of time-stretch either side of 50. */
@@ -320,7 +333,7 @@ WTEST(envelope_factory_defaults_play_a_whole_phrase) {
    * to leave 190 ms of a 1200 ms phrase. Only Harmonics is touched here --
    * everything else is what the unit loads with. */
   boot();
-  set(P_HARMONICS, kBankHarmonics[3]);
+  set(P_HARMONICS, kBankHarmonics[BANK_KYRIE]);
   set(P_PHONEME, 100);
   ASSERT_MS_NEAR(audible_ms(1200), word_end_ms(4000, 100, 400),
                  audible_tol_ms(1200), "kyrie eleison on the factory patch");
@@ -330,7 +343,7 @@ WTEST(envelope_factory_defaults_play_a_whole_phrase) {
 WTEST(envelope_trigger_mode_ignores_a_short_pad_gate) {
   /* A drumlogue pad's gate is far shorter than any phrase. */
   boot();
-  set(P_HARMONICS, kBankHarmonics[4]);
+  set(P_HARMONICS, kBankHarmonics[BANK_MANTRA]);
   set(P_PHONEME, 100);
   set(P_GATE_MODE, GATE_TRIGGER);
   ASSERT_MS_NEAR(audible_ms(2100), word_end_ms(5000, 100, 160),
@@ -341,7 +354,7 @@ WTEST(envelope_trigger_mode_ignores_a_short_pad_gate) {
 WTEST(envelope_sustain_mode_still_releases_on_note_off) {
   /* The word region must not make note-off a no-op where it is meaningful. */
   boot();
-  word_patch(kBankHarmonics[4], 100);
+  word_patch(kBankHarmonics[BANK_MANTRA], 100);
   set(P_DECAY, 0);                           /* 5 ms release */
   const int released = word_end_ms(5000, 100, 600);
   ASSERT_TRUE(released < 700);               /* stopped shortly after 500 ms */
@@ -351,7 +364,7 @@ WTEST(envelope_sustain_mode_still_releases_on_note_off) {
 WTEST(envelope_does_not_truncate_in_any_gate_mode) {
   for (int gate = GATE_TRIGGER; gate <= GATE_SUSTAIN; ++gate) {
     boot();
-    word_patch(kBankHarmonics[3], 100);
+    word_patch(kBankHarmonics[BANK_KYRIE], 100);
     set(P_GATE_MODE, gate);
     set(P_DECAY, kFactoryDefaults[P_DECAY]); /* the short factory decay */
     const int ms = word_end_ms(4000, 100, 3900);
@@ -371,7 +384,7 @@ WTEST(gliss_does_not_steal_the_word_from_the_trigger) {
    * so the note sang whichever word the knob had just left. */
   for (int gliss = 0; gliss <= 100; gliss += 25) {
     boot();
-    word_patch(kBankHarmonics[4], 0);
+    word_patch(kBankHarmonics[BANK_MANTRA], 0);
     set(P_GLISS, gliss);
     float out[64 * 2];
     for (int b = 0; b < 400; ++b) {          /* let the glide settle */
@@ -394,7 +407,7 @@ WTEST(key_modes_all_select_the_same_word) {
   int normal = 0;
   for (int km = KEY_NORMAL; km < KEY_NUM; ++km) {
     boot();
-    word_patch(kBankHarmonics[4], 100);
+    word_patch(kBankHarmonics[BANK_MANTRA], 100);
     set(P_KEY_MODE, km);
     const int ms = play_word();
     unit_teardown();
@@ -414,7 +427,7 @@ WTEST(morph_knob_does_not_move_word_selection) {
    * phrase out of reach wherever the Phoneme knob was. */
   for (int morph = 0; morph <= 100; morph += 25) {
     boot();
-    word_patch(kBankHarmonics[4], 100);
+    word_patch(kBankHarmonics[BANK_MANTRA], 100);
     set(P_MORPH, morph);
     const int ms = play_word();
     unit_teardown();
@@ -426,7 +439,7 @@ WTEST(morph_knob_does_not_move_word_selection) {
 WTEST(styles_all_reach_the_longest_phrase) {
   for (int st = STYLE_MALE; st < STYLE_NUM; ++st) {
     boot();
-    word_patch(kBankHarmonics[4], 100);
+    word_patch(kBankHarmonics[BANK_MANTRA], 100);
     set(P_STYLE, st);
     const int ms = play_word();
     unit_teardown();
@@ -456,7 +469,7 @@ WTEST(robot_style_still_defaults_to_sam_below_the_word_region) {
  * ======================================================================== */
 
 WTEST(every_word_in_every_bank_plays_at_its_encoded_length) {
-  /* All fourteen words, addressed the way the panel addresses them:
+  /* All twenty-one words, addressed the way the panel addresses them:
    * Harmonics picks the bank, Phoneme picks the word within it. */
   for (int w = 0; w < kNumWords; ++w) {
     const Word &word = kWords[w];
@@ -477,19 +490,19 @@ WTEST(every_word_in_every_bank_plays_at_its_encoded_length) {
   }
 }
 
-WTEST(harmonics_word_region_starts_at_43) {
+WTEST(harmonics_word_region_starts_at_41) {
   /* Below the threshold the engine scans phoneme space and drones; at it,
-   * a word plays and ends. 42 and 43 are the two sides of that step. */
-  boot(); word_patch(42, 100);
+   * a word plays and ends. 40 and 41 are the two sides of that step. */
+  boot(); word_patch(40, 100);
   const int below = word_end_ms(3000, 100, 2900);
   unit_teardown();
-  boot(); word_patch(43, 100);
+  boot(); word_patch(41, 100);
   const int at = word_end_ms(3000, 100, 2900);
   unit_teardown();
 
   ASSERT_TRUE(below > 2500);                 /* still droning */
   ASSERT_MS_NEAR(audible_ms(575), at, audible_tol_ms(575),
-                 "\"bello\" at Harmonics=43");
+                 "\"bello\" at Harmonics=41");
 }
 
 WTEST(model_lpc_scans_phonemes_instead_of_singing_bank_zero) {
@@ -513,7 +526,7 @@ WTEST(word_tempo_is_independent_of_gender) {
   int neutral = 0;
   for (int gender = 0; gender <= 100; gender += 25) {
     boot();
-    word_patch(kBankHarmonics[4], 100);
+    word_patch(kBankHarmonics[BANK_MANTRA], 100);
     set(P_GENDER, gender);
     const int ms = play_word();
     unit_teardown();
@@ -528,7 +541,7 @@ WTEST(word_tempo_is_independent_of_style) {
   int first = 0;
   for (int st = STYLE_MALE; st < STYLE_NUM; ++st) {
     boot();
-    word_patch(kBankHarmonics[4], 100);
+    word_patch(kBankHarmonics[BANK_MANTRA], 100);
     set(P_STYLE, st);
     const int ms = play_word();
     unit_teardown();
@@ -598,7 +611,7 @@ WTEST(staccato_rate_still_spans_1_5_to_13_5_hz) {
  * ======================================================================== */
 
 WTEST(word_playback_output_stays_finite) {
-  for (int bank = 0; bank < 5; ++bank) {
+  for (int bank = 0; bank < NUM_BANKS; ++bank) {
     boot();
     word_patch(kBankHarmonics[bank], 100);
     set(P_VOICES, 4);
@@ -649,7 +662,7 @@ int main(void) {
 
   printf("\nHarmonics and Model:\n");
   run_wtest_every_word_in_every_bank_plays_at_its_encoded_length();
-  run_wtest_harmonics_word_region_starts_at_43();
+  run_wtest_harmonics_word_region_starts_at_41();
   run_wtest_model_lpc_scans_phonemes_instead_of_singing_bank_zero();
 
   printf("\nTempo belongs to Speed:\n");

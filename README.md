@@ -591,7 +591,7 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 0 | Naive | Simple formant synthesis — vowel-like tones, smooth |
 | 1 | SAM | Software Automatic Mouth — classic 8-bit speech, robotic |
 | 2 | LPC | Linear Predictive Coding — scans LPC phoneme space (vowels, plus a consonant on each trigger) |
-| 3 | Blend | Crossfade across all three, and the only setting that reaches the word banks (Harmonics ≥ 43) |
+| 3 | Blend | Crossfade across all three, and the only setting that reaches the word banks (Harmonics ≥ 41) |
 
 Models 0–2 pin Harmonics to that model, so the Harmonics knob does
 nothing in them. Use **Blend** for anything involving words.
@@ -603,7 +603,7 @@ nothing in them. Use **Blend** for anything involving words.
 | 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
 | 1 | Phoneme | Vowel / phoneme selection; word selection in the LPC word region (0-100%) |
 | 2 | Timbre | Vocal register / formant shift (0-100%) |
-| 3 | Harmonics | Model blend below 43%, LPC word bank above it (0-100%) |
+| 3 | Harmonics | Model blend below 41%, LPC word bank above it (0-100%) |
 | 4 | Morph | Fine offset on the phoneme position (0-100%, centre 50). Inactive in the word region |
 | 5 | Speed | LPC word tempo — 50 = recorded tempo, 0 = 4× slower, 100 = 4× faster. Also the Staccato burst rate |
 | 6 | Prosody | Pitch-contour replay amount for LPC words (0-100%) |
@@ -691,7 +691,7 @@ space; with an LPC word bank loaded the Phoneme knob goes back to
 selecting the word, in every key mode.
 
 **LPC word banks (Italian / liturgical):** in **Blend** mode, Harmonics at
-**43% or above** selects one of 5 word banks, and the Phoneme knob selects
+**41% or above** selects one of 6 word banks, and the Phoneme knob selects
 the word within it; each trigger sings it. The banks are Madama Butterfly
 fragments and liturgical phrases, synthesized as LPC10 bitstreams by
 `tools/generate_lpc_words.py`.
@@ -702,12 +702,19 @@ is what it plays for at Speed=50:
 
 | Harmonics | Bank | Words (Phoneme knob, low → high) |
 |-----------|------|----------------------------------|
-| 0–42 | *(none)* | phoneme space: Naive / SAM / LPC vowels, no words |
-| **43**–54 | Puccini I | "un bel dì" (0.95 s) · "bello" (0.58 s) |
-| **55**–66 | Puccini II | "giunto il tempo" (1.15 s) · "così" (0.58 s) |
-| **67**–78 | Puccini III | "fan" (0.50 s) · "tutto" (0.53 s) |
-| **79**–90 | Kyrie | "kyrie" (0.45 s) · "eleison" (0.73 s) · "kyrie eleison" (1.20 s) |
-| **91**–100 | Mantra | "oṃ" · "maṇi" · "padme" · "hūṃ" (~0.5 s each) · "oṃ maṇi padme hūṃ" (2.10 s) |
+| 0–40 | *(none)* | phoneme space: Naive / SAM / LPC vowels, no words |
+| **41**–51 | Puccini I | "un bel" (0.48 s) · "dì" (0.48 s) · "bello" (0.58 s) |
+| **52**–61 | Puccini II | "giunto" (0.48 s) · "il tempo" (0.70 s) · "così" (0.58 s) |
+| **62**–71 | Puccini III | "fan" (0.50 s) · "tutto" (0.53 s) · "pronto" (0.58 s) |
+| **72**–81 | Puccini IV | "dolce" (0.58 s) · "notte" (0.53 s) · "quante" (0.55 s) · "stelle" (0.60 s) |
+| **82**–91 | Kyrie | "kyrie" (0.45 s) · "eleison" (0.73 s) · "kyrie eleison" (1.20 s) |
+| **92**–100 | Mantra | "oṃ" · "maṇi" · "padme" · "hūṃ" (~0.5 s each) · "oṃ maṇi padme hūṃ" (2.10 s) |
+
+The three Butterfly banks hold their words separately rather than as one
+utterance each — "un bel" and "dì" are two words of Puccini I, not one —
+so either half is playable on its own, and triggering them in turn puts
+the line back together at whatever pace you play it. Puccini IV is the
+Act I love duet, "Dolce notte! Quante stelle!".
 
 The Phoneme knob splits evenly across the words in the bank, so the long
 phrases — the ones most people are after — live at the **top** of the knob:
@@ -749,9 +756,11 @@ itself, not the glide.
 - Style=Robot + Key Mode=KeyVow A turns a melody line into robotic vowel speech
 - Key Mode=KeySyl C + Gliss=40 gives chant-like syllabic singing across the keyboard
 - Style=Religious + Voices=4 + Gate=Sustain + long Attack/Decay = gregorian choir pad
-- Blend + Harmonics=85 + Phoneme=90 sings the whole "kyrie eleison"; drop Speed to 30 to draw it out
-- Blend + Harmonics=85 + Gate=Staccato stutters the opening of the phrase in rhythm — see the note under Gate Mode about why you never hear the whole word there
-- Gate=Continuous + Blend + Harmonics≥43: slowly turn Phoneme to scrub through an opera phrase as a drone
+- Blend + Harmonics=86 + Phoneme=90 sings the whole "kyrie eleison"; drop Speed to 30 to draw it out
+- Blend + Harmonics=46, Phoneme sweeping 20→50→80, one trigger per step: "un bel · dì · bello" assembled a word at a time
+- Blend + Harmonics=76 + Phoneme=10/40/60/90 across four pads gives "Dolce notte! Quante stelle!" as a four-step phrase
+- Blend + Harmonics=86 + Gate=Staccato stutters the opening of the phrase in rhythm — see the note under Gate Mode about why you never hear the whole word there
+- Gate=Continuous + Blend + Harmonics≥41: slowly turn Phoneme to scrub through an opera phrase as a drone
 - LFO Sine → Gender at low rate adds a slow male/female morph to any patch
 
 Base Note
