@@ -465,8 +465,8 @@ const __unit_header unit_header_t unit_header = {
         /* id 2: Timbre (vocal register / formant shift) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Timbre"}},
         /* id 3: Harmonics (model blend, and the word-bank selector:
-         * 0-42 Naive/SAM/LPC phoneme space, then one of the five LPC
-         * word banks per step at 43 / 55 / 67 / 79 / 91) */
+         * 0-40 Naive/SAM/LPC phoneme space, then one of the six LPC
+         * word banks per step at 41 / 52 / 62 / 72 / 82 / 92) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
 
         // Page 2

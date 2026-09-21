@@ -14,9 +14,9 @@
  * Three synthesis sub-models blended via Harmonics parameter:
  *   0.00-0.17: NaiveSpeechSynth (formant filters, warm choir pads)
  *   0.17-0.33: SAMSpeechSynth (retro robotic vocalization)
- *   0.33-0.42: LPCSpeechSynth scanning phoneme space
- *   0.42-1.00: LPCSpeechSynth replaying the five word banks, one per
- *              ~12% of the knob (see word_bank_for()); Phoneme picks
+ *   0.33-0.41: LPCSpeechSynth scanning phoneme space
+ *   0.41-1.00: LPCSpeechSynth replaying the six word banks, one per
+ *              ~10% of the knob (see word_bank_for()); Phoneme picks
  *              the word within the bank
  *
  * Parameters:
@@ -58,6 +58,11 @@
 
 #include "plaits/dsp/engine/engine.h"
 #include "plaits/dsp/engine/speech_engine.h"
+/* For LPC_SPEECH_SYNTH_NUM_WORD_BANKS: speech_engine.h does not pull this
+ * in, and word_bank_for() below has to agree with the engine about how many
+ * banks there are.  eurorack-opt's copy shadows the submodule's and is the
+ * one that says six -- see eurorack-opt/README.md. */
+#include "plaits/dsp/speech/lpc_speech_synth_words.h"
 
 #include <cstring>
 #include <cmath>
@@ -374,7 +379,8 @@ static void reset_engine(uint16_t v) {
  *
  *   group = harmonics * 6
  *   group <= 2            -> naive/SAM/LPC-phoneme crossfade, no bank
- *   else  word_bank = HysteresisQuantizer((group - 2) * 0.275, 6) - 1
+ *   else  word_bank = HysteresisQuantizer((group - 2) * 0.275,
+ *                                         NUM_WORD_BANKS + 1) - 1
  *
  * carried here -- hysteresis state and all, and left untouched below
  * group 2 exactly as the engine leaves it -- because the unit has to know
@@ -390,17 +396,28 @@ static void reset_engine(uint16_t v) {
  */
 static int word_bank_quantized_ = 0;
 
+/* The engine's num_steps, so the knob's bank boundaries follow the bank
+ * count instead of being written out at one particular value of it. */
+static const int kWordBankSteps = LPC_SPEECH_SYNTH_NUM_WORD_BANKS + 1;
+
+/* Building without eurorack-opt/ ahead of eurorack/ on the include path
+ * takes upstream's 5 and mussola_words.cc stops matching its own array
+ * declaration.  That is already a compile error there; this one says why. */
+static_assert(LPC_SPEECH_SYNTH_NUM_WORD_BANKS == 6,
+              "Mussola's banks are generated for 6; put eurorack-opt/ "
+              "before eurorack/ on the include path");
+
 static int word_bank_for(float harmonics) {
   const float group = harmonics * 6.0f;
   if (group <= 2.0f) {
     return -1;  /* engine does not call the quantizer here; nor do we */
   }
-  /* HysteresisQuantizer::Process(value, num_steps = 6, hysteresis = 0.25) */
-  float value = (group - 2.0f) * 0.275f * 5.0f;  /* * (num_steps - 1) */
+  /* HysteresisQuantizer::Process(value, kWordBankSteps, hysteresis = 0.25) */
+  float value = (group - 2.0f) * 0.275f * (float)(kWordBankSteps - 1);
   value += (value > (float)word_bank_quantized_) ? -0.25f : 0.25f;
   int q = (int)(value + 0.5f);
   if (q < 0) q = 0;
-  if (q > 5) q = 5;
+  if (q > kWordBankSteps - 1) q = kWordBankSteps - 1;
   word_bank_quantized_ = q;
   return q - 1;
 }

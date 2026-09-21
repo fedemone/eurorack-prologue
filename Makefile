@@ -121,9 +121,12 @@ test-mussola:
 # being truncated, run at the wrong tempo, or replaced by the wrong word --
 # none of which a callback test can see, because the whole question is what
 # the engine does with the parameters, not whether the callback fired.
+# -Ieurorack-opt must precede -Ieurorack, as it does in the unit builds:
+# Mussola's six word banks need eurorack-opt's copy of
+# lpc_speech_synth_words.h, not the submodule's five.
 # Usage: make test-mussola-words
 test-mussola-words:
-	$(CXX) $(COMMON_TEST_FLAGS) -O2 -Ieurorack \
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 -Ieurorack-opt -Ieurorack \
 	    -DMUSSOLA_VOCAL -DOSC_NATIVE_BLOCK_SIZE=24 -DBLOCKSIZE=24 \
 	    test_mussola_words.cc mussola.cc $(COMMON_TEST_SRC) \
 	    $(shell cat osc_mussola.sources) \
