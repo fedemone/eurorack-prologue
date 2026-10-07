@@ -21,6 +21,15 @@ PROJROOT = ../..
 COMMON_INC_PATH = $(PROJROOT)/logue-sdk/platform/drumlogue/common
 COMMON_SRC_PATH = $(PROJROOT)/logue-sdk/platform/drumlogue/common
 
+# Optimisation level.  The SDK Makefile takes it from OPTIM and falls back to
+# -Os when it is unset, so every unit used to ship size-optimised.  On the
+# drumlogue the synth, both send effects, the master effect and the drum
+# engine share one audio thread, and at -Os a polyphonic Rings next to a
+# reverb and a master compressor was enough to make it crackle and stop.
+# -O3 runs roughly half the instructions per render for the same output --
+# see "CPU: build at -O3" in DRUMLOGUE_PORT.md for the per-unit figures.
+OPTIM = -O3
+
 ##############################################################################
 # Sources
 #

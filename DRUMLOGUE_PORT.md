@@ -348,6 +348,44 @@ make test-all      # All 347 tests
 make bench         # Render throughput benchmark
 ```
 
+### CPU: build at -O3
+
+The drumlogue runs the synth, both send effects, the master effect and its own
+drum engine on one audio thread. The SDK Makefile takes the optimisation level
+from `OPTIM` and falls back to `-Os` when it is unset, so every unit here used
+to ship size-optimised — and at `-Os`, Rings at polyphony 4 beside a reverb and
+a master compressor was enough to make the drumlogue crackle and then go
+silent. Every `config.mk` (and `generate_sdk_projects.sh`, which writes them)
+now sets `OPTIM = -O3`.
+
+Measured on the ARM builds under `qemu-arm`: instructions per 64-frame render,
+header defaults, a note every 125 ms; and how far the `-O3` output is from the
+`-Os` output over 3 s (the residue is float rounding taken in a different
+order under `-ffast-math`; "identical" is bit for bit).
+
+| Unit | `-Os` | `-O3` | saving | `-O3` vs `-Os` |
+|------|------:|------:|-------:|----------------|
+| rings | 43,400 | 12,400 | 71% | −77 dB |
+| rings, polyphony 4 | 48,100 | 21,400 | 55% | −52 dB worst model (sympathetic strings) |
+| clouds | 35,300 | 18,400 | 48% | −116 dB |
+| clouds_fx | 51,100 | 18,900 | 63% | −109 dB |
+| elements_full | 30,000 | 19,500 | 35% | −126 dB |
+| modal_strike | 15,900 | 9,200 | 42% | −123 dB |
+| modal_strike_16_nolimit | 12,900 | 6,700 | 48% | −124 dB |
+| modal_strike_24_nolimit | 15,700 | 8,800 | 44% | −123 dB |
+| mussola | 12,200 | 9,400 | 23% | −71 dB |
+| mo2_add | 31,300 | 4,600 | 85% | −140 dB |
+| mo2_fm | 15,800 | 3,600 | 77% | −155 dB |
+| mo2_grn | 19,200 | 9,900 | 48% | −120 dB |
+| mo2_string | 7,900 | 4,400 | 44% | −106 dB |
+| mo2_va | 13,700 | 12,000 | 12% | −161 dB |
+| mo2_wsh | 7,900 | 5,600 | 29% | identical |
+| mo2_wta … mo2_wtf | 12,000 | 3,600 | 70% | identical |
+
+The binaries grow by 4–45 KB (Rings 57 → 77 KB, Clouds 92 → 137 KB). The
+instruction count is a proxy — it does not see cache or memory stalls — but
+every unit runs fewer instructions for the same sound.
+
 ---
 
 ## Files

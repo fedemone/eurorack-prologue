@@ -128,7 +128,7 @@ allows.
 - Korg Nu:tekt NTS-1
 - **Korg drumlogue** (synth module support)
 
-See [releases](https://github.com/peterall/eurorack-prologue/releases) for latest binaries.
+See [releases](https://github.com/fedemone/eurorack-prologue/releases) for latest binaries.
 
 Oscillators
 ====
