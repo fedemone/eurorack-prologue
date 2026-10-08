@@ -234,15 +234,20 @@ void osc_adapter_set_tempo(uint32_t tempo) {
  * OSC_NATIVE_BLOCK_SIZE: the fixed number of Q31 samples produced by
  * one call to OSC_CYCLE, regardless of the `frames` parameter it receives.
  *
- *   Plaits oscillators (macro-oscillator2.cc):
- *     plaits::kMaxBlockSize = 24 mono samples
- *     -> set OSC_NATIVE_BLOCK_SIZE=24 in the .mk file
+ *   Plaits oscillators (macro-oscillator2.cc) and Rings:
+ *     plaits::kMaxBlockSize / rings::kMaxBlockSize = 64 mono samples
+ *     -> OSC_NATIVE_BLOCK_SIZE=64 and BLOCKSIZE=64 in config.mk
+ *     One block per 64-frame render, so every render costs the same; at 24
+ *     two renders in three paid for three blocks.  Both ports static_assert
+ *     that their block size equals OSC_NATIVE_BLOCK_SIZE.
  *
- *   Elements oscillator (modal-strike.cc):
+ *   Elements oscillator (modal-strike.cc), Clouds:
  *     2 * elements::kMaxBlockSize = 32 samples (2x FIR-upsampled mono)
- *     -> set OSC_NATIVE_BLOCK_SIZE=32 in the .mk file
+ *     -> OSC_NATIVE_BLOCK_SIZE=32
  *
- * If not defined, defaults to 24 (plaits).
+ *   Mussola: 24, bounded by the static_assert near the top of this file.
+ *
+ * If not defined, defaults to 24.
  * Note: OSC_NATIVE_BLOCK_SIZE, s_render_buf, s_render_rd, s_render_avail
  * are defined at the top of this file so osc_adapter_reset() can access them.
  */

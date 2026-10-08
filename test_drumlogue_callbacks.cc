@@ -1641,7 +1641,7 @@ TEST(render_q31_to_float_negative) {
  * Tests: Buffered rendering across block boundaries
  *
  * Use BLOCK (= OSC_NATIVE_BLOCK_SIZE) to compute expected block counts.
- * Plaits: BLOCK=24, Elements: BLOCK=32.
+ * Plaits and Rings: BLOCK=64, Elements and Clouds: BLOCK=32, Mussola: 24.
  * ======================================================================== */
 
 #define BLOCK OSC_NATIVE_BLOCK_SIZE

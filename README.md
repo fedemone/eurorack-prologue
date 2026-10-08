@@ -929,6 +929,9 @@ make test-clouds-stretch-clicks # whether a swept knob puts an edge in
                                 # held anywhere in its range
 make test-clouds-cola           # STFT overlap-add reconstruction at hop ratio
                                 # 4, 2 and 1 -- what backs CLOUDS_PVOC_HOP_RATIO
+make test-clouds-correlator     # Stretch's splice scorer: the NEON loop against
+                                # upstream's scalar one, every candidate's
+                                # score at every bit offset (ARM under QEMU)
 
 # All of the above run on every push -- see .github/workflows/ci.yml.
 # The ARM job runs the battery twice with the units in opposite orders,

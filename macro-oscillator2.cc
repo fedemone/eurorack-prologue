@@ -9,6 +9,23 @@
 #include "plaits/dsp/dsp.h"
 #include "plaits/dsp/engine/engine.h"
 
+#if defined(OSC_NATIVE_BLOCK_SIZE)
+/* Drumlogue build.  OSC_CYCLE hands the adapter plaits::kMaxBlockSize
+ * samples, into a buffer the adapter sized OSC_NATIVE_BLOCK_SIZE; the build
+ * sets both from one number, and this is what notices if they ever part. */
+static_assert(plaits::kMaxBlockSize == OSC_NATIVE_BLOCK_SIZE,
+              "BLOCKSIZE must equal OSC_NATIVE_BLOCK_SIZE");
+
+/* LFO2 steps once per OSC_CYCLE, so its rate in Hz is set by the block size
+ * as much as by the knob.  The drumlogue's range -- 0 to 3.3 Hz -- was set
+ * when it rendered 24-sample blocks; it now renders 64 (one block per
+ * render), and the step is scaled so that the range holds.  The prologue
+ * family keeps the rate it has always had. */
+static const float kLfo2BlockScale = (float)plaits::kMaxBlockSize / 24.0f;
+#else
+static const float kLfo2BlockScale = 1.0f;
+#endif
+
 uint16_t p_values[k_num_user_osc_param_id] = {0};
 float shape = 0, shiftshape = 0, shape_lfo = 0, lfo2 = 0, mix = 0;
 bool gate = false, previous_gate = false;
@@ -300,7 +317,7 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
    * rather than a fault -- in Rings, where the ramp reached an unclipped
    * destination (Note), the same code segfaulted on 9 runs in 30.
    * cosf() of a bounded phase cannot drift at any rate, including zero. */
-  { float freq = get_param_lfo2_frequency() / 600.f;
+  { float freq = get_param_lfo2_frequency() / 600.f * kLfo2BlockScale;
     float depth = get_param_lfo2_depth();
     if (freq <= 0.0f) {
       /* Rate 0 means no modulation, not modulation parked somewhere.  A

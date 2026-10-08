@@ -27,8 +27,9 @@
 // FORKED AND MODIFIED for the drumlogue port.
 //
 // Original: eurorack/rings/dsp/part.cc at 58b9125.
-// Only the two chord tables differ.  See eurorack-opt/README.md for what
-// changed and why, and for how to re-sync this file if the submodule moves.
+// The chord tables differ, and the sympathetic strings' glide is corrected
+// for the block size.  See eurorack-opt/README.md for what changed and why,
+// and for how to re-sync this file if the submodule moves.
 //
 // Change: three chords added to the end of each table, and the tables sized
 // with kNumChords instead of a literal 11.
@@ -78,15 +79,34 @@
 // would have put the arp a third of a semitone out against the strings it is
 // strumming.  It is float there now for the same reason.
 //
+// Change: the sympathetic strings' frequency glide keeps its time constant
+// when kMaxBlockSize is not upstream's 24.
+//
+// eurorack-opt/rings/dsp/dsp.h sets the block size to the drumlogue's 64 so
+// that every render is one block.  Upstream already scales what it times in
+// blocks -- the note filter and the strings' LFOs are initialised from
+// kSampleRate / kMaxBlockSize -- with one exception: the glide passed to
+// String::set_frequency() is a one-pole coefficient applied once per block, so
+// at 64 it would glide 2.67 times slower.  It is raised to the matching power
+// below.  Nowhere else in the file depends on the block size.
+//
 // -----------------------------------------------------------------------------
 //
 // Group of voices.
 
 #include "rings/dsp/part.h"
 
+#include <cmath>
+
 #include "stmlib/dsp/units.h"
 
 #include "rings/resources.h"
+
+// rings::Part is sized by kMaxBlockSize, so this file and rings-resonator.cc
+// have to see the same dsp.h.  See eurorack-opt/rings/dsp/dsp.h.
+#if !defined(RINGS_OPT_DSP_H_ACTIVE)
+#error "eurorack-opt must precede eurorack on the include path"
+#endif
 
 namespace rings {
 
@@ -500,6 +520,11 @@ void Part::RenderStringVoice(
       ? (structure - 0.24f) * 4.166f
       : (structure > 0.26f ? (structure - 0.26f) * 1.35135f : 0.0f);
   
+  // Every sympathetic string gets the same glide (it depends only on
+  // patch.brightness), so its block-size correction is computed once.
+  float glide_upstream = -1.0f;
+  float glide_corrected = 1.0f;
+
   for (int32_t string = 0; string < num_strings; ++string) {
     int32_t i = voice + string * polyphony_;
     String& s = string_[i];
@@ -527,6 +552,17 @@ void Part::RenderStringVoice(
       float amount = (0.5f - fabs(0.5f - patch.position)) * 0.9f;
       position = patch.position + lfo_value * amount;
       glide = SemitonesToRatio((brightness - 1.0f) * 36.0f);
+      // A one-pole coefficient applied once per block: what upstream's
+      // 24-sample block leaves unrelaxed, (1 - glide), is raised to the
+      // number of those blocks one of ours spans.  Folds away at 24.
+      if (kMaxBlockSize != 24) {
+        if (glide != glide_upstream) {
+          glide_upstream = glide;
+          glide_corrected =
+              1.0f - powf(1.0f - glide, float(kMaxBlockSize) / 24.0f);
+        }
+        glide = glide_corrected;
+      }
       input = sympathetic_resonator_input_;
     }
     

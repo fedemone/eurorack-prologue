@@ -27,6 +27,7 @@ commit **58b9125**.
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks**, including at POSITION 0 | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 | `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
+| `rings/dsp/dsp.h`, `rings/dsp/part.cc` | **`kMaxBlockSize` follows `OSC_NATIVE_BLOCK_SIZE`** (64 on the drumlogue); sympathetic glide corrected for it | Rings, every model |
 | `plaits/dsp/speech/lpc_speech_synth_words.h` | **`LPC_SPEECH_SYNTH_NUM_WORD_BANKS` 5 → 6** | Mussola's word banks |
 
 Why forked, and what changed
@@ -665,6 +666,36 @@ ninth than one chord did to a second recording of itself. Two bins a third of
 a semitone apart in the same recording share whatever overtones land there, so
 what is left between them is the fundamental. Margins are 60× to 11000×.
 
+### `rings/dsp/dsp.h`, `rings/dsp/part.cc` — one block per render
+
+Upstream fixes `kMaxBlockSize` at 24. The drumlogue asks for 64 frames per
+render, which at 24 is two or three blocks — three in two renders out of three
+— so the expensive renders did 72 samples of work in a 64-sample deadline and
+paid `Part::Process()`'s per-block overhead three times. The fork takes the
+block size from `OSC_NATIVE_BLOCK_SIZE` when the build defines it (64 in
+`drumlogue/rings/config.mk`), and keeps 24 when it does not.
+
+Upstream is written for any block size: `Part::Process()` takes the size, and
+the note filter and the sympathetic strings' LFOs are initialised from
+`kSampleRate / kMaxBlockSize`. The exception is the sympathetic strings'
+frequency glide, a one-pole coefficient applied once per block, which would
+glide 2.67 times slower at 64. `part.cc` raises what it leaves unrelaxed to
+the matching power, `1 - (1 - glide)^(kMaxBlockSize / 24)`, once per block
+since every sympathetic string shares it; at 24 the correction folds away.
+
+| Rings render, instructions (KORG GCC 6.5, QEMU) | worst before | after |
+|---|---:|---:|
+| header defaults (Model 4) | 102,911 | 86,112 |
+| Model 1, Polyphony 4 | 113,896 | 93,073 |
+| Model 5, Polyphony 4 | 118,721 | 99,269 |
+| render that applies a Polyphony change | 154,183 | 132,544 |
+
+Not bit-identical — control-rate work now happens every 64 samples — so it was
+checked statistically: per-note level and attack spectral centroid over 30
+notes, every model at Polyphony 1 and 4, agree within 1.3 standard errors, and
+the deterministic models (0, 3) within 0.3%. See "CPU: one block per render" in
+`DRUMLOGUE_PORT.md`.
+
 Build wiring — read this before touching it
 -------------------------------------------
 
@@ -693,8 +724,12 @@ So the rule is all-or-nothing, and it is enforced:
    `CLOUDS_OPT_ACTIVE`. `clouds-granular.cc` and `clouds-fx.cc` `#error` if the
    first is set without the second, so a half-configured build fails at compile
    time instead of at run time.
-4. Rings has no `#error` guard, and it turns out to need one more than the
-   note here used to admit. `part.cc` is the only file that reads the chord
+4. Rings' guard covers the include order: the forked `dsp.h` defines
+   `RINGS_OPT_DSP_H_ACTIVE`, the forked `part.cc` `#error`s without it, and
+   `rings-resonator.cc` `static_assert`s that `kMaxBlockSize` equals
+   `OSC_NATIVE_BLOCK_SIZE` — `sizeof(rings::Part)` depends on the first and
+   the adapter's buffer on the second. It does not cover the source list, and
+   that needs more care than the note here used to admit. `part.cc` is the only file that reads the chord
    table and it is the file that is forked, so a build that lists the
    submodule's `part.cc` alongside the forked `performance_state.h` compiles
    and links, then reads past the end of the chord table at run time.
@@ -765,7 +800,7 @@ git -C eurorack log --oneline 58b9125..HEAD -- \
     clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
     clouds/dsp/grain.h clouds/dsp/correlator.cc \
     clouds/dsp/pvoc/frame_transformation.cc stmlib/fft/shy_fft.h \
-    rings/dsp/part.cc rings/dsp/performance_state.h \
+    rings/dsp/part.cc rings/dsp/performance_state.h rings/dsp/dsp.h \
     plaits/dsp/speech/lpc_speech_synth_words.h
 ```
 

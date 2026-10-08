@@ -48,8 +48,11 @@ CXX = g++
 COMMON_TEST_FLAGS = -std=c++11 -Wall -Wextra -Idrumlogue -I.
 COMMON_TEST_SRC = drumlogue_osc_adapter.cc drumlogue_unit_wrapper.cc header.c
 # Host-side unit tests (no ARM toolchain required)
-# Usage: make test [BLOCK_SIZE=24]
-BLOCK_SIZE ?= 24
+# BLOCK_SIZE mirrors the drumlogue Plaits and Rings units, which render one
+# 64-sample block per 64-frame render; the adapter is meant to work at any
+# size, and `make test BLOCK_SIZE=24` still runs it at the old one.
+# Usage: make test [BLOCK_SIZE=64]
+BLOCK_SIZE ?= 64
 test:
 	$(CXX) $(COMMON_TEST_FLAGS) -DOSC_NATIVE_BLOCK_SIZE=$(BLOCK_SIZE) \
 	    test_drumlogue_callbacks.cc $(COMMON_TEST_SRC) \

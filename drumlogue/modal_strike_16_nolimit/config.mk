@@ -28,7 +28,12 @@ COMMON_SRC_PATH = $(PROJROOT)/logue-sdk/platform/drumlogue/common
 # reverb and a master compressor was enough to make it crackle and stop.
 # -O3 runs roughly half the instructions per render for the same output --
 # see "CPU: build at -O3" in DRUMLOGUE_PORT.md for the per-unit figures.
-OPTIM = -O3
+# -funroll-loops, for the Elements units only.  The modal resonator's filter
+# bank -- one SVF per mode, every sample -- is about 60% of these units'
+# render, and unrolling it takes 13-14% off the instructions per render with
+# bit-identical output, for 4 KB of code.  Elsewhere it buys 1-2% and costs up
+# to 38 KB (Clouds), so it is not set there.
+OPTIM = -O3 -funroll-loops
 
 ##############################################################################
 # Sources

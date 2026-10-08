@@ -415,6 +415,157 @@ next build and nothing says so. Two things now guard against that:
 After pulling a change to the flags, a clean build is still the safe habit:
 `./build_drumlogue.sh --clean` and then build.
 
+### CPU: one block per render
+
+What decides whether the drumlogue drops audio is the most expensive render,
+not the average one: each 64-frame render has to finish inside its 1.33 ms
+along with everything else on the audio thread. The Plaits units, Rings and
+Mussola used to render 24-sample blocks, and 64 is 2.67 of those, so the
+adapter rendered three blocks in two renders out of three and two in the
+third. The expensive renders did 72 samples of work against a 64-sample
+deadline and paid the engine's per-block overhead three times.
+
+The Plaits units and Rings now render one 64-sample block per render
+(`BLOCKSIZE` / `OSC_NATIVE_BLOCK_SIZE` 64 in `config.mk`). Every render then
+costs the same, and the most expensive one costs less:
+
+| Unit (header defaults unless noted) | worst render before | after | |
+|------|------:|------:|---:|
+| mo2_add | 26,636 | 19,453 | −27% |
+| mo2_string | 14,863 | 12,244 | −18% |
+| mo2_va | 25,523 | 21,282 | −17% |
+| mo2_fm, mo2_grn, mo2_wsh | 24,346 – 27,123 | 20,886 – 23,280 | −14% |
+| mo2_wta (… wtf) | 35,001 | 30,441 | −13% |
+| rings | 102,911 | 86,111 | −16% |
+| rings, Model 1, Polyphony 4 | 113,896 | 93,073 | −18% |
+| rings, Model 5, Polyphony 4 | 118,721 | 99,268 | −16% |
+| rings, Model 3 | 23,747 | 18,727 | −21% |
+| rings, the render that applies a Polyphony change (Model 4) | 154,183 | 132,544 | −14% |
+
+Mean cost falls by 2–18% as well, since the per-block overhead is paid 1 time
+per render instead of 2.67.
+
+Why this is a configuration change and not a rewrite:
+
+- **Plaits** takes any block size — `plaits::kMaxBlockSize` is `BLOCKSIZE`,
+  and this repository already ships the same engines at 16 on prologue and 64
+  on NTS-1. Output level matches at every engine. The String engine's plucks
+  differ one by one, because its excitation noise and its dispersion jitter
+  draw from one shared random generator block by block; over 30 plucks the
+  level distribution is the same (mean 0.020 / 0.028 at 24 / 64, standard
+  error 0.003–0.004, single plucks ranging 0.002–0.097 either way).
+- **Rings** fixes `kMaxBlockSize` at 24 upstream, so `eurorack-opt/rings/dsp/dsp.h`
+  forks it to follow `OSC_NATIVE_BLOCK_SIZE`. Upstream already initialises its
+  note filter and string LFOs from `kSampleRate / kMaxBlockSize`; the one
+  per-block smoother it does not scale, the sympathetic strings' frequency
+  glide, is corrected in `eurorack-opt/rings/dsp/part.cc`. Across all six
+  models at Polyphony 1 and 4, per-note level and attack spectral centroid
+  over 30 notes agree within 1.3 standard errors; Models 0 and 3, which have
+  no random excitation, match to within 0.3%.
+- **LFO2** advances once per block in both ports, so its step is scaled by
+  the block size: measured on the ARM binaries, a pitch LFO at Rate 30% runs at
+  the same 0.93 Hz before and after; uncorrected it would have dropped to
+  0.375 Hz. LFO1 is
+  advanced per render by the wrapper and never depended on the block size.
+- Both ports `static_assert` that their block size equals
+  `OSC_NATIVE_BLOCK_SIZE` — `OSC_CYCLE` writes one into a buffer of the other.
+
+What does change: parameter changes, note-ons and Rings' arpeggiator steps land
+on 64-sample (1.3 ms) boundaries instead of 24-sample (0.5 ms) ones. The
+arpeggiator still counts in samples, so its tempo is exact; only the jitter of
+a single step grows. Per-block parameter smoothers inside some Plaits engines
+(e.g. the wavetable engine's knob smoothing) run 2.67 times slower, as they
+already do on NTS-1 — tens of milliseconds at the slowest.
+
+Mussola stays at 24: it times its LFO, its round-robin harmonics update and its
+word-bank decode pacing in blocks, so moving it is a re-tuning job. Elements
+and Clouds already divide 64 exactly (32-sample blocks); moving Elements to 64
+bought 1% and changed its level, so it was left alone.
+
+### CPU: Elements' filter bank, unrolled
+
+The Elements units spend about 60% of every render in the modal resonator's
+filter bank — one state-variable filter per mode, per sample.
+`-funroll-loops` (their `config.mk` only) takes 14% off `elements_full` and
+11–13% off the `modal_strike` variants, with **bit-identical output**, for
+4 KB of code. On the other units it buys 1–2% and grows Clouds by 38 KB, so it
+is not set there.
+
+### CPU: Clouds' Stretch correlator on NEON
+
+At `-O3` the WSOLA correlator's scoring loop became the largest cost in
+Stretch and most of its tail. On ARM it now runs four words at a time with
+`VCNT`, bit-exact (`make test-clouds-correlator`): Stretch's worst render
+drops about 20% in both `clouds` and `clouds_fx` (497,060 → 394,551
+instructions at default Size), its p99 11–25% and its mean 8–13%. Details in
+[eurorack-opt/README.md](eurorack-opt/README.md).
+
+### How these were measured
+
+Every figure in the three sections above is **instructions per 64-frame
+render**, counted exactly by a QEMU TCG plugin around `unit_render()` — not
+timed — on units built with **KORG's own toolchain (GCC 6.5, glibc 2.24)**,
+the one `build_drumlogue.sh` uses, and run against its sysroot. Header
+defaults, a note every 125 ms. Counting rather than timing makes the tail
+deterministic: the same build gives the same worst render every run.
+
+It is still a proxy. QEMU prices every instruction alike, so it cannot see
+cache misses, the Cortex-A7's in-order pipeline stalls, or that a NEON
+q-register op occupies its 64-bit datapath for two beats. Directions are
+reliable; percentages are estimates until the hardware agrees.
+
+Note on the `-O3` table above: with this counter the `-Os` → `-O3` saving on
+the shipped compiler is smaller than listed — Rings 19% rather than 71%,
+mo2_add 52% rather than 85%, mo2_va 11% rather than 12% — while the number of
+*basic blocks* executed per render falls by 60%, 88% and 14%, much closer to
+the listed figures. Fewer, longer blocks with fewer taken branches do help an
+in-order core, so the real gain is probably between the two, but the -Os →
+-O3 change on its own is likely to have bought Rings less headroom than the
+table suggests.
+
+### What is still on the table
+
+Ranked by what they would buy, measured where they could be:
+
+1. **SIMD across modes in the modal filter banks.** Elements' resonator is
+   ~60% of `elements_full`, and Rings' Modal model is the same structure:
+   independent SVFs fed the same input, one per mode, which is the textbook
+   case for four modes per NEON register. Upstream stores the filters as an
+   array of objects, so this is a rewrite of the resonator's inner loop, with
+   a differential test against the scalar one like the FFT's. Likely the
+   largest single win left, and the only one here that QEMU cannot size —
+   NEON gains need the hardware.
+2. **SIMD across Rings' strings.** The sympathetic and string models run up to
+   eight `rings::String`s per sample (delay-line Hermite reads, damping filter,
+   dispersion all-pass): about 85% of a Rings render. Strings are independent
+   until they are summed, but each reads its delay line at its own fractional
+   position, so the loads stay scalar and only the arithmetic vectorises.
+   Smaller gain than (1) for more work.
+3. **Clouds Stretch's remaining burst.** Stretch's worst renders are still
+   6–10× its median: a window's search scores all its candidates across four
+   `Prepare()` calls, and packing the correlator's sign bits
+   (`ReadSignBits`) lands in the same blocks. The window hop leaves room to
+   spread the search over many more blocks; that needs the same
+   timing-and-guard analysis the existing two-block split got.
+4. **Clouds Granular's 1-2-1 pattern.** The 32 kHz engine needs 42.67 samples
+   per render, so renders alternate one and two 32-sample `Process()` calls and
+   p99 sits at about 2× the median. Two calls of 21–22 samples per render
+   would flatten it, if `GranularProcessor` is validated at those sizes (the
+   low-fidelity path halves them, so they must stay even).
+5. **Mussola at 64.** Same 3-3-2 pattern as Plaits had; needs its block-timed
+   features re-tuned first.
+6. **Not rendering silence.** Every engine runs at full cost whether or not it
+   is sounding. Detecting a decayed voice and skipping the engine until the
+   next note would cut the *average* load substantially, but not the worst
+   render, which is the one that drops audio — so it ranks last here.
+
+Compiler flags were tried too, with KORG's GCC 6.5: `-mcpu=cortex-a7` (which
+allows the hardware divider) changed no unit's instruction count by more than
+0.3%; `-O2` was worse almost everywhere (Plaits Additive +85%, Clouds Stretch
+p99 +140%). GCC 13 needs glibc 2.27 symbols from `libm` that KORG's 2.24
+sysroot does not have, so a unit built with Ubuntu's cross compiler (as
+`make test-arm` does) is not one to install.
+
 ---
 
 ## Files

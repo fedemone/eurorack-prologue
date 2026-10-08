@@ -47,6 +47,19 @@
 
 using namespace rings;
 
+#if defined(OSC_NATIVE_BLOCK_SIZE)
+/* OSC_CYCLE hands the adapter kMaxBlockSize samples, into a buffer the adapter
+ * sized OSC_NATIVE_BLOCK_SIZE.  eurorack-opt/rings/dsp/dsp.h makes the first
+ * follow the second; this is what notices if it ever stops doing so. */
+static_assert(kMaxBlockSize == OSC_NATIVE_BLOCK_SIZE,
+              "rings::kMaxBlockSize must equal OSC_NATIVE_BLOCK_SIZE");
+#endif
+
+/* LFO2 steps once per block, so its rate in Hz is set by the block size as
+ * much as by the knob.  Its range -- 0 to 3.3 Hz -- was set at upstream's
+ * 24-sample block; the step is scaled so that it holds at any other. */
+static const float kLfo2BlockScale = float(kMaxBlockSize) / 24.0f;
+
 /* --- Static allocations --- */
 
 static Part part_;
@@ -507,7 +520,8 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
    * substitution; the comment there tells the same story from their side. */
   { const float freq =
         clip01f(p_values[k_user_osc_param_id5] * 0.01f +
-                get_lfo_value(LfoTargetLfo2Frequency)) / 600.f;
+                get_lfo_value(LfoTargetLfo2Frequency)) / 600.f *
+        kLfo2BlockScale;
     const float depth =
         clip01f(p_values[k_user_osc_param_id6] * 0.01f +
                 get_lfo_value(LfoTargetLfo2Depth));

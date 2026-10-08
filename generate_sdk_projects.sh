@@ -35,9 +35,11 @@ fi
 #
 # Usage: create_project <dir_name> <project_name>
 #                       <osc_source> <engine_sources> <udefs> <block_size>
+#                       [extra_optim]
 #
 # engine_sources: space-separated list (without PROJROOT prefix)
 # udefs: compiler defines (e.g., "-DOSC_VA")
+# extra_optim: appended to OPTIM; only the Elements units use it
 ##############################################################################
 create_project() {
     local dir_name="$1"
@@ -46,8 +48,21 @@ create_project() {
     local engine_sources="$4" # space-separated engine .cc files
     local udefs="$5"
     local block_size="$6"
+    local extra_optim="${7:-}"
 
     local project_dir="${PROJECT_BASE}/${dir_name}"
+
+    local optim_line="OPTIM = -O3"
+    local optim_note=""
+    if [ -n "$extra_optim" ]; then
+        optim_line="OPTIM = -O3 ${extra_optim}"
+        optim_note="
+# -funroll-loops, for the Elements units only.  The modal resonator's filter
+# bank -- one SVF per mode, every sample -- is about 60% of these units'
+# render, and unrolling it takes 13-14% off the instructions per render with
+# bit-identical output, for 4 KB of code.  Elsewhere it buys 1-2% and costs up
+# to 38 KB (Clouds), so it is not set there."
+    fi
 
     echo "Creating project: ${dir_name} (${project_name})"
 
@@ -97,8 +112,8 @@ COMMON_SRC_PATH = \$(PROJROOT)/logue-sdk/platform/drumlogue/common
 # engine share one audio thread, and at -Os a polyphonic Rings next to a
 # reverb and a master compressor was enough to make it crackle and stop.
 # -O3 runs roughly half the instructions per render for the same output --
-# see "CPU: build at -O3" in DRUMLOGUE_PORT.md for the per-unit figures.
-OPTIM = -O3
+# see "CPU: build at -O3" in DRUMLOGUE_PORT.md for the per-unit figures.${optim_note}
+${optim_line}
 
 ##############################################################################
 # Sources
@@ -183,44 +198,55 @@ CONFIGEOF
 }
 
 ##############################################################################
-# Plaits-based oscillators (macro-oscillator2.cc, block size 24)
+# Plaits-based oscillators (macro-oscillator2.cc, block size 64)
+#
+# The block size is the number of samples OSC_CYCLE renders per call, and the
+# drumlogue asks for 64 frames per render.  At 24 the adapter needed three
+# blocks for two renders in three and two for the third, so the expensive
+# renders did 72 samples of work in a 64-sample deadline and paid the engine's
+# per-block overhead three times.  At 64 every render is one block: the most
+# expensive render costs 13-27% fewer instructions, and every render costs
+# the same.  The Plaits engines take any block size -- this repository already
+# ships them at 16 on prologue and 64 on NTS-1 -- and the port scales LFO2's
+# per-block step so its rate in Hz is unchanged.  See "CPU: one block per
+# render" in DRUMLOGUE_PORT.md.
 ##############################################################################
 
 # Virtual Analog
 create_project "mo2_va" "mo2_va" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/virtual_analog_engine.cc eurorack/stmlib/dsp/units.cc" \
-    "-DOSC_VA" 24
+    "-DOSC_VA" 64
 
 # Waveshaping
 create_project "mo2_wsh" "mo2_wsh" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/waveshaping_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-    "-DOSC_WSH" 24
+    "-DOSC_WSH" 64
 
 # FM
 create_project "mo2_fm" "mo2_fm" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/fm_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-    "-DOSC_FM" 24
+    "-DOSC_FM" 64
 
 # Grain
 create_project "mo2_grn" "mo2_grn" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/grain_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-    "-DOSC_GRN" 24
+    "-DOSC_GRN" 64
 
 # Additive
 create_project "mo2_add" "mo2_add" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/additive_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-    "-DOSC_ADD" 24
+    "-DOSC_ADD" 64
 
 # String
 create_project "mo2_string" "mo2_string" \
     "macro-oscillator2.cc" \
     "eurorack/plaits/dsp/engine/string_engine.cc eurorack/plaits/dsp/physical_modelling/string_voice.cc eurorack/plaits/dsp/physical_modelling/string.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc" \
-    "-DOSC_STRING" 24
+    "-DOSC_STRING" 64
 
 # Wavetable A-F
 for variant in a b c d e f; do
@@ -228,7 +254,7 @@ for variant in a b c d e f; do
     create_project "mo2_wt${variant}" "mo2_wt${variant}" \
         "macro-oscillator2.cc" \
         "eurorack/plaits/dsp/engine/wavetable_engine.cc eurorack/plaits/resources.cc eurorack/stmlib/dsp/units.cc" \
-        "-DOSC_WT${upper} -DOSCILLATOR_TYPE=wt${variant}" 24
+        "-DOSC_WT${upper} -DOSCILLATOR_TYPE=wt${variant}" 64
 done
 
 ##############################################################################
@@ -258,28 +284,36 @@ ELEMENTS_SOURCES="eurorack/elements/dsp/exciter.cc eurorack/elements/dsp/resonat
 create_project "modal_strike" "modal_strike" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER -DELEMENTS_LFO2" 32
+    "-DELEMENTS_RESONATOR_MODES=24 -DUSE_LIMITER -DELEMENTS_LFO2" 32 \
+    "-funroll-loops"
 
 # Modal Strike 16 (no limiter)
 create_project "modal_strike_16_nolimit" "modal_strike_16_nolimit" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=16 -DELEMENTS_LFO2" 32
+    "-DELEMENTS_RESONATOR_MODES=16 -DELEMENTS_LFO2" 32 \
+    "-funroll-loops"
 
 # Modal Strike 24 (no limiter)
 create_project "modal_strike_24_nolimit" "modal_strike_24_nolimit" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2" 32
+    "-DELEMENTS_RESONATOR_MODES=24 -DELEMENTS_LFO2" 32 \
+    "-funroll-loops"
 
 # Elements Full (64 modes, full DSP, limiter enabled)
 create_project "elements_full" "elements_full" \
     "modal-strike.cc" \
     "$ELEMENTS_SOURCES" \
-    "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL -DELEMENTS_LFO2" 32
+    "-DELEMENTS_RESONATOR_MODES=64 -DUSE_LIMITER -DELEMENTS_FULL -DELEMENTS_LFO2" 32 \
+    "-funroll-loops"
 
 ##############################################################################
-# Rings-based oscillator (rings-resonator.cc, block size 24)
+# Rings-based oscillator (rings-resonator.cc, block size 64)
+#
+# One block per render, for the reason given above the Plaits units; for Rings
+# the most expensive render costs 16-21% fewer instructions in every model.
+# eurorack-opt/rings/dsp/dsp.h takes kMaxBlockSize from OSC_NATIVE_BLOCK_SIZE.
 ##############################################################################
 
 RINGS_SOURCES="eurorack-opt/rings/dsp/part.cc eurorack/rings/dsp/resonator.cc eurorack/rings/dsp/string.cc eurorack/rings/dsp/fm_voice.cc eurorack/rings/dsp/string_synth_part.cc eurorack/rings/resources.cc eurorack/stmlib/dsp/units.cc eurorack/stmlib/utils/random.cc"
@@ -287,7 +321,7 @@ RINGS_SOURCES="eurorack-opt/rings/dsp/part.cc eurorack/rings/dsp/resonator.cc eu
 create_project "rings" "rings" \
     "rings-resonator.cc" \
     "$RINGS_SOURCES" \
-    "-DRINGS_RESONATOR" 24
+    "-DRINGS_RESONATOR" 64
 
 ##############################################################################
 # Clouds-based oscillator (clouds-granular.cc, block size 32)
@@ -428,6 +462,11 @@ create_clouds_fx_project
 
 ##############################################################################
 # Mussola vocal synth (mussola.cc, block size 24)
+#
+# Mussola stays at 24.  Unlike the Plaits engines it does a good deal of its
+# timing in blocks -- the assignable LFO, the round-robin harmonics update,
+# the word-bank decode pacing -- so a different block size is a re-tuning job,
+# not a configuration change.
 ##############################################################################
 
 MUSSOLA_SOURCES=$(cat osc_mussola.sources)
