@@ -19,7 +19,7 @@ commit **58b9125**.
 |------|--------|---------|
 | `clouds/dsp/granular_processor.{h,cc}` | reverb + diffuser early-out | every mode |
 | `clouds/dsp/grain.h` | **grain envelope no longer reads past `lut_window`** | Granular, high quality |
-| `clouds/dsp/correlator.cc` | **no shift by 32 when a candidate lands on a word boundary** | Stretch |
+| `clouds/dsp/correlator.cc` | **no shift by 32 when a candidate lands on a word boundary**; NEON scoring loop | Stretch |
 | `clouds/dsp/pvoc/frame_transformation.cc` | **spectral warp skipped when its polynomial is the identity** | Spectral |
 | `clouds/dsp/pvoc/stft.h` | LUT twiddle factors, **smaller FFT** | Spectral |
 | `clouds/dsp/pvoc/stft.cc` | **`Buffer()` can take the `Parameters` to use** | Spectral |
@@ -125,6 +125,40 @@ behaviour out of the loop, so the sweep means what it says.
 
 Found by `make test-asan` — UndefinedBehaviorSanitizer, on the ordinary
 parameter sweeps, no new scenario required.
+
+### `clouds/dsp/correlator.cc` — NEON scoring loop
+
+Once the units were built at `-O3`, the scoring loop became the largest single
+cost in Stretch: 28 % of the mode's mean, and most of its tail. A search scores
+`size / 4 + 16` candidates per `Prepare()`, each over `size / 32` words, so at
+a 2048-sample window one block carries about 33,000 word comparisons, each a
+dozen instructions of SWAR popcount. On ARM the loop now does four words at a
+time with `VCNT`; the scalar loop is kept for hosts and for word counts below a
+multiple of four.
+
+It is the same integer, not a close one. Both shifts are register-form `VSHL`,
+which returns 0 for a count of 32 — the scalar path's explicit zero case — and
+the loads read no word the scalar loop does not. `make test-clouds-correlator`
+checks every candidate's score, at every bit offset, against upstream's loop
+written out independently, on all-zero, all-one and random buffers and at word
+counts on and off the vector width; under QEMU that is the NEON path. Run
+through the whole unit, the output of Stretch is bit-identical with and without
+it at every SIZE and QUALITY tried.
+
+Instructions per 64-frame render, `clouds` (KORG's GCC 6.5, `-O3`, counted
+under QEMU — which prices a NEON instruction like any other, so this is a
+proxy, but the sign is not in doubt):
+
+| Stretch | mean | p99 | max |
+|---|---:|---:|---:|
+| SIZE default, before | 62,223 | 293,816 | 497,060 |
+| SIZE default, after | 56,895 | 252,759 | 394,551 |
+| SIZE 100 %, before | 61,722 | 468,349 | 557,163 |
+| SIZE 100 %, after | 54,063 | 407,568 | 437,293 |
+
+What is left of the tail is the correlator *load* (`ReadSignBits`, interpolated
+buffer reads) and the search's concentration into four blocks per window; see
+"What is still on the table" in `DRUMLOGUE_PORT.md`.
 
 ### `clouds/dsp/wsola_sample_player.h` — the correlator load, split across two blocks
 

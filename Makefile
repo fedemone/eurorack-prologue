@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola test-mussola-words bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-correlator test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola test-mussola-words bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -720,8 +720,29 @@ test-clouds-fft:
 	    test_clouds_fft.cc -o test_clouds_fft_arm -lm && \
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
+# Correlator test: the WSOLA splice scorer's NEON loop against upstream's
+# scalar one, score for score at every bit offset and at word counts on and off
+# the vector width.  Runs on the host, and under QEMU if the ARM toolchain is
+# present -- which is the run that matters, since the NEON path only exists
+# there.
+# Usage: make test-clouds-correlator
+test-clouds-correlator:
+	$(CXX) $(COMMON_TEST_FLAGS) -O2 $(CLOUDS_OPT_FLAGS) \
+	    test_clouds_correlator.cc eurorack-opt/clouds/dsp/correlator.cc \
+	    -o test_clouds_correlator
+	./test_clouds_correlator
+	@command -v $(ARM_CC) >/dev/null 2>&1 && command -v $(QEMU_ARM) >/dev/null 2>&1 || \
+	    { echo "SKIP ARM/NEON run: cross toolchain or qemu-arm not found"; exit 0; }; \
+	 echo "" && echo "--- same tests, ARM/NEON under QEMU ---" && \
+	 arm-linux-gnueabihf-g++ -std=c++11 -Wall -Wextra -O2 -march=armv7-a \
+	    -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -ffast-math \
+	    -fsigned-char $(CLOUDS_OPT_FLAGS) -Idrumlogue -I. \
+	    test_clouds_correlator.cc eurorack-opt/clouds/dsp/correlator.cc \
+	    -o test_clouds_correlator_arm && \
+	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_correlator_arm
+
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-mussola-words test-sound test-param-routing
+test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-correlator test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-mussola-words test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU

@@ -55,6 +55,23 @@
 // stand-in for it. Making the zero case explicit gives both targets ARM's
 // answer and takes the undefined behaviour out of the loop.
 //
+// Change: on ARM the scoring loop runs on NEON, four words at a time.
+//
+// At -O3 this loop is the largest single cost in Stretch: 28% of the mode's
+// mean, and most of its tail. A search scores size/4 + 16 candidates per
+// Prepare() over size/32 words each, so at a 2048-sample window one block
+// carries ~33,000 word comparisons, each a dozen instructions of SWAR
+// popcount -- which is why Stretch's worst renders are many times its median.
+// NEON does the same comparison with VCNT on sixteen bytes at once.
+//
+// The result is the same integer. Both shifts are register-form VSHL, which
+// for a count of 32 or more returns 0 -- the same answer the scalar path now
+// spells out for offset_bits == 0 -- and the loads touch no word the scalar
+// loop does not: the highest is destination[offset_words + num_words], which
+// the scalar loop reads too whenever offset_bits is non-zero. Words left over
+// below a multiple of four go through the scalar loop. Hosts never see the
+// NEON path; `make test-arm` and the drumlogue binaries do.
+//
 // -----------------------------------------------------------------------------
 //
 // Search for stretch/shift splicing points by maximizing correlation.
@@ -62,6 +79,10 @@
 #include "clouds/dsp/correlator.h"
 
 #include <algorithm>
+
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
 
 namespace clouds {
 
@@ -86,7 +107,31 @@ void Correlator::EvaluateNextCandidate() {
   uint32_t* destination = &destination_[offset_words];
   
   uint32_t xcorr = 0;
-  for (uint32_t i = 0; i < num_words; ++i) {
+  uint32_t i = 0;
+#ifdef __ARM_NEON
+  {
+    /* VSHL by a negative count shifts right; at -32 it yields 0. */
+    const int32x4_t shift_left = vdupq_n_s32(static_cast<int32_t>(offset_bits));
+    const int32x4_t shift_right =
+        vdupq_n_s32(static_cast<int32_t>(offset_bits) - 32);
+    /* Per-lane byte counts are at most 8, two bytes per 16-bit lane, so a
+     * lane gains at most 16 per iteration. num_words is at most
+     * kMaxWSOLASize / 32 = 128, i.e. 32 iterations: 512, far inside 16 bits. */
+    uint16x8_t counts = vdupq_n_u16(0);
+    for (; i + 4 <= num_words; i += 4) {
+      uint32x4_t source_bits = vld1q_u32(&source[i]);
+      uint32x4_t destination_bits = vorrq_u32(
+          vshlq_u32(vld1q_u32(&destination[i]), shift_left),
+          vshlq_u32(vld1q_u32(&destination[i + 1]), shift_right));
+      uint32x4_t match = vmvnq_u32(veorq_u32(source_bits, destination_bits));
+      counts = vpadalq_u8(counts, vcntq_u8(vreinterpretq_u8_u32(match)));
+    }
+    uint64x2_t sum = vpaddlq_u32(vpaddlq_u16(counts));
+    xcorr = static_cast<uint32_t>(vgetq_lane_u64(sum, 0) +
+                                  vgetq_lane_u64(sum, 1));
+  }
+#endif
+  for (; i < num_words; ++i) {
     uint32_t source_bits = source[i];
     uint32_t destination_bits = 0;
     destination_bits |= destination[i] << offset_bits;

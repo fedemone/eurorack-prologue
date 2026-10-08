@@ -135,3 +135,7 @@ jobs:
 
       - name: make test-arm, units loaded in the opposite order
         run: make test-arm ARM_UNITS="modal_strike mussola rings mo2_va clouds_fx clouds"
+      # The host job runs this too, but without a cross compiler it can only
+      # check the scalar path.  The NEON scoring loop exists only here.
+      - name: make test-clouds-correlator (NEON path under QEMU)
+        run: make test-clouds-correlator
