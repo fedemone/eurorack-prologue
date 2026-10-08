@@ -311,7 +311,7 @@ $(OBJDIR):
 $(LSTDIR):
 	@mkdir -p $(LSTDIR)
 
-$(CXXOBJS) : $(OBJDIR)/%.o : %.cc Makefile
+$(CXXOBJS) : $(OBJDIR)/%.o : %.cc Makefile config.mk
 ifeq ($(VERBOSE_COMPILE),yes)
 	@echo
 	$(CXXC) -c $(CXXFLAGS) $(AOPT) -I. $(IINCDIR) $< -o $@
@@ -320,7 +320,7 @@ else
 	@$(CXXC) -c $(CXXFLAGS) $(AOPT) -I. $(IINCDIR) $< -o $@
 endif
 
-$(COBJS) : $(OBJDIR)/%.o : %.c Makefile
+$(COBJS) : $(OBJDIR)/%.o : %.c Makefile config.mk
 ifeq ($(VERBOSE_COMPILE),yes)
 	@echo
 	$(CC) -c $(CFLAGS) $(AOPT) -I. $(IINCDIR) $< -o $@
@@ -329,7 +329,7 @@ else
 	@$(CC) -c $(CFLAGS) $(AOPT) -I. $(IINCDIR) $< -o $@
 endif
 
-$(ASMOBJS) : $(OBJDIR)/%.o : %.s Makefile
+$(ASMOBJS) : $(OBJDIR)/%.o : %.s Makefile config.mk
 ifeq ($(VERBOSE_COMPILE),yes)
 	@echo
 	$(AS) -c $(ASFLAGS) -I. $(IINCDIR) $< -o $@
@@ -338,7 +338,7 @@ else
 	@$(AS) -c $(ASFLAGS) -I. $(IINCDIR) $< -o $@
 endif
 
-$(ASMXOBJS) : $(OBJDIR)/%.o : %.S Makefile
+$(ASMXOBJS) : $(OBJDIR)/%.o : %.S Makefile config.mk
 ifeq ($(VERBOSE_COMPILE),yes)
 	@echo
 	$(CC) -c $(ASXFLAGS) -I. $(IINCDIR) $< -o $@

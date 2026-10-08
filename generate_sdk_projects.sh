@@ -54,11 +54,17 @@ create_project() {
     # Create directory
     mkdir -p "$project_dir"
 
-    # Copy SDK Makefile and fix relative include path for rules.mk
+    # Copy SDK Makefile and fix relative include path for rules.mk.
+    # Objects also depend on config.mk: upstream they depend only on their
+    # source, its headers and the Makefile, so a change to config.mk -- the
+    # optimisation level, a define -- was silently ignored by an incremental
+    # build, which relinked the old objects.
     # The SDK Makefile uses ../../common which is incorrect for our layout
     # Also disable chown to avoid errors on Windows mounts
     sed -e 's|\.\./\.\./common|$(PROJROOT)/logue-sdk/platform/drumlogue/common|g' \
-        -e 's|chown -R|echo chown -R|g' "$SDK_MAKEFILE" > "${project_dir}/Makefile"
+        -e 's|chown -R|echo chown -R|g' \
+        -e 's|^\(\$([A-Z]*OBJS) : \$(OBJDIR)/%\.o : %\.[a-zA-Z]* Makefile\)$|\1 config.mk|' \
+        "$SDK_MAKEFILE" > "${project_dir}/Makefile"
 
     # Generate config.mk
     cat > "${project_dir}/config.mk" << CONFIGEOF
@@ -308,7 +314,9 @@ create_clouds_fx_project() {
     mkdir -p "$project_dir"
 
     sed -e 's|\.\./\.\./common|$(PROJROOT)/logue-sdk/platform/drumlogue/common|g' \
-        -e 's|chown -R|echo chown -R|g' "$SDK_MAKEFILE" > "${project_dir}/Makefile"
+        -e 's|chown -R|echo chown -R|g' \
+        -e 's|^\(\$([A-Z]*OBJS) : \$(OBJDIR)/%\.o : %\.[a-zA-Z]* Makefile\)$|\1 config.mk|' \
+        "$SDK_MAKEFILE" > "${project_dir}/Makefile"
 
     cat > "${project_dir}/config.mk" << 'CONFIGEOF'
 ##############################################################################

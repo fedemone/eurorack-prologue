@@ -386,6 +386,35 @@ The binaries grow by 4–45 KB (Rings 57 → 77 KB, Clouds 92 → 137 KB). The
 instruction count is a proxy — it does not see cache or memory stalls — but
 every unit runs fewer instructions for the same sound.
 
+At `-Os` Rings also had a spike on top of that: setting **Polyphony**
+re-initialises every string from inside the next audio callback, and the
+size-optimised build cleared their delay lines one float at a time — one
+render of 168,000 instructions, 3.5× its already heavy steady state, at the
+exact moment the drumlogue crashed. At `-O3` that render is 23,800, no more
+than an ordinary one.
+
+#### Checking a build
+
+`OPTIM` lives in `config.mk`, and upstream the SDK Makefile recompiles an
+object only when its source, a header or the Makefile changes. So a tree that
+was built before `OPTIM = -O3` arrived relinks its old `-Os` objects on the
+next build and nothing says so. Two things now guard against that:
+
+- the generated Makefiles make every object depend on `config.mk` too, so
+  changing it rebuilds the unit;
+- `header.c` stamps the level and the compiler into the binary:
+
+  ```bash
+  strings drumlogue/rings/rings.drmlgunit | grep -o "build:.*"
+  # build: -O2/-O3 (speed), gcc ...                       <- good
+  # build: -Os (size: rebuild clean for -O3), gcc ...      <- stale
+  ```
+
+  (A unit built before the stamp existed prints nothing.)
+
+After pulling a change to the flags, a clean build is still the safe habit:
+`./build_drumlogue.sh --clean` and then build.
+
 ---
 
 ## Files
