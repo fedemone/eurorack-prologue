@@ -209,7 +209,7 @@ usage() {
 list_projects() {
     echo "Available drumlogue oscillator projects:"
     echo ""
-    echo "  Plaits-based (block size 24):"
+    echo "  Plaits-based (block size 64):"
     echo "    mo2_va       - Virtual Analog"
     echo "    mo2_wsh      - Waveshaping"
     echo "    mo2_fm       - FM Synthesis"
@@ -229,7 +229,7 @@ list_projects() {
     echo "    modal_strike_24_nolimit  - Modal Strike (24 modes, no limiter)"
     echo "    elements_full            - Elements Full (64 modes, full DSP)"
     echo ""
-    echo "  Rings-based (block size 24):"
+    echo "  Rings-based (block size 64):"
     echo "    rings                    - Resonator (modal/sympathetic/string/FM)"
     echo ""
     echo "  Clouds-based (block size 32):"
