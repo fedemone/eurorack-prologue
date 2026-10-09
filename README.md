@@ -412,13 +412,52 @@ model, not just Sympathetic Quantized) or plain octaves of the root. `Arp Oct` s
 the sequence across up to four octaves. The `-P-` patterns insert a silent rest step,
 letting the resonance ring through the gap. Set `Arp` to `Off` for normal single-note
 playing. (Tempo comes from the host clock; if a platform never reports a tempo the arp
-runs at 120 BPM.)
+runs at 120 BPM.) The arpeggiator runs while a note is held, so on the drumlogue its
+pattern plays for the length of the step's gate.
+
+It works the same way on all six models, and each re-strikes audibly on every step.
+String + Reverb used to be the exception in practice: its mono mixdown cancelled the
+dry string at the default Position (see below), so the strums only reached the output
+as reverb. In Sympathetic String the strings that are not struck keep ringing at the
+previous pitch, so the steps sit inside a sustained chord; that is the model, not the
+arp — shorten Damping to hear the steps more clearly.
+
+**Changing Model or Polyphony:** these no longer stop the sound. Between the four string
+models (Sympathetic, String, Sympathetic Quantized, String + Reverb) and for any
+polyphony change outside the Modal model, the strings that are ringing keep ringing and
+move to their new tuning; String + Reverb's reverb rings out for up to four seconds when
+you leave it for String (into the other models it fades quickly instead: letting it ring
+there would cost more CPU than any setting of the unit otherwise does). A change between the Modal, string and FM engines
+(or a Modal polyphony change), which has to start the new engine from silence, leaves
+the old sound behind as a short tail that dies away under the new one — faster at low
+Damping, slower at high. Every change made while something sounds is crossfaded over a
+few milliseconds, so sweeping the Model knob through all six models plays continuously.
+
+**Changing the note:** a new note reaches what is sounding only with a strike. Turning
+(or motion-sequencing) Base Note between steps, a note-on that arrives while the previous
+note is still held, and an arpeggiator rest step no longer retune the hits that are still
+ringing; the change waits for the next strike. Every note-on strikes, including one
+whose previous gate is still open. A pitch that arrives up to 10 ms after its strike
+still counts as that strike's, in case a step's note follows its gate. Pitch bend and
+LFO → Note still move the sounding note continuously. With Polyphony 2–4 each strike
+takes the next voice, so earlier hits ring on at their own pitch until their voice comes
+round again. At Polyphony 1 there is one resonator, and a strike at a new pitch
+retunes it, as on the module.
 
 **Output level:** The mono mixdown applies +3 dB of make-up gain overall, plus a further
 +6 dB for the two sympathetic-string models (Sympathetic String and Sympathetic
 Quantized), which are inherently quieter than the Modal/String/FM/Reverb models — so the
-default patch sits at a comparable level to the others. Peaks are still clamped, so the
-extra gain can't clip the output.
+default patch sits at a comparable level to the others. The +6 dB goes in ahead of
+Rings' own output limiter and the +3 dB after it, so the output never reaches full
+scale: a loud sympathetic chord is limited rather than clipped. (Both used to come after
+the limiter, and Sympathetic Quantized at Polyphony 4 — or Sympathetic at Polyphony 1 —
+hard-clipped about 1% of samples on a busy pattern, which is heard as crackle.)
+
+String + Reverb is mixed to mono as `out - aux` rather than `out + aux`. Rings negates
+that model's second output after its reverb, and the model cross-mixes its two channels
+by Position first, so `out + aux` came to `(2 * Position - 1) * (L - R)`: no dry string
+at all at the default Position of 50%, only the reverb's stereo difference, about 9 dB
+down on the other models. `out - aux` is the dry string plus the full reverb.
 
 **Sound design tips:**
 - The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
@@ -426,6 +465,7 @@ extra gain can't clip the output.
 - Point an LFO at `Chord` with a slow rate and a high `Damping` to get a chord sequence that overlaps itself — each change retunes the strings while the previous chord is still ringing
 - `Note Range` is what decides whether `Note` is an effect or a gesture: 1-3 semitones is vibrato, 12 turns a slow LFO into an octave sweep, and 7 with a Ramp shape steps the whole arpeggio up a fifth and drops it back
 - Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
+- Sweep `Model` while a chord rings: the string models hand the ringing strings to one another, and a jump to Modal or FM leaves a short frozen tail behind
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
 - Increase Polyphony for chordal playing (uses more CPU per voice)
@@ -1036,8 +1076,9 @@ Rings' latch also stops the reconfiguration being paid twice. The firmware
 pushes a value for every parameter slot whenever a unit is loaded, and
 `Part::set_polyphony()` marks the part dirty whether or not the value changed
 — so the default push bought a full `ConfigureResonators()`, which for the
-string models re-initializes all eight strings and clears ~96 KB of delay
-line. `OSC_INIT` now spends that once on the control thread instead, by
+string models used to re-initialize all eight strings and clear ~96 KB of delay
+line. (It now keeps the strings that carry on across a change; see
+`eurorack-opt/README.md`.) `OSC_INIT` now spends that once on the control thread instead, by
 rendering and discarding a single block; the first audio block after the unit
 is selected went from 356% of its deadline to 145% under
 `make bench-units`, the remainder being the page faults any freshly

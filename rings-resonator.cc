@@ -60,7 +60,46 @@ alignas(16) static float out_buffer_[kMaxBlockSize];
 alignas(16) static float aux_buffer_[kMaxBlockSize];
 
 static bool gate_ = false;
-static bool previous_gate_ = false;
+
+/* ======================================================================
+ * Note changes wait for the next strike
+ *
+ * Part reads its pitch the way the module reads its V/Oct jack: the voice
+ * struck last follows it continuously, and only a strike moves the next note
+ * onto a voice of its own.  So a pitch change that came without a strike went
+ * straight into the note still ringing.  Measured on the String model, at
+ * Polyphony 1 and 2 alike, the ringing pitch fell 44-49 dB within one 80 ms
+ * window and the new pitch took its place, with nothing struck:
+ *
+ *   - Base Note turned, or motion-sequenced, between steps.  The wrapper
+ *     re-pitches a gate-driven note as soon as Base Note moves, so that a
+ *     sustained oscillator follows the knob;
+ *   - a note-on while the gate was still up (MIDI legato, overlapping gates),
+ *     which retuned without striking, since a strike was the gate's rising
+ *     edge;
+ *   - an arpeggiator rest step, which handed back the root.
+ *
+ * Now the pitch is held from one strike to the next: a change arriving
+ * between strikes waits for the next one, and every note-on strikes.  At
+ * Polyphony 2-4 that strike puts the new note on the next voice, so what is
+ * ringing rings on at its own pitch.  At Polyphony 1 there is one resonator,
+ * and the strike that brings a new note retunes it, as on the module.
+ *
+ * Two kinds of change still reach a ringing note.  One arriving within
+ * kStrikeGrace after a strike is taken as that strike's pitch: a host may
+ * deliver a step's note just after its gate rather than before.  And small
+ * continuous moves -- pitch bend, a host's glide -- pass through, while a
+ * jump of kNoteJump or more in one block waits for the strike; 0.4 semitone
+ * is what Rings' own NoteFilter treats as a new note.  LFO -> Note is
+ * applied after all of this and modulates every note as before.
+ * ==================================================================== */
+static const uint32_t kStrikeGrace = 480;     /* 10 ms at 48 kHz */
+static const float    kNoteJump    = 0.4f;    /* semitones per block */
+static volatile uint32_t note_on_count_ = 0;  /* incremented by OSC_NOTEON */
+static uint32_t note_on_seen_   = 0;          /* note-ons already struck */
+static float    held_note_      = 60.0f;      /* before LFO -> Note */
+static float    host_note_prev_ = 60.0f;
+static uint32_t since_strike_   = kStrikeGrace; /* samples; stops at the grace */
 
 /* User-facing parameter storage */
 uint16_t p_values[k_num_user_osc_param_id] = {0};
@@ -181,6 +220,237 @@ static volatile int32_t pending_polyphony_ = 1;
 /* What the Part is currently configured for; audio thread only. */
 static uint16_t model_value = RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
 static uint16_t polyphony_value = 1;
+
+/* ======================================================================
+ * Model / Polyphony transitions
+ *
+ * Changing either used to stop the sound dead: Part re-initialised every
+ * string, mode set or FM voice and the new configuration started from
+ * silence.  The forked Part (eurorack-opt/rings/dsp/part.cc) now keeps what
+ * is already ringing whenever it can -- any change among the four string
+ * models, and polyphony changes for the string and FM models -- and says so
+ * through Part::KeepsStateFor().
+ *
+ * That alone is not seamless.  Even where the strings carry on, what is heard
+ * of them changes at once: the models mix and scale their output differently
+ * (String + Reverb sends the dry string through its reverb's 65/35 mix, the
+ * sympathetic models get 6 dB of make-up, a polyphony change regroups the
+ * strings into voices and switches the pickup sum), and an instant change of
+ * gain or mix on a sounding signal is a click.  And a change Part cannot carry
+ * across -- between the modal, string and FM engines, or of modal polyphony --
+ * still starts from silence.
+ *
+ * So every change made while something is sounding is bridged here, using
+ * the output's last 85 ms, which are kept in a history buffer:
+ *
+ *   1. Freeze that history and crossfade the old configuration into it over
+ *      2 ms.  The change waits for this, so it lands 2 ms late.
+ *   2. Apply the change.
+ *   3. Where Part kept the sound going, crossfade back from the frozen tail
+ *      to it over 24 ms -- long enough to cover strings being retuned as they
+ *      change voice or chord.  Where it could not, let the tail die away
+ *      under the new configuration (faster at low Damping, slower at high).
+ *
+ * The frozen history is played by two grain heads half a grain apart, with
+ * triangular windows that sum to exactly one, each grain starting at a random
+ * point in the history: a granular freeze, so a sustained tone continues as a
+ * tone rather than as a loop.  Changes in quick succession -- the Model knob
+ * swept through its range -- are covered too: a dying tail keeps dying under
+ * later changes, and a change arriving during step 3 turns the crossfade
+ * round where it stands.  Measured with a note ringing, a sweep through all
+ * six models at one step per 30 ms plays continuously, where it used to fall
+ * silent at the first step.
+ *
+ * Cost, counted on the ARM build: about forty instructions per sample while a
+ * tail plays -- 2.5k per 64-frame render, under 3% of what the default model
+ * spends -- and about a hundred per render to keep the history.  When nothing
+ * is sounding, a change is applied at once, as before.
+ * ==================================================================== */
+
+#define kTailHistory 4096          /* 85 ms at 48 kHz; power of two */
+#define kTailGrain   2048          /* grain length; heads run half a grain apart */
+#define kTailXfadeBlocks 4         /* step 1: 4 x 24 samples = 2 ms */
+#define kTailHandbackBlocks 48     /* step 3, kept: 24 ms */
+
+/* The output is recorded continuously into tail_hist_[0].  A freeze copies
+ * it, oldest sample first, into one of the other two, which the bridge and
+ * the decay tail below play from.  Copying rather than switching which
+ * buffer records is what keeps a full 85 ms of history behind every freeze,
+ * however soon after the last one it comes. */
+alignas(16) static float tail_hist_[3][kTailHistory];
+
+struct TailPlayer {
+  const float* hist;    /* frozen history, or NULL when idle */
+  uint32_t oldest;      /* its oldest sample */
+  uint32_t pos[2];      /* position within each head's grain */
+  uint32_t start[2];    /* each grain's start in the history */
+  float gain;
+  float decay;          /* per sample */
+};
+
+enum BridgeMode {
+  BRIDGE_OFF,
+  BRIDGE_IN,            /* step 1: what is playing -> frozen history */
+  BRIDGE_READY,         /* step 1 done: apply the change */
+  BRIDGE_OUT            /* step 3, kept: frozen history -> what is playing */
+};
+
+/* The bridge's place in its crossfade, 0 (not heard) to 1 (all that is
+ * heard), moved per sample.  Kept as a position rather than a count of blocks
+ * so that a change arriving while the bridge is still handing back -- a knob
+ * turned through several models in quick succession -- simply turns it round
+ * from where it is: no new freeze, nothing dropped from the output. */
+static float bridge_x_ = 0.0f;
+
+/* The bridge is frozen at each change and covers it (steps 1 and 3).  The
+ * decay tail is what a change Part could not carry across leaves behind; it
+ * dies away under everything after it, including later changes, which is why
+ * it is a separate player: a later change that Part does carry across hands
+ * back to the strings *and* this tail, not to the strings alone. */
+static TailPlayer tail_bridge_;
+static TailPlayer tail_decay_;
+static BridgeMode bridge_mode_  = BRIDGE_OFF;
+static uint32_t tail_write_    = 0;     /* write position in tail_hist_[0] */
+static uint32_t tail_rng_      = 0x2545F491u;
+static float    out_level_     = 0.0f;  /* recent output peak: is anything sounding? */
+
+static inline uint32_t tail_pick_start(void) {
+  tail_rng_ = tail_rng_ * 1664525u + 1013904223u;
+  return (tail_rng_ >> 8) % (kTailHistory - kTailGrain + 1);
+}
+
+static void tail_reset(void) {
+  std::fill(&tail_hist_[0][0], &tail_hist_[0][0] + 3 * kTailHistory, 0.0f);
+  tail_bridge_.hist = NULL;
+  tail_decay_.hist  = NULL;
+  bridge_mode_   = BRIDGE_OFF;
+  bridge_x_      = 0.0f;
+  tail_write_    = 0;
+  out_level_     = 0.0f;
+}
+
+/* Step 1: freeze the history into the bridge and start crossfading into it. */
+static void tail_freeze(void) {
+  TailPlayer& t = tail_bridge_;
+  float* frozen = tail_hist_[tail_decay_.hist == tail_hist_[1] ? 2 : 1];
+  const float* live = tail_hist_[0];
+  std::copy(live + tail_write_, live + kTailHistory, frozen);
+  std::copy(live, live + tail_write_, frozen + (kTailHistory - tail_write_));
+  t.hist   = frozen;
+  t.oldest = 0;
+  t.pos[0] = 0;
+  t.pos[1] = kTailGrain / 2;
+  t.start[0] = tail_pick_start();
+  t.start[1] = tail_pick_start();
+  t.gain   = 1.0f;
+  /* Used if this becomes the decay tail: tau = 0.1 s at Damping 0 to 0.4 s
+   * at 100%, i.e. -60 dB in 0.7 to 2.8 s. */
+  const float tau = 0.1f + 0.3f * patch_.damping;
+  t.decay  = 1.0f - 1.0f / (tau * 48000.0f);
+  bridge_mode_   = BRIDGE_IN;
+  bridge_x_      = 0.0f;
+}
+
+/* Step 3: the change has been applied. */
+static void tail_after_change(bool kept) {
+  if (kept) {
+    bridge_mode_   = BRIDGE_OUT;
+  } else {
+    /* The bridge becomes the decay tail.  Any earlier decay tail is in the
+     * bridge's history already, so it is dropped rather than played twice. */
+    tail_decay_       = tail_bridge_;
+    tail_bridge_.hist = NULL;
+    bridge_mode_      = BRIDGE_OFF;
+  }
+}
+
+/* Crossfade curve: smoothstep, so the weight starts and ends with zero slope.
+ * A linear ramp leaves a corner in the waveform at each end of the fade --
+ * no step, but a kink, and on a smooth modal tone a visible one. */
+static inline float tail_curve(float x) {
+  return x * x * (3.0f - 2.0f * x);
+}
+
+static inline float tail_sample(TailPlayer& t) {
+  float s = 0.0f;
+  for (int k = 0; k < 2; ++k) {
+    uint32_t p = t.pos[k];
+    const float w = (p < kTailGrain / 2 ? (float)p : (float)(kTailGrain - p)) *
+                    (2.0f / kTailGrain);
+    s += w * t.hist[(t.oldest + t.start[k] + p) & (kTailHistory - 1)];
+    if (++p >= kTailGrain) {
+      p = 0;
+      t.start[k] = tail_pick_start();
+    }
+    t.pos[k] = p;
+  }
+  return s;
+}
+
+/* Mix the tails into one block of mono output, record the result, and track
+ * the output level. */
+static void tail_process(float* mono, size_t size) {
+  TailPlayer& d = tail_decay_;
+  if (d.hist) {
+    float g = d.gain;
+    for (size_t i = 0; i < size; ++i) {
+      g *= d.decay;
+      mono[i] += tail_sample(d) * g;
+    }
+    d.gain = g;
+    if (g < 1.0e-4f) {
+      d.hist = NULL;
+    }
+  }
+  if (bridge_mode_ == BRIDGE_IN || bridge_mode_ == BRIDGE_OUT) {
+    const bool in = bridge_mode_ == BRIDGE_IN;
+    const float step = in ? 1.0f / (float)(kTailXfadeBlocks * kMaxBlockSize)
+                          : -1.0f / (float)(kTailHandbackBlocks * kMaxBlockSize);
+    float x = bridge_x_;
+    for (size_t i = 0; i < size; ++i) {
+      x += step;
+      x = x > 1.0f ? 1.0f : (x < 0.0f ? 0.0f : x);
+      const float w = tail_curve(x);
+      mono[i] = mono[i] * (1.0f - w) + tail_sample(tail_bridge_) * w;
+    }
+    bridge_x_ = x;
+    if (in && x >= 1.0f) {
+      bridge_mode_ = BRIDGE_READY;
+    } else if (!in && x <= 0.0f) {
+      tail_bridge_.hist = NULL;
+      bridge_mode_ = BRIDGE_OFF;
+    }
+  } else if (bridge_mode_ == BRIDGE_READY) {
+    /* Only if a block runs before the change is applied. */
+    for (size_t i = 0; i < size; ++i) mono[i] = tail_sample(tail_bridge_);
+  }
+
+  /* Record.  size and kTailHistory are multiples of four, so a group of four
+   * never straddles the wrap. */
+  float* h = tail_hist_[0];
+  float peak = 0.0f;
+#ifdef __ARM_NEON
+  float32x4_t vpeak = vdupq_n_f32(0.0f);
+  for (size_t i = 0; i < size; i += 4) {
+    const float32x4_t m = vld1q_f32(mono + i);
+    vst1q_f32(h + tail_write_, m);
+    tail_write_ = (tail_write_ + 4u) & (kTailHistory - 1u);
+    vpeak = vmaxq_f32(vpeak, vabsq_f32(m));
+  }
+  float32x2_t p2 = vpmax_f32(vget_low_f32(vpeak), vget_high_f32(vpeak));
+  peak = vget_lane_f32(vpmax_f32(p2, p2), 0);
+#else
+  for (size_t i = 0; i < size; ++i) {
+    h[tail_write_] = mono[i];
+    tail_write_ = (tail_write_ + 1u) & (kTailHistory - 1u);
+    const float a = mono[i] < 0.0f ? -mono[i] : mono[i];
+    if (a > peak) peak = a;
+  }
+#endif
+  /* Decays about 60 dB over the history's length, so "silent" means the
+   * whole history is. */
+  out_level_ = peak > out_level_ * 0.96f ? peak : out_level_ * 0.96f;
+}
 
 /* Rings reads its lookup tables with stmlib's Interpolate(table, x, N), which
  * touches table[floor(x*N)] *and the element after it*.  The tables have N+1
@@ -440,7 +710,8 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   performance_state_.fm               = 0.0f;
   performance_state_.chord            = 0;
 
-  previous_gate_ = false;
+  note_on_seen_   = note_on_count_;
+  since_strike_   = kStrikeGrace;
 
   arp_mode_    = 0;
   arp_source_  = 0;
@@ -459,6 +730,7 @@ void OSC_INIT(uint32_t platform, uint32_t api)
   lfo_note_semitones_ = 2;
 
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
+  tail_reset();
 
   /* Part::Init() leaves the part dirty, and Part::ConfigureResonators() —
    * which for the string models re-initializes all eight strings, clearing
@@ -549,22 +821,44 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   }
 
   /* Apply latched engine reconfiguration here, on the audio thread, before
-   * anything reads polyphony_ or model_.  See pending_* above. */
+   * anything reads polyphony_ or model_.  See pending_* above.  A change the
+   * Part cannot carry across while something is sounding first crossfades
+   * into a frozen tail and is applied when that is done; see "Model /
+   * Polyphony transitions" above. */
   {
     const int32_t want_model     = pending_model_;
     const int32_t want_polyphony = pending_polyphony_;
-    if (want_model != (int32_t)model_value) {
-      model_value = (uint16_t)want_model;
-      part_.set_model(static_cast<ResonatorModel>(want_model));
+    const bool change = want_model != (int32_t)model_value ||
+                        want_polyphony != (int32_t)polyphony_value;
+    /* Asked before the change is applied: Part compares against what it
+     * last configured, which set_model()/set_polyphony() do not touch. */
+    const bool keeps = part_.KeepsStateFor(
+        static_cast<ResonatorModel>(want_model), want_polyphony);
+    if (change && bridge_mode_ == BRIDGE_OUT) {
+      bridge_mode_ = BRIDGE_IN;           /* turn round; see bridge_x_ */
+    } else if (change && bridge_mode_ == BRIDGE_OFF && out_level_ > 1.0e-4f) {
+      tail_freeze();
     }
-    if (want_polyphony != (int32_t)polyphony_value) {
-      polyphony_value = (uint16_t)want_polyphony;
-      part_.set_polyphony(want_polyphony);
+    if (change && bridge_mode_ != BRIDGE_IN) {
+      if (want_model != (int32_t)model_value) {
+        model_value = (uint16_t)want_model;
+        part_.set_model(static_cast<ResonatorModel>(want_model));
+      }
+      if (want_polyphony != (int32_t)polyphony_value) {
+        polyphony_value = (uint16_t)want_polyphony;
+        part_.set_polyphony(want_polyphony);
+      }
+    }
+    if (bridge_mode_ == BRIDGE_READY) {
+      /* The change was applied just above -- or undone while it waited, in
+       * which case the bridge simply hands back. */
+      tail_after_change(keeps || !change);
     }
   }
 
-  /* Pitch from adapter (note.fraction encoding) */
-  performance_state_.note =
+  /* Pitch from adapter (note.fraction encoding).  What sounds is held_note_,
+   * set below; see "Note changes wait for the next strike" at the top. */
+  const float host_note =
       ((float)(params->pitch >> 8)) +
       ((params->pitch & 0xFF) * k_note_mod_fscale);
 
@@ -590,20 +884,38 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
     performance_state_.chord = chord;
   }
 
-  /* Gate / strum detection.  When the arpeggiator is running it drives both
-   * the sounding pitch and the strum timing; otherwise strum follows the
-   * gate edge as before. */
+  /* Strike detection.  When the arpeggiator is running it drives both the
+   * pitch and the strike timing.  Otherwise every note-on strikes, counted
+   * rather than read off the gate: a note-on with the gate already up is a
+   * new note too, and one whose note-off arrived before this block still
+   * gets its strike. */
+  const uint32_t note_ons = note_on_count_;
+  const bool note_on = note_ons != note_on_seen_;
+  note_on_seen_ = note_ons;
+  bool strum;
+  float strike_note = host_note;
   if (arp_mode_ != 0 && gate_) {
-    float arp_note = performance_state_.note;
-    bool strum = arp_process(performance_state_.note, &arp_note);
-    performance_state_.note  = arp_note;
-    performance_state_.strum = strum;
-    previous_gate_ = gate_;
+    strike_note = held_note_;  /* a rest step leaves the ringing note alone */
+    strum = arp_process(host_note, &strike_note);
   } else {
-    performance_state_.strum = (gate_ && !previous_gate_);
-    previous_gate_ = gate_;
+    strum = note_on;
     if (!gate_) arp_pos_ = -1; /* rearm the arp for the next note-on */
   }
+
+  /* Hold the pitch between strikes. */
+  if (strum) {
+    held_note_    = strike_note;
+    since_strike_ = 0;
+  } else if (since_strike_ < kStrikeGrace) {
+    held_note_ = strike_note;  /* the strike just played, its pitch late */
+  } else {
+    const float step = host_note - host_note_prev_;
+    if (step > -kNoteJump && step < kNoteJump) held_note_ += step;
+  }
+  host_note_prev_ = host_note;
+  if (since_strike_ < kStrikeGrace) since_strike_ += kMaxBlockSize;
+  performance_state_.note  = held_note_;
+  performance_state_.strum = strum;
 
   /* Pitch modulation goes on last, after the arpeggiator has chosen its step.
    * Modulating the root the arp is built from instead would rewrite the
@@ -626,45 +938,78 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
   /* Clear input (internal exciter mode) */
   std::fill(&in_buffer_[0], &in_buffer_[kMaxBlockSize], 0.0f);
 
+  /* Output gain: +3 dB overall, with an extra +6 dB for the sympathetic-
+   * string models (1 and 4), which are inherently quieter than the
+   * Modal/String/FM/Reverb models.
+   *
+   * The +6 dB goes in ahead of Rings' own output limiter, the +3 dB after it.
+   * That limiter holds each channel to about 0.68 (8 of 10 Vpp on the
+   * module), so +3 dB after it peaks at 0.95 and the mono mix below can never
+   * reach full scale.  Both used to come after it, and with the extra +6 dB a
+   * loud sympathetic chord -- Sympathetic Quantized, the default model, at
+   * Polyphony 4, or Sympathetic at Polyphony 1 -- went up to 1.9 and was
+   * hard-clipped by the conversion below: measured with a note every 250 ms,
+   * 1-1.7% of samples sat at full scale, some 44 clipped peaks a second, each
+   * a corner in the waveform.  Ahead of the limiter the boost is the same for
+   * everything below its threshold and is limited, not clipped, above it.
+   * The other models' signal path is unchanged bit for bit. */
+  const bool sympathetic =
+      model_value == RESONATOR_MODEL_SYMPATHETIC_STRING ||
+      model_value == RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED;
+  const float out_gain = 1.4125375f;                     /* +3 dB */
+  part_.set_output_boost(sympathetic ? 1.9952623f : 1.0f); /* +6 dB */
+
   /* Process Rings */
   part_.Process(
       performance_state_, patch_,
       in_buffer_, out_buffer_, aux_buffer_,
       kMaxBlockSize);
 
-  /* Output gain: +3 dB overall, with an extra +6 dB for the sympathetic-
-   * string models (1 and 4), which are inherently quieter than the
-   * Modal/String/FM/Reverb models.  f32_to_q31 (and the NEON clamp) guard
-   * against overshoot on the rare loud transient. */
-  float out_gain = 1.4125375f; /* +3 dB */
-  if (model_value == RESONATOR_MODEL_SYMPATHETIC_STRING ||
-      model_value == RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED)
-    out_gain *= 1.9952623f;    /* +6 dB */
-
-  /* Mix stereo (out + aux) to mono Q31.
-   * The adapter expects exactly kMaxBlockSize mono Q31 samples. */
+  /* Mix stereo to mono: out + aux, except for String + Reverb, which is
+   * out - aux.  Rings negates that model's aux after its reverb (upstream
+   * part.cc), so on a stereo pair it is a sign convention, but summed to mono
+   * it cancelled the dry string: the model cross-mixes the two channels by
+   * Position first, so out + aux there is (2 * Position - 1) * (L - R) --
+   * exactly zero at the default Position of 50%, leaving only the reverb's
+   * stereo difference.  That is why the arpeggiator seemed not to work on
+   * this model: its strums were there, but only as reverb.  out - aux is
+   * the dry string plus the full reverb. */
+  static_assert(kMaxBlockSize % 4 == 0, "the mono stage works in groups of four");
+  const float aux_sign =
+      (model_value == RESONATOR_MODEL_STRING_AND_REVERB) ? -1.0f : 1.0f;
+  alignas(16) float mono[kMaxBlockSize];
 #ifdef __ARM_NEON
   {
     const float32x4_t vgain = vdupq_n_f32(0.5f * out_gain);
-    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
-    const float32x4_t vmin = vdupq_n_f32(-1.0f);
-    const float32x4_t vmax = vdupq_n_f32(1.0f);
-    size_t i = 0;
-    for (; i + 4 <= kMaxBlockSize; i += 4) {
+    const float32x4_t vsign = vdupq_n_f32(aux_sign);
+    for (size_t i = 0; i < kMaxBlockSize; i += 4) {
       float32x4_t l = vld1q_f32(out_buffer_ + i);
       float32x4_t r = vld1q_f32(aux_buffer_ + i);
-      float32x4_t m = vmulq_f32(vaddq_f32(l, r), vgain);
-      m = vmaxq_f32(vminq_f32(m, vmax), vmin);
-      int32x4_t q = vcvtq_s32_f32(vmulq_f32(m, vscale));
-      vst1q_s32(yn + i, q);
-    }
-    for (; i < kMaxBlockSize; ++i) {
-      yn[i] = f32_to_q31((out_buffer_[i] + aux_buffer_[i]) * 0.5f * out_gain);
+      vst1q_f32(mono + i, vmulq_f32(vmlaq_f32(l, r, vsign), vgain));
     }
   }
 #else
   for (size_t i = 0; i < kMaxBlockSize; ++i) {
-    yn[i] = f32_to_q31((out_buffer_[i] + aux_buffer_[i]) * 0.5f * out_gain);
+    mono[i] = (out_buffer_[i] + aux_sign * aux_buffer_[i]) * 0.5f * out_gain;
+  }
+#endif
+
+  tail_process(mono, kMaxBlockSize);
+
+  /* To Q31.  The adapter expects exactly kMaxBlockSize mono samples. */
+#ifdef __ARM_NEON
+  {
+    const float32x4_t vscale = vdupq_n_f32(2147483648.0f);
+    const float32x4_t vmin = vdupq_n_f32(-1.0f);
+    const float32x4_t vmax = vdupq_n_f32(1.0f);
+    for (size_t i = 0; i < kMaxBlockSize; i += 4) {
+      float32x4_t m = vmaxq_f32(vminq_f32(vld1q_f32(mono + i), vmax), vmin);
+      vst1q_s32(yn + i, vcvtq_s32_f32(vmulq_f32(m, vscale)));
+    }
+  }
+#else
+  for (size_t i = 0; i < kMaxBlockSize; ++i) {
+    yn[i] = f32_to_q31(mono[i]);
   }
 #endif
 }
@@ -675,6 +1020,7 @@ void OSC_NOTEON(const user_osc_param_t *const params)
   gate_ = true;
   arp_pos_   = -1; /* restart the arp sequence from the first step */
   arp_accum_ = 0;
+  note_on_count_ = note_on_count_ + 1; /* a strike, in the next block */
 }
 
 void OSC_NOTEOFF(const user_osc_param_t *const params)
@@ -702,7 +1048,8 @@ void OSC_NOTEOFF(const user_osc_param_t *const params)
 void OSC_RESET(void)
 {
   gate_          = false;
-  previous_gate_ = false;
+  note_on_seen_  = note_on_count_;
+  since_strike_  = kStrikeGrace;
   shape_lfo      = 0.0f;
   lfo2           = 0.0f;
   lfo2_phase     = 0.0f;
@@ -717,6 +1064,7 @@ void OSC_RESET(void)
   std::fill(&in_buffer_[0],  &in_buffer_[kMaxBlockSize],  0.0f);
   std::fill(&out_buffer_[0], &out_buffer_[kMaxBlockSize], 0.0f);
   std::fill(&aux_buffer_[0], &aux_buffer_[kMaxBlockSize], 0.0f);
+  tail_reset();
 }
 
 void OSC_PARAM(uint16_t index, uint16_t value)

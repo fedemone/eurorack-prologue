@@ -27,6 +27,7 @@ commit **58b9125**.
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks**, including at POSITION 0 | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
 | `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
+| `rings/dsp/part.{h,cc}`, `rings/dsp/string.h` | **Model/Polyphony changes keep what is ringing**; **String + Reverb's reverb rings out**; **sympathetic strings retune with a glide**; **a caller's boost goes ahead of the limiter** | Rings' Model and Polyphony, sympathetic models |
 | `plaits/dsp/speech/lpc_speech_synth_words.h` | **`LPC_SPEECH_SYNTH_NUM_WORD_BANKS` 5 → 6** | Mussola's word banks |
 
 Why forked, and what changed
@@ -631,6 +632,100 @@ ninth than one chord did to a second recording of itself. Two bins a third of
 a semitone apart in the same recording share whatever overtones land there, so
 what is left between them is the fundamental. Margins are 60× to 11000×.
 
+### `rings/dsp/part.{h,cc}`, `rings/dsp/string.h` — changes that keep sounding
+
+Four changes, all about what is heard when something changes. Measured on the
+ARM build through the drumlogue ABI under `qemu-arm`, with the click measure
+being the largest second difference around the event against the RMS second
+difference of the signal on either side (ordinary programme sits at 2-4).
+
+**1. Model and Polyphony changes keep what is ringing.** Upstream's
+`ConfigureResonators()` re-initialises everything on any change -- all eight
+strings (~96 KB of delay line), every voice's 64-mode resonator, every FM
+voice -- so the sound stopped dead and started again from silence. Within a
+family that is not necessary. The four string models share `string_[]` and
+differ only in how many strings each voice runs, how they are tuned and
+whether dispersion is on; a string rendered both before and after a change now
+keeps its delay line and is retuned like any note change, and only strings that
+start or stop being rendered are cleared (one that starts would otherwise
+resume whatever it last held; one that stops would hold it, frozen, until
+then). FM voices carry across a polyphony change the same way. A modal
+polyphony change still starts from silence: `Resonator` keeps its modes'
+state privately, and the modes past a lower resolution would freeze rather
+than decay, to come back ringing when the resolution went up.
+
+`string.h` is forked for one setter, `set_dispersion_enabled()`, because the
+dispersion flag was only reachable through `Init()`, which also clears the
+delay line. `part.h` is forked for the bookkeeping -- what was last configured
+-- and for `KeepsStateFor()`, which tells the caller in advance whether a
+change carries the sound across. `rings-resonator.cc` bridges every change
+made while something is sounding (2 ms crossfade into a frozen copy of the
+last 85 ms of output, the change, then either a 24 ms crossfade back to the
+continuing strings or a decay under the new engine), which also covers the
+level, mix and gain differences between configurations that would otherwise
+step at the change. Together, with a note ringing:
+
+| Change | Before | After |
+|---|---|---|
+| Sympathetic Quantized -> String | silence, 46x | continues, 2.8x |
+| String -> Sympathetic Quantized | silence, 287x | continues, 4.6x |
+| String -> String + Reverb | silence, 287x | continues, 2.0x |
+| Polyphony 4 -> 1 (Sympathetic Quantized) | silence, 73x | continues, 5.2x |
+| Modal -> String | silence, 1764x | continues, 2.3x |
+| Model knob swept 0-5, one step per 30 ms | silence after step 1 | continues, 3.4x |
+
+**2. The String + Reverb reverb rings out.** Leaving that model for String --
+whose strings now carry on -- the reverb is fed silence for four seconds, the
+last of which fades its time and level to zero, instead of stopping mid-tail.
+That costs what String + Reverb itself spent on it, about 17k instructions per
+render on top of String's 27k. Into the other models it would raise Rings above
+any load it otherwise reaches (a sympathetic model at polyphony 1 would go from
+93k to ~109k for four seconds), so there the bridge's 24 ms crossfade fades it
+instead, and its contents freeze and are cleared before String + Reverb is
+next used. Upstream resumed them: measured, model 5 -> modal -> model 5
+brought back the old reverb at -27 dB.
+
+**3. Sympathetic strings retune with a glide.** Upstream's coefficient for
+them, `SemitonesToRatio((brightness - 1) * 36)`, is about 0.88 per block at
+default Brightness: a near-instant jump. They ring longest, and they are
+retuned while ringing -- at polyphony 4 every new note lands on a voice whose
+strings still ring a note from four notes ago -- so each retune reads a few
+hundred samples of delay line inside one 24-sample block. With a note change
+every 250 ms that retunes without striking (what LFO -> Note and Chord changes
+produce, and legato note-ons did until `rings-resonator.cc` made every note-on
+strike; a fresh strike partly masks it) through NeonLabirinto and
+OmniPress, that registered as a click on most note changes: 15 in 10 s for Sympathetic Quantized at polyphony 4,
+7 for Sympathetic at polyphony 1. Capping the coefficient at 0.2 (2.2 ms time
+constant, settled in about 7 ms) takes both to zero, and only affects the
+bright end -- darker settings were already slower. The main string is struck
+as it retunes, which masks its own jump; gliding it too measured no better.
+The arpeggiator's steps, partly smeared by those chirps, now read at the right
+pitch on every step in both models.
+
+**4. A caller's boost goes ahead of the limiter.** The port lifts the two
+sympathetic models by 6 dB, and did so after Part's output limiter, which
+holds each channel to ~0.68. A loud sympathetic chord -- the default model at
+polyphony 4, or Sympathetic at polyphony 1 -- then reached 1.9 and was
+hard-clipped at the Q31 conversion: 1-1.7% of samples at full scale, some 44
+clipped peaks a second. `set_output_boost()` puts it ahead of the limiter,
+where it is the same gain below the limiter's threshold and is limited, not
+clipped, above it. Those two configurations come down about 6 dB in RMS on
+that test (from -7 dBFS, the loudest Rings setting by a margin, to -13), into
+the range of the other models; every other configuration is unchanged.
+
+**Cost**, counted in instructions per 64-frame render on the ARM build (-O3,
+qemu, unit code only). Holding a model, Rings is within about 2% of what it
+was: String +2.2%, Sympathetic Quantized +1.0%, FM -0.6%. Modal is 9% cheaper
+at every polyphony with bit-identical output -- the compiler schedules its
+unchanged filter loop better in this build, a side effect rather than
+anything the patch does. Around a change, a playing tail adds about forty
+instructions per sample (2.5k per render, under 3% of the default model) for
+as long as it lasts, and the String + Reverb ring-out adds the 17k given in 2
+above. Keeping the 85 ms history costs about a hundred per render throughout.
+
+Model and polyphony transitions were checked against AddressSanitizer and
+UBSan as well as on the ARM build; `make test-arm` and `make test-asan` pass.
+
 Build wiring — read this before touching it
 -------------------------------------------
 
@@ -641,7 +736,9 @@ translation units see these headers and others see the submodule's links
 without complaint and then corrupts memory at run time. The Rings pair has the
 same shape for a different reason: a `part.cc` compiled against the
 submodule's `kNumChords` would index a fourteen-row parameter into an
-eleven-row table.
+eleven-row table. The forked `part.h` changes `sizeof(Part)` as well:
+`rings-resonator.cc` instantiates `Part`, so it and `part.cc` must both see the
+fork. (`string.h` adds only an inline setter; its layout is unchanged.)
 
 So the rule is all-or-nothing, and it is enforced:
 
@@ -731,7 +828,8 @@ git -C eurorack log --oneline 58b9125..HEAD -- \
     clouds/dsp/pvoc/phase_vocoder.cc clouds/dsp/wsola_sample_player.h \
     clouds/dsp/grain.h clouds/dsp/correlator.cc \
     clouds/dsp/pvoc/frame_transformation.cc stmlib/fft/shy_fft.h \
-    rings/dsp/part.cc rings/dsp/performance_state.h \
+    rings/dsp/part.cc rings/dsp/part.h rings/dsp/string.h \
+    rings/dsp/performance_state.h \
     plaits/dsp/speech/lpc_speech_synth_words.h
 ```
 
@@ -746,10 +844,14 @@ diffuser ramp: `make test-clouds-synth` covers all four modes, and
 test-clouds-grain-window` are the three that compare fork against original
 directly, so run all of them.
 
-For the Rings pair the re-sync is mechanical — the fork is the upstream file
-with three rows appended to each of the two chord tables and the dimension
-named rather than spelled `11`. If upstream ever changes those tables, the
-rows to keep are the ones marked "Added for the drumlogue port".
+For the Rings files the re-sync is mechanical. The chord fork is the upstream
+file with three rows appended to each of the two chord tables and the
+dimension named rather than spelled `11`; if upstream ever changes those
+tables, the rows to keep are the ones marked "Added for the drumlogue port".
+The other changes are each marked `FORK:` -- `ConfigureResonators()` and
+`KeepsStateFor()`, the reverb tail and the limiter boost at the end of
+`Process()`, the glide cap in `RenderStringVoice()`, the members and setters
+in `part.h`, and `set_dispersion_enabled()` in `string.h`.
 
 The Plaits header is the same kind of re-sync: take upstream's file and change
 the one constant back to 6. If upstream ever changes the count itself, the

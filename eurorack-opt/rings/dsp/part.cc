@@ -27,11 +27,33 @@
 // FORKED AND MODIFIED for the drumlogue port.
 //
 // Original: eurorack/rings/dsp/part.cc at 58b9125.
-// Only the two chord tables differ.  See eurorack-opt/README.md for what
-// changed and why, and for how to re-sync this file if the submodule moves.
+// See eurorack-opt/README.md for what changed and why, and for how to re-sync
+// this file if the submodule moves.  Goes with the forked part.h and string.h.
 //
-// Change: three chords added to the end of each table, and the tables sized
-// with kNumChords instead of a literal 11.
+// Changes:
+//
+//  1. ConfigureResonators() keeps what is already ringing.  Upstream
+//     re-initialises every string, mode set or FM voice on any Model or
+//     Polyphony change, so the sound stopped dead and started again from
+//     nothing.  Now a change within the string models, or a polyphony change
+//     for the string and FM models, carries on from the current state; see
+//     the comment on ConfigureResonators().  Part::KeepsStateFor() says in
+//     advance which changes do, so the caller can bridge the ones that cannot.
+//
+//  2. The String + Reverb model's reverb rings out after a change to String
+//     instead of stopping (Process(), at the end).
+//
+//  3. set_output_boost(): a caller's extra gain goes ahead of the limiter
+//     (Process(), at the end), so the limiter holds it.
+//
+//  4. The sympathetic strings retune no faster than kSympatheticGlideMax per
+//     block (RenderStringVoice()).  Upstream lets them jump almost at once;
+//     on a string that is still ringing that scrubs its delay line through a
+//     few hundred samples inside one 24-sample block, a chirp that measured as
+//     a click on most note changes in the sympathetic models at polyphony 4.
+//
+//  5. Three chords added to the end of each table, and the tables sized with
+//     kNumChords instead of a literal 11 -- the rest of this note.
 //
 // The literal was a hazard, not just a style point.  performance_state.chord
 // reaches this table through Part::Process() with no bounds check between the
@@ -102,6 +124,12 @@ void Part::Init(uint16_t* reverb_buffer) {
   polyphony_ = 1;
   model_ = RESONATOR_MODEL_MODAL;
   dirty_ = true;
+  configured_ = false;
+  configured_model_ = model_;
+  configured_polyphony_ = polyphony_;
+  reverb_tail_ = 0;
+  reverb_stale_ = false;
+  output_boost_ = 1.0f;
   
   for (int32_t i = 0; i < kMaxPolyphony; ++i) {
     excitation_filter_[i].Init();
@@ -120,17 +148,108 @@ void Part::Init(uint16_t* reverb_buffer) {
       0.004f); // Prevent a sharp edge to partly leak on the previous voice.
 }
 
+namespace {
+
+// FORK: the three engines Part switches between.  State only carries across
+// a change inside one of them.
+enum ResonatorFamily { FAMILY_MODAL, FAMILY_STRING, FAMILY_FM };
+
+inline ResonatorFamily family_of(ResonatorModel model) {
+  return model == RESONATOR_MODEL_MODAL ? FAMILY_MODAL
+      : (model == RESONATOR_MODEL_FM_VOICE ? FAMILY_FM : FAMILY_STRING);
+}
+
+// How many of string_[] RenderStringVoice() runs.  Voice v uses strings
+// v + k * polyphony for k < num_strings, so the set is always a prefix: all
+// eight for the sympathetic models (num_strings = 8 / polyphony), the first
+// `polyphony` for the others (num_strings = 1).
+inline int32_t rendered_strings(ResonatorModel model, int32_t polyphony) {
+  return (model == RESONATOR_MODEL_SYMPATHETIC_STRING ||
+          model == RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED)
+      ? kNumStrings : polyphony;
+}
+
+// The String + Reverb tail: four seconds, of which the last one fades the
+// reverb time and the level to zero, so what is left in the reverb at the end
+// is negligible rather than frozen.
+const int32_t kReverbTailSamples = 4 * 48000;
+const int32_t kReverbFadeSamples = 48000;
+
+// Fastest a sympathetic string may retune, as the per-block coefficient of
+// String::set_frequency(): 2.2 ms time constant, settled within about 7 ms.
+// Upstream's glide here is SemitonesToRatio((brightness - 1) * 36), about
+// 0.88 at default Brightness -- a near-instant jump -- so this only caps the
+// bright end; darker settings were already slower and are left alone.
+//
+// It is the sympathetic strings that need it.  They ring longest (damping
+// 0.7 + 0.27 * Damping) and they are the ones retuned while still sounding:
+// at polyphony 4 every new note lands on a voice whose strings are ringing a
+// note or chord from four notes ago.  Each retune then reads its delay line
+// through a few hundred samples within one block -- a chirp.  Measured on the
+// ARM build, with a note change every 250 ms that retuned without striking
+// (as LFO -> Note and Chord changes do, and legato note-ons did until the
+// wrapper made every note-on strike; a fresh strike partly masks it)
+// through the reverb and the compressor, this took the clicks found at note
+// changes from 15 to none in Sympathetic Quantized at polyphony 4 and from 7
+// to none in Sympathetic at polyphony 1.  The main string is struck as it
+// retunes, which hides its own jump; gliding it as well measured no better.  A side effect: the arpeggiator's steps,
+// which were partly smeared by those chirps, now read at the right pitch on
+// every step in both models.
+const float kSympatheticGlideMax = 0.2f;
+
+}  // namespace
+
+bool Part::KeepsStateFor(ResonatorModel model, int32_t polyphony) const {
+  if (!configured_) {
+    return true;  // Nothing has rendered since Init(): nothing to keep.
+  }
+  if (family_of(model) != family_of(configured_model_)) {
+    return false;
+  }
+  // A modal resonator keeps its modes' state privately, and the modes past a
+  // lower resolution would freeze rather than decay -- to come back, ringing,
+  // the next time the resolution went up.  So a modal polyphony change (which
+  // is a resolution change) starts from silence.
+  return family_of(model) != FAMILY_MODAL ||
+      std::min(polyphony, kMaxPolyphony) == configured_polyphony_;
+}
+
+// FORK: keep what is already ringing.
+//
+// Upstream re-initialised everything here on any change: all eight strings
+// (clearing ~96 KB of delay line), or every voice's 64-mode resonator, or every
+// FM voice.  Within a family that is not necessary:
+//
+//  - Strings.  The four string models share string_[] and differ only in how
+//    many strings each voice runs, how they are tuned, and whether dispersion
+//    is on.  A string rendered both before and after the change keeps its
+//    delay line and is retuned to its new voice and model like any note
+//    change.  A string that starts being rendered, or stops, is cleared: one
+//    that starts would otherwise resume whatever it held when it was last
+//    rendered, perhaps long ago, and one that stops would hold its sound
+//    frozen until then.
+//  - FM voices.  Existing voices carry on; voices new to the polyphony start
+//    clean, for the same reason.
+//  - Modal.  See KeepsStateFor().
+//
+// A change between families starts from silence as before;
+// KeepsStateFor() is how the caller finds out beforehand.
 void Part::ConfigureResonators() {
   if (!dirty_) {
     return;
   }
-  
+
+  const bool keep = configured_ && KeepsStateFor(model_, polyphony_);
+  const int32_t old_polyphony = keep ? configured_polyphony_ : 0;
+
   switch (model_) {
     case RESONATOR_MODEL_MODAL:
       {
         int32_t resolution = 64 / polyphony_ - 4;
         for (int32_t i = 0; i < polyphony_; ++i) {
-          resonator_[i].Init();
+          if (!keep) {
+            resonator_[i].Init();
+          }
           resonator_[i].set_resolution(resolution);
         }
       }
@@ -144,16 +263,24 @@ void Part::ConfigureResonators() {
         float lfo_frequencies[kNumStrings] = {
           0.5f, 0.4f, 0.35f, 0.23f, 0.211f, 0.2f, 0.171f
         };
+        bool has_dispersion = model_ == RESONATOR_MODEL_STRING || \
+            model_ == RESONATOR_MODEL_STRING_AND_REVERB;
+        int32_t was = keep
+            ? rendered_strings(configured_model_, configured_polyphony_) : 0;
+        int32_t now = rendered_strings(model_, polyphony_);
         for (int32_t i = 0; i < kNumStrings; ++i) {
-          bool has_dispersion = model_ == RESONATOR_MODEL_STRING || \
-              model_ == RESONATOR_MODEL_STRING_AND_REVERB;
-          string_[i].Init(has_dispersion);
-
-          float f_lfo = float(kMaxBlockSize) / float(kSampleRate);
-          f_lfo *= lfo_frequencies[i];
-          lfo_[i].Init<COSINE_OSCILLATOR_APPROXIMATE>(f_lfo);
+          if (i < was && i < now) {
+            string_[i].set_dispersion_enabled(has_dispersion);
+          } else {
+            string_[i].Init(has_dispersion);
+          }
+          if (!keep) {
+            float f_lfo = float(kMaxBlockSize) / float(kSampleRate);
+            f_lfo *= lfo_frequencies[i];
+            lfo_[i].Init<COSINE_OSCILLATOR_APPROXIMATE>(f_lfo);
+          }
         }
-        for (int32_t i = 0; i < polyphony_; ++i) {
+        for (int32_t i = old_polyphony; i < polyphony_; ++i) {
           plucker_[i].Init();
         }
       }
@@ -161,7 +288,7 @@ void Part::ConfigureResonators() {
     
     case RESONATOR_MODEL_FM_VOICE:
       {
-        for (int32_t i = 0; i < polyphony_; ++i) {
+        for (int32_t i = old_polyphony; i < polyphony_; ++i) {
           fm_voice_[i].Init();
         }
       }
@@ -171,9 +298,36 @@ void Part::ConfigureResonators() {
       break;
   }
 
+  // The String + Reverb model's reverb.  Leaving it for String, whose strings
+  // carry on, it rings out too (see the end of Process()): String plus the
+  // reverb costs what String + Reverb itself did, about 17k instructions per
+  // render more than String alone.  Into the other models it would raise the
+  // unit's load above anything it otherwise reaches -- a sympathetic model at
+  // polyphony 1 to ~109k, against 93k at most -- for four seconds, so there
+  // its contents freeze (the caller's crossfade fades what was heard of them)
+  // and are cleared before the String + Reverb model is next heard.
+  const bool leaving_reverb = configured_ &&
+      configured_model_ == RESONATOR_MODEL_STRING_AND_REVERB &&
+      model_ != RESONATOR_MODEL_STRING_AND_REVERB;
+  if (model_ == RESONATOR_MODEL_STRING_AND_REVERB) {
+    if (reverb_stale_) {
+      reverb_.Clear();
+      reverb_stale_ = false;
+    }
+    reverb_tail_ = 0;
+  } else if (leaving_reverb && model_ == RESONATOR_MODEL_STRING) {
+    reverb_tail_ = kReverbTailSamples;
+  } else if (leaving_reverb || (reverb_tail_ > 0 && model_ != RESONATOR_MODEL_STRING)) {
+    reverb_stale_ = true;
+    reverb_tail_ = 0;
+  }
+
   if (active_voice_ >= polyphony_) {
     active_voice_ = 0;
   }
+  configured_model_ = model_;
+  configured_polyphony_ = polyphony_;
+  configured_ = true;
   dirty_ = false;
 }
 
@@ -526,7 +680,8 @@ void Part::RenderStringVoice(
       damping = 0.7f + patch.damping * 0.27f;
       float amount = (0.5f - fabs(0.5f - patch.position)) * 0.9f;
       position = patch.position + lfo_value * amount;
-      glide = SemitonesToRatio((brightness - 1.0f) * 36.0f);
+      glide = min(SemitonesToRatio((brightness - 1.0f) * 36.0f),
+                  kSympatheticGlideMax);
       input = sympathetic_resonator_input_;
     }
     
@@ -651,10 +806,35 @@ void Part::Process(
     for (size_t i = 0; i < size; ++i) {
       aux[i] = -aux[i];
     }
+  } else if (reverb_tail_ > 0) {
+    // FORK: the String + Reverb model's reverb ringing out after a change to
+    // String, fed silence, with the patch still steering it.
+    // In its own model the reverb's right channel leaves negated, so a mono
+    // mix takes out - aux there; here it is added as is to a model mixed as
+    // out + aux, which is the same sum.  Limiter gain and the caller's own
+    // make-up differ between the models, so the tail is held at its level.
+    float fade = reverb_tail_ < kReverbFadeSamples
+        ? static_cast<float>(reverb_tail_) / static_cast<float>(kReverbFadeSamples)
+        : 1.0f;
+    fill(&out_buffer_[0], &out_buffer_[size], 0.0f);
+    fill(&aux_buffer_[0], &aux_buffer_[size], 0.0f);
+    reverb_.set_amount(0.1f + patch.damping * 0.5f);
+    reverb_.set_time((0.35f + 0.63f * patch.damping) * fade);
+    reverb_.set_lp(0.3f + patch.brightness * 0.6f);
+    reverb_.Process(out_buffer_, aux_buffer_, size);
+    float gain = fade *
+        model_gains_[RESONATOR_MODEL_STRING_AND_REVERB] /
+        (model_gains_[model_] * output_boost_);
+    for (size_t i = 0; i < size; ++i) {
+      out[i] += out_buffer_[i] * gain;
+      aux[i] += aux_buffer_[i] * gain;
+    }
+    reverb_tail_ -= static_cast<int32_t>(size);
   }
   
-  // Apply limiter to string output.
-  limiter_.Process(out, aux, size, model_gains_[model_]);
+  // Apply limiter to string output.  FORK: with the caller's boost, which
+  // the limiter therefore holds; see set_output_boost().
+  limiter_.Process(out, aux, size, model_gains_[model_] * output_boost_);
 }
 
 /* static */
