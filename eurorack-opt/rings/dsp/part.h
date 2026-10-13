@@ -34,7 +34,7 @@
 // Model or Polyphony change can keep the resonators that are already ringing
 // instead of re-initialising every one of them, and says in advance whether a
 // given change can (KeepsStateFor()).  Also a counter that lets the
-// String  Reverb model's reverb ring out after a change to another model,
+// String + Reverb model's reverb ring out after a change to another model,
 // and an output boost the limiter applies (set_output_boost()).
 //
 // Group of voices.
@@ -98,8 +98,8 @@ class Part {
   inline void set_polyphony(int32_t polyphony) {
     int32_t old_polyphony = polyphony_;
     polyphony_ = std::min(polyphony, kMaxPolyphony);
-    for (int32_t i = old_polyphony; i < polyphony_; i) {
-      note_[i] = note_[0]  i * 0.05f;
+    for (int32_t i = old_polyphony; i < polyphony_; ++i) {
+      note_[i] = note_[0] + i * 0.05f;
     }
     dirty_ = true;
   }
@@ -122,7 +122,7 @@ class Part {
   // FORK: extra gain ahead of the output limiter, for a caller that wants a
   // model louder than upstream balances it (the drumlogue port lifts the two
   // sympathetic models by 6 dB).  Applied after the limiter, such a boost has
-  // no ceiling; applied here, the limiter holds it.  The String  Reverb tail
+  // no ceiling; applied here, the limiter holds it.  The String + Reverb tail
   // that rings out after leaving that model is not boosted.
   inline void set_output_boost(float boost) { output_boost_ = boost; }
 
@@ -187,9 +187,9 @@ class Part {
   ResonatorModel configured_model_;
   int32_t configured_polyphony_;
   bool configured_;
-  // FORK: samples left of the String  Reverb model's reverb ringing out
+  // FORK: samples left of the String + Reverb model's reverb ringing out
   // after a change to String, and whether the reverb holds audio frozen by a
-  // change it did not ring out after (cleared before the String  Reverb
+  // change it did not ring out after (cleared before the String + Reverb
   // model next uses it).
   int32_t reverb_tail_;
   bool reverb_stale_;

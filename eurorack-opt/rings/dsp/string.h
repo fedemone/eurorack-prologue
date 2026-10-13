@@ -31,7 +31,7 @@
 // moves.
 //
 // Change: set_dispersion_enabled(), so Part can move a string between the
-// models with dispersion (String, String  Reverb) and those without
+// models with dispersion (String, String + Reverb) and those without
 // (Sympathetic, Sympathetic Quantized) while it keeps ringing.  The flag was
 // only reachable through Init(), which also clears the delay line -- so every
 // such model change used to silence the strings and start them again from
@@ -85,13 +85,13 @@ class DampingFilter {
   }
 
   inline float Process(float x) {
-    float h0 = (1.0f  brightness_) * 0.5f;
+    float h0 = (1.0f + brightness_) * 0.5f;
     float h1 = (1.0f - brightness_) * 0.25f;
-    float y = damping_ * (h0 * x_  h1 * (x  x__));
+    float y = damping_ * (h0 * x_ + h1 * (x + x__));
     x__ = x_;
     x_ = x;
-    brightness_ = brightness_increment_;
-    damping_ = damping_increment_;
+    brightness_ += brightness_increment_;
+    damping_ += damping_increment_;
     return y;
   }
  private:
@@ -121,7 +121,7 @@ class String {
   }
 
   inline void set_frequency(float frequency, float coefficient) {
-    frequency_ = coefficient * (frequency - frequency_);
+    frequency_ += coefficient * (frequency - frequency_);
   }
 
   inline void set_dispersion(float dispersion) {
