@@ -1,10 +1,16 @@
 # Drumlogue Port of Eurorack Oscillators
 
 This project ports Mutable Instruments oscillator engines to the **Korg drumlogue**
-synthesizer platform. 19 oscillator variants are available, covering subtractive,
-FM, granular, physical modelling, spectral, and vocal synthesis.
+synthesizer platform: 19 synth units, covering subtractive, FM, granular,
+physical modelling, spectral and vocal synthesis, plus **CloudsFX**, a delay
+effect unit that runs Clouds on the drumlogue's effect bus.
 
-**Project Status**: Concluded. 347 tests passing across 7 test suites.
+**Project Status**: Concluded. The test suites run on every push; see
+*Building* in the [README](README.md#building) for the full list.
+
+This document is the port's overview. Every unit's parameters, defaults and
+tips are documented in one place, the [README](README.md), and the tables
+below link to the right section.
 
 ---
 
@@ -14,243 +20,49 @@ FM, granular, physical modelling, spectral, and vocal synthesis.
 
 1. Build the `.drmlgunit` files (see [Building](#building-for-drumlogue) below)
 2. Power on your drumlogue and connect via USB (mass storage mode)
-3. Copy `.drmlgunit` files to the `Units/Synths/` directory
-4. Restart the drumlogue — new synth units appear in the synth selection menu
+3. Copy the synth units to `Units/Synths/`, and `clouds_fx.drmlgunit` (the
+   CloudsFX delay effect, not to be confused with the `clouds` synth) to
+   `Units/DelayFXs/`
+4. Restart the drumlogue — new synth units appear in the synth selection
+   menu, and CloudsFX among the delay effects
+
+The full installation notes are in the [README](README.md#installation).
 
 ### Usage
 
 Each oscillator appears as a selectable synth unit on the drumlogue. Navigate
 parameters using the drumlogue's 4-knob interface (parameters are organized in
-pages of 4). Use the trigger pad or external MIDI to play notes.
+pages of 4, in the order of each unit's parameter table). Use the trigger pad
+or external MIDI to play notes.
 
-**Base Note** (param 0 on all units) sets the pitch played by the drumlogue's
-trigger pad. MIDI note-on events bypass this and play the received note directly.
+**Base Note** (param 0 on all synth units) sets the pitch played by the
+drumlogue's trigger pad. MIDI note-on events bypass this and play the received
+note directly. CloudsFX, being an effect, has no Base Note.
 
 ---
 
-## Oscillator Guide
+## Units
 
-### Plaits Engines (12 variants)
+| Unit File | Shown on the drumlogue as | Type | Parameters | Documentation |
+|-----------|---------------------------|------|-----------:|---------------|
+| `mo2_va.drmlgunit` | VirtAnalog | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_wsh.drmlgunit` | Waveshaper | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_fm.drmlgunit` | FM | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_grn.drmlgunit` | Granular | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_add.drmlgunit` | Additive | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_string.drmlgunit` | String | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `mo2_wta.drmlgunit` … `mo2_wtf.drmlgunit` | Wavetable A … Wavetable F | Synth | 15 | [Plaits](README.md#macro-oscillator-2-based-on-plaits) |
+| `modal_strike.drmlgunit` | ModalStrike | Synth | 15 | [Elements](README.md#modal-resonator-based-on-elements) |
+| `modal_strike_16_nolimit.drmlgunit` | Strike16 | Synth | 15 | [Elements](README.md#modal-resonator-based-on-elements) |
+| `modal_strike_24_nolimit.drmlgunit` | Strike24 | Synth | 15 | [Elements](README.md#modal-resonator-based-on-elements) |
+| `elements_full.drmlgunit` | ElementsFull | Synth | 15 | [Elements](README.md#modal-resonator-based-on-elements) |
+| `rings.drmlgunit` | Rings | Synth | 21 | [Rings](README.md#rings-resonator-based-on-rings) |
+| `clouds.drmlgunit` | Clouds | Synth | 16 | [Clouds](README.md#clouds-based-on-clouds) |
+| `mussola.drmlgunit` | Mussola | Synth | 24 | [Mussola](README.md#mussola-vocal-synthesis) |
+| `clouds_fx.drmlgunit` | CloudsFX | **Delay effect** | 11 | [CloudsFX](README.md#cloudsfx-clouds-as-an-insert-effect) |
 
-These oscillators are based on Mutable Instruments **Plaits**, a macro-oscillator
-offering 16 synthesis engines in the original Eurorack module. Each drumlogue unit
-exposes one engine with full parameter control.
-
-| Unit File | Display Name | What It Sounds Like |
-|-----------|-------------|---------------------|
-| `mo2_va.drmlgunit` | VirtAnalog | Classic analog — saw, square, pulse width. Warm, fat tones good for basses and leads. |
-| `mo2_wsh.drmlgunit` | Waveshaper | Sine through various waveshaping functions. Harmonically rich, from subtle warmth to aggressive distortion. |
-| `mo2_fm.drmlgunit` | FM | Two-operator FM synthesis. Metallic bells, electric pianos, bass. Shape controls modulation index. |
-| `mo2_grn.drmlgunit` | Granular | Granular cloud of short sound particles. Textural, evolving pads and atmospheric drones. |
-| `mo2_add.drmlgunit` | Additive | Harmonic series with individual partial control. Organ-like tones, vowel-ish resonances. |
-| `mo2_string.drmlgunit` | String | Karplus-Strong physical model. Plucked strings, harps, metallic resonances. |
-| `mo2_wta.drmlgunit` | Wavetable A | Wavetable scanning through bank A. Evolving timbres, PWM-like sweeps. |
-| `mo2_wtb.drmlgunit` | Wavetable B | Wavetable bank B. Different wave shapes and timbral territory. |
-| `mo2_wtc.drmlgunit` | Wavetable C | Wavetable bank C. |
-| `mo2_wtd.drmlgunit` | Wavetable D | Wavetable bank D. |
-| `mo2_wte.drmlgunit` | Wavetable E | Wavetable bank E. |
-| `mo2_wtf.drmlgunit` | Wavetable F | Wavetable bank F. |
-
-**Parameters (13 per unit):**
-
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Shape | Primary timbre control (0-100%) |
-| 2 | ShiftShape | Secondary timbre / color control (0-100%) |
-| 3 | Param 1 | Engine-specific parameter, bipolar (0-100%, center=50) |
-| 4 | Param 2 | Engine-specific parameter (0-100%) |
-| 5 | LFO Target | Which parameter the shape LFO modulates |
-| 6 | LFO1 Shape | Waveform of the shape LFO |
-| 7 | LFO1 Rate | Shape LFO speed (0-100%) |
-| 8 | LFO2 Rate | Second LFO speed (0-100%) |
-| 9 | LFO2 Depth | Second LFO amount (0-100%) |
-| 10 | LFO2 Target | Which parameter LFO2 modulates |
-| 11 | LFO2 Shape | Waveform of LFO2 |
-| 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
-
-**LFO Target values**: 0=Shape, 1=ShiftShape, 2=Param1, 3=Param2, 4=Pitch, 5=Amplitude, 6=LFO2Freq, 7=LFO2Depth
-
-**Sound design tips:**
-- Start with Shape and ShiftShape for broad timbre changes
-- Use Param 1 at center (50) as the neutral point — moving below or above sweeps opposite directions
-- Set LFO Target to Shape (0) and increase LFO2 Rate/Depth for evolving textures
-- Gate Mode: Trigger = percussive hits, Sustain = held notes, Continuous = drone
-
-### Elements Engines (4 variants)
-
-Based on Mutable Instruments **Elements**, a modal synthesis voice combining an
-exciter (strike/bow/blow) with a bank of tuned bandpass resonators. Produces
-realistic percussive and resonant sounds — bells, chimes, bars, plates, and bowed
-metallic tones.
-
-| Unit File | Display Name | Modes | Limiter | Character |
-|-----------|-------------|-------|---------|-----------|
-| `modal_strike.drmlgunit` | ModalStrike | 24 | Yes | Standard modal — rich resonance, safe output levels |
-| `modal_strike_16_nolimit.drmlgunit` | Strike16 | 16 | No | Lighter CPU, fewer partials, more aggressive dynamics |
-| `modal_strike_24_nolimit.drmlgunit` | Strike24 | 24 | No | Full resonance, raw dynamics (can clip) |
-| `elements_full.drmlgunit` | ElementsFull | 64 | Yes | Maximum resonance detail, extended exciter range |
-
-**Parameters (15 per unit):**
-
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Position | Where the exciter hits the resonator (0-100%) |
-| 2 | Geometry | Modal density / resonator shape (0-100%) |
-| 3 | Strength | Strike exciter level (0-100%) |
-| 4 | Mallet | Exciter type: mallet (0) through particles (100) |
-| 5 | Timbre | Exciter brightness / spectral content (0-100%) |
-| 6 | Damping | How quickly resonances decay (0-100%) |
-| 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
-| 8 | LFO Target | Which parameter the shape LFO modulates |
-| 9 | LFO1 Shape | Waveform of the shape LFO |
-| 10 | LFO1 Rate | Shape LFO speed (0-100%) |
-| 11 | LFO2 Rate | Second LFO speed (0-100%) |
-| 12 | LFO2 Depth | Second LFO amount (0-100%) |
-| 13 | LFO2 Target | Which parameter LFO2 modulates |
-| 14 | LFO2 Shape | Waveform of LFO2 |
-
-**LFO Target values**: 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
-
-**Sound design tips:**
-- Position + Geometry define the fundamental character — sweep slowly for evolving tones
-- Mallet at 0 = rubber mallet, at 50 = wooden stick, at 100 = granular particles
-- Low Damping + high Brightness = ringing bells; high Damping = dull thuds
-- ElementsFull with 64 modes gives the richest resonance but uses more CPU
-
-### Rings (1 variant)
-
-Based on Mutable Instruments **Rings**, a resonator module with six distinct models.
-Produces tuned resonant sounds from plucked strings to metallic reverberant tones.
-Responds to both internal excitation and external triggers.
-
-| Unit File | Display Name | Models | Character |
-|-----------|-------------|--------|-----------|
-| `rings.drmlgunit` | Rings | 6 | Resonant strings, bells, reverberant metallic sounds |
-
-**The 6 resonator models:**
-
-| # | Model | Description |
-|---|-------|-------------|
-| 0 | Modal | Bank of bandpass filters — bells, tubes, plates |
-| 1 | Sympathetic String | Physical string with sympathetic resonance — sitar-like |
-| 2 | Karplus-Strong | String with stiffness — plucked and hammered strings |
-| 3 | FM Voice | FM synthesis with envelope follower — electric piano, DX tones |
-| 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
-| 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
-
-**Parameters (8):**
-
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Position | Excitation point along the resonator (0-100%) |
-| 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
-| 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
-| 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for sympathetic models (0-10) |
-| 6 | Model | Resonator type (0-5, see table above) |
-| 7 | Polyphony | Number of voices (1-4) |
-
-**Sound design tips:**
-- Start with Model 0 (Modal) and sweep Structure for metallic to harmonic
-- Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
-- Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord parameter only affects sympathetic models (1 and 4)
-
-### Clouds (1 variant)
-
-Based on Mutable Instruments **Clouds**, a granular audio processor with four
-playback modes. Transforms incoming audio or internal oscillator into textural
-clouds, time-stretched drones, delays, and spectral freezes.
-
-| Unit File | Display Name | Modes | Character |
-|-----------|-------------|-------|-----------|
-| `clouds.drmlgunit` | Clouds | 4 | Granular textures, stretches, spectral freezes |
-
-**The 4 playback modes:**
-
-| # | Mode | Description |
-|---|------|-------------|
-| 0 | Granular | Up to 40 overlapping grains — clouds of particles |
-| 1 | Stretch (WSOLA) | Time-stretching with pitch tracking — frozen textures |
-| 2 | Looping Delay | Pitch-shifted delay with sync — rhythmic effects |
-| 3 | Spectral | Phase vocoder with FFT — spectral freezes, smearing |
-
-**Parameters (16):**
-
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Position | Where in the buffer to read grains (0-100%) |
-| 2 | Size | Grain length / buffer region (0-100%) |
-| 3 | Density | Grain rate / overlap amount (0-100%) |
-| 4 | Texture | Grain window shape / filtering (0-100%) |
-| 5 | Pitch | Pitch transposition in semitones (-24 to +24, center=24) |
-| 6 | Feedback | Amount of output fed back into input (0-100%) |
-| 7 | Dry/Wet | Mix between dry input and processed output (0-100%) |
-| 8 | Reverb | Built-in reverb amount (0-100%) |
-| 9 | Freeze | Freeze the audio buffer (on/off) |
-| 10 | Mode | Playback mode (0-3, see table above) |
-| 11 | Quality | Audio quality / stereo mode (0-3) |
-| 12 | SampleBank | Drumlogue sample bank to use as source (0-15) |
-| 13 | SampleNum | Sample number within bank (0=internal, 1+=sample) |
-| 14 | SmplStart | Sample start point in per-mille (0-1000 = 0-100%) |
-| 15 | SmplEnd | Sample end point in per-mille (0-1000 = 0-100%) |
-
-**Sound design tips:**
-- Mode 0 (Granular) + small Size + high Density = shimmering cloud texture
-- Mode 1 (Stretch) + Freeze on = infinite sustain of any sound
-- Mode 3 (Spectral) is CPU-heavy but produces unique frozen-spectrum effects
-- Use SampleBank/SampleNum to process drumlogue's built-in samples as grain source
-- Feedback > 70% creates self-oscillating loops — use with care
-
-### Mussola (1 variant)
-
-A vocal synthesis engine combining three speech synthesis models (Naive formant,
-SAM phoneme, LPC speech) with unison voicing and stereo spread. Produces vowel
-sounds, robotic speech, choir-like textures, and vocal percussion.
-
-| Unit File | Display Name | Models | Character |
-|-----------|-------------|--------|-----------|
-| `mussola.drmlgunit` | Mussola | 4 | Vocal tones, formant sweeps, robotic speech, choir |
-
-**The 4 synthesis models:**
-
-| # | Model | Description |
-|---|-------|-------------|
-| 0 | Naive | Simple formant synthesis — vowel-like tones, smooth |
-| 1 | SAM | Software Automatic Mouth — classic 8-bit speech, robotic |
-| 2 | LPC | Linear Predictive Coding — natural-sounding speech fragments |
-| 3 | Blend | Crossfade between all three models |
-
-**Parameters (16):**
-
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Phoneme | Vowel / phoneme selection (0-100%) |
-| 2 | Timbre | Vocal register / formant shift (0-100%) |
-| 3 | Harmonics | Harmonic richness / model blend (0-100%) |
-| 4 | Morph | Morph within current model (0-100%) |
-| 5 | Speed | LPC playback speed, 50=normal (0-100%) |
-| 6 | Prosody | Prosody replay amount (0-100%) |
-| 7 | Decay | Envelope decay time (0-100%) |
-| 8 | Mix | Main/auxiliary output crossfade (0-100%) |
-| 9 | Model | Synthesis model (0-3, see table above) |
-| 10 | Gate Mode | Trigger/Sustain/Continuous |
-| 11 | Voices | Unison voice count (1-4) |
-| 12 | Detune | Unison detune amount (0-100%) |
-| 13 | Spread | Stereo spread of unison voices (0-100%) |
-| 14 | Gender | Formant shift — bass (0) to soprano (100), neutral at 50 |
-| 15 | Attack | Envelope attack time (0-100%) |
-
-**Sound design tips:**
-- Sweep Phoneme slowly for vowel animation ("aah" to "eee" to "ooh")
-- Model 1 (SAM) at low Phoneme values produces classic robot voice
-- Voices=4 with Detune=30-50 and Spread=80 creates a wide stereo choir
-- Gender shifts the formant spectrum — low values = bass voice, high = soprano
+All synth units go in `Units/Synths/`; `clouds_fx.drmlgunit` goes in
+`Units/DelayFXs/`.
 
 ---
 
@@ -305,9 +117,8 @@ Oscillator source files (UNCHANGED)
 
 1. Clone with submodules:
    ```bash
-   git checkout main
+   git clone --recursive https://github.com/fedemone/eurorack-prologue.git
    cd eurorack-prologue
-   git checkout claude/prologue-to-drumlogue-port-OZPcA
    ```
 
 2. Docker installed (for SDK cross-compilation)
@@ -321,13 +132,15 @@ Oscillator source files (UNCHANGED)
 # Build Docker image (first time only)
 cd logue-sdk && docker/build_image.sh && cd ..
 
-# Build all oscillators via Docker
+# Build all units via Docker
 ./build_drumlogue.sh
 
-# Build a specific oscillator
+# Build a specific unit (the delay effect is built the same way)
 ./build_drumlogue.sh mo2_va
+./build_drumlogue.sh clouds_fx
 
-# Collect .drmlgunit files into output/
+# Collect every .drmlgunit, clouds_fx included, into build/drumlogue/.
+# One flat folder: clouds_fx.drmlgunit still has to go to Units/DelayFXs/
 ./build_drumlogue.sh --collect
 
 # Interactive Docker shell
@@ -337,16 +150,21 @@ cd logue-sdk && docker/build_image.sh && cd ..
 ### Testing (No Docker Required)
 
 ```bash
-make test          # 61 Plaits callback tests
-make test-elements # 64 Elements callback tests
-make test-rings    # 58 Rings callback tests
-make test-clouds   # 66 Clouds callback tests
-make test-clouds-sample  # 28 Clouds sample tests
-make test-mussola  # 61 Mussola callback tests
-make test-sound    # 9 sound production tests (real Plaits engine)
-make test-all      # All 347 tests
+make test          # Plaits callback tests
+make test-elements # Elements callback tests
+make test-rings    # Rings callback tests
+make test-clouds   # Clouds callback tests
+make test-clouds-sample  # Clouds sample playback tests
+make test-clouds-fx      # CloudsFX: FX bus in -> engine -> out
+make test-mussola  # Mussola callback tests
+make test-mussola-words  # Mussola word banks, against the real SpeechEngine
+make test-sound    # sound production tests (real Plaits engine)
+make test-all      # all of the host suites
 make bench         # Render throughput benchmark
 ```
+
+The README's *Building* section lists every suite, including the
+sanitizer and ARM/QEMU runs that CI performs on each push.
 
 ---
 
@@ -360,16 +178,22 @@ make bench         # Render throughput benchmark
 | `modal-strike.cc` | 32 | 4 Elements variants |
 | `rings-resonator.cc` | 24 | 6 Rings resonator models |
 | `clouds-granular.cc` | 32 | 4 Clouds playback modes |
+| `clouds-fx.cc` | 32 | Clouds as a delay effect (CloudsFX); drumlogue only |
 | `mussola.cc` | 24 | 4 vocal synthesis models |
+| `mussola_words.cc` | — | Mussola's LPC word banks. Generated by `tools/generate_lpc_words.py`; do not edit |
 
 ### Wrapper Layer
 
 | File | Purpose |
 |------|---------|
 | `drumlogue_unit_wrapper.cc` | Synth Module API callbacks, param mapping, mono->stereo |
+| `drumlogue_delfx_wrapper.cc` | Delay-effect (delfx) API callbacks for CloudsFX: stereo in/out |
 | `drumlogue_osc_adapter.cc` | OSC API bridge, buffered rendering, Q31/float conversion |
 | `drumlogue_osc_adapter.h` | Adapter interface |
-| `header.c` | Per-oscillator unit_header with parameter layouts |
+| `drumlogue_param_route.h` | Where each panel parameter goes, one table per unit |
+| `drumlogue_guards.h` | What every unit owes the instrument: finite output, in-range parameters, its own target check |
+| `clouds_src.h` | 48 <-> 32 kHz sample-rate conversion around the Clouds engine |
+| `header.c` | Per-unit unit_header with parameter layouts |
 
 ### SDK Compatibility Headers (`drumlogue/` directory)
 
@@ -379,6 +203,7 @@ make bench         # Render throughput benchmark
 | `drumlogue/unit.h` | `unit_*` function declarations |
 | `drumlogue/attributes.h` | `__unit_callback`, `__unit_header` macros |
 | `drumlogue/userosc.h` | OSC API types for drumlogue |
+| `drumlogue/unit_exports.map` | Linker version script: exports only the callbacks the firmware looks up |
 
 ### Build System
 
@@ -386,10 +211,12 @@ make bench         # Render throughput benchmark
 |------|---------|
 | `Makefile` | Top-level build, test targets, packaging |
 | `makefile.inc` | Toolchain, flags, include paths |
-| `osc_*.mk` (19 files) | Per-oscillator build configuration |
+| `osc_*.mk` (19 files) | Per-oscillator build configuration (none for CloudsFX, which is drumlogue-only) |
 | `config.mk` | SDK-compatible project configuration |
+| `drumlogue/<project>/config.mk` | Per-unit drumlogue SDK project, `clouds_fx` included |
 | `generate_sdk_projects.sh` | Creates SDK project directories |
 | `build_drumlogue.sh` | Docker build wrapper |
+| `eurorack-opt/` | Forked engine sources that shadow the `eurorack` submodule; see [eurorack-opt/README.md](eurorack-opt/README.md) |
 
 ---
 
@@ -404,5 +231,5 @@ make bench         # Render throughput benchmark
 - [Mutable Instruments Clouds](https://mutable-instruments.net/modules/clouds/)
 
 ---
-**Last Updated**: 2026-03-11
-**Status**: Project concluded. 19 oscillator variants, 347 tests passing.
+**Last Updated**: 2026-10-13
+**Status**: Project concluded. 19 synth units and 1 delay effect unit.

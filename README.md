@@ -126,12 +126,24 @@ allows.
 - Korg prologue
 - Korg minilogue xd
 - Korg Nu:tekt NTS-1
-- **Korg drumlogue** (synth module support)
+- **Korg drumlogue** (synth units, plus the CloudsFX delay effect unit)
 
-See [releases](https://github.com/peterall/eurorack-prologue/releases) for latest binaries.
+Pre-built units are on this fork's
+[releases page](https://github.com/fedemone/eurorack-prologue/releases), which
+is the only place the drumlogue builds are published. The original prologue /
+minilogue xd / NTS-1 builds are on the upstream
+[peterall/eurorack-prologue releases](https://github.com/peterall/eurorack-prologue/releases).
+How to load them onto the instrument is under [Installation](#installation).
 
 Oscillators
 ====
+
+**Finding a parameter on the drumlogue.** Every drumlogue unit below lays its
+parameters out four to a page, in the order of the `#` column of its table:
+`#0`–`#3` are on page 1, `#4`–`#7` on page 2, and so on. Parameter `#n` is on
+page ⌊n/4⌋ + 1, knob (n mod 4) + 1, counting the four parameter knobs left to
+right. For example, Mussola's `Harmonics` (#3) is page 1, knob 4, and its
+`Model` (#9) is page 3, knob 2.
 
 Macro Oscillator 2 (based on Plaits)
 ----
@@ -161,7 +173,24 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 
 `Parameter 1` is oscillator specific and controls whichever parameter is not mapped to `Shape` or `Shift-shape`.
 
-`Parameter 2` sets the mix between the oscillator `out` and `aux`.
+`Parameter 2` sets the mix between the oscillator `out` and `aux` (0% = `out`, 100% = `aux`), except on `mo2_string`, where it attenuates the output.
+
+The prologue-class menus give the two parameters a name per oscillator; the
+drumlogue calls them `Param 1` and `Param 2` on every unit except `mo2_string`:
+
+| Unit | `Parameter 1` (menu name) | `Parameter 2` (menu name): what it fades towards |
+|--|--|--|
+| `mo2_va` | `Detune`: detuning between the two waveforms (bipolar) | `Sync`: a pair of hard-synced waveforms |
+| `mo2_wsh` | `Asymmetry`: waveform asymmetry (bipolar) | `Curve`: a variant using another wavefolder curve |
+| `mo2_fm` | `Feedback` (bipolar) | `Sub`: a sub-oscillator |
+| `mo2_grn` | `Width`: formant width and shape (bipolar) | `Filter`: filtered waveforms made from windowed sines |
+| `mo2_add` | `Bumps`: number of bumps in the spectrum (bipolar) | `Hammond`: only the harmonics of a Hammond organ's drawbars |
+| `mo2_wta`–`mo2_wtf` | `Interpolate`: at 0, the waves morph smoothly. At 1 on prologue-class units, or anything above 0 on drumlogue, the scan steps from wave to wave without interpolating | `Low-Fi`: a lo-fi version of the output |
+| `mo2_string` | `Harmonics`: inharmonicity / material (bipolar) | `Attenuation`: output level, 0% = full, 100% = silent. Not a mix |
+
+On drumlogue the bipolar `Param 1` runs 0–100 with its centre at 50. Its
+default of 50 is the centre for every engine, but on the wavetable units it
+means *stepped*: set it to 0 for smooth wave morphing.
 
 `LFO Target` sets the Shape LFO target, see LFO2 table below.
 
@@ -191,20 +220,25 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 | 13 | LFO1 Depth | Shape LFO amount (0-100%, default 100%) |
 | 14 | Pitch Range | Semitones of pitch modulation at full LFO swing (0-24, default 1) |
 
+`mo2_string` uses the same layout with two differences: #3 is labelled
+`Harmonics` and #4 `Attenuate` (0% = full level, the default; 100% = silent),
+as in the table above. `Gate Mode` has no effect on `mo2_string`: the string
+always rings out on its own decay, which `Shape` sets.
+
 ### LFO2
 
-The oscillator has a built-in additional cosine key-synced LFO which can modulate an internal parameter:
+The oscillator has a built-in additional cosine key-synced LFO which can modulate an internal parameter. `LFO Target` (the Shape LFO) and `LFO2 Target` use the same list; the drumlogue shows each entry by name:
 
-| LFO Target | Parameter     | Notes |
-|------------|---------------|-------|
-| 1          | `Shape`       |       |
-| 2          | `Shift-shape` |       |
-| 3          | `Parameter 1` | Not implemented for Wavetable oscillator |
-| 4          | `Parameter 2` |       |
-| 5          | `Pitch` |       |
-| 6          | _reserved_ (Amplitude?) |       |
-| 7          | `LFO2 Rate` |       |
-| 8          | `LFO2 Int` |       |
+| LFO Target | drumlogue shows | Parameter     | Notes |
+|------------|-----------------|---------------|-------|
+| 1          | `Shape`    | `Shape`       |       |
+| 2          | `ShftShp`  | `Shift-shape` |       |
+| 3          | `Param 1`  | `Parameter 1` | Not implemented for Wavetable oscillator |
+| 4          | `Param 2`  | `Parameter 2` |       |
+| 5          | `Pitch`    | `Pitch` | Depth is set by `Pitch Range` on drumlogue |
+| 6          | `Amplit.`  | _reserved_ | Listed but not implemented: modulates nothing |
+| 7          | `LFO2 Frq` | `LFO2 Rate` |       |
+| 8          | `LFO2 Dep` | `LFO2 Int` |       |
 
 `LFO2 Rate` at 0 means no modulation: Depth does nothing until the rate leaves
 its end stop. This is the same in all three ports that have an LFO2, and it is
@@ -474,7 +508,7 @@ Based on Mutable Instruments **Clouds**, a granular audio processor with four pl
 | 8 | Reverb | Built-in reverb amount (0-100%) |
 | 9 | Freeze | Freeze the audio buffer (on/off) |
 | 10 | Mode | Playback mode (0-3, see table above) |
-| 11 | Quality | Audio quality / stereo mode (0-3) |
+| 11 | Quality | Buffer format: `StHi` stereo 16-bit (default), `MoHi` mono 16-bit, `StLo` stereo 8-bit µ-law at half rate, `MoLo` mono 8-bit µ-law at half rate. Mono and lo-fi each give a longer buffer |
 | 12 | SampleBank | Drumlogue sample bank to use as source (0-15) |
 | 13 | SampleNum | Sample number within bank (0=internal, 1+=sample) |
 | 14 | SmplStart | Sample start point in per-mille (0-1000 = 0-100%) |
@@ -550,6 +584,12 @@ It is a **drumlogue-only** unit (delfx units don't exist on the
 prologue-class platforms) and is built via the SDK project `clouds_fx`
 (`./build_drumlogue.sh clouds_fx`).
 
+**Install `clouds_fx.drmlgunit` in `Units/DelayFXs/`, not `Units/Synths/`.**
+It is a delay effect, not a synth: on the drumlogue you select it as the
+delay effect, and it processes whatever the parts send to the delay. Every
+other `.drmlgunit` in this repository is a synth and goes in `Units/Synths/`;
+see [Installation](#installation).
+
 **Parameters (11):** identical to the Clouds synth, minus everything that
 fed an internal source — no **Base Note**, and no **SampleBank / SampleNum /
 SmplStart / SmplEnd**:
@@ -566,7 +606,7 @@ SmplStart / SmplEnd**:
 | 7 | Reverb | Built-in reverb amount (0-100%) |
 | 8 | Freeze | Freeze the audio buffer (on/off) |
 | 9 | Mode | Playback mode (0-3: Granular / Stretch / Delay / Spectral) |
-| 10 | Quality | Audio quality / stereo mode (0-3) |
+| 10 | Quality | Buffer format: `StHi` stereo 16-bit (default), `MoHi` mono 16-bit, `StLo` stereo 8-bit µ-law at half rate, `MoLo` mono 8-bit µ-law at half rate. Mono and lo-fi each give a longer buffer |
 
 **Sound design tips:**
 - Mode 2 (Looping Delay) + Feedback = a pitch-shiftable, freezable delay on the incoming audio
@@ -594,36 +634,54 @@ A vocal synthesis engine combining three speech synthesis models (Naive formant,
 | 3 | Blend | Crossfade across all three, and the only setting that reaches the word banks (Harmonics ≥ 41) |
 
 Models 0–2 pin Harmonics to that model, so the Harmonics knob does
-nothing in them. Use **Blend** for anything involving words.
+nothing in them. Use **Blend** for anything involving words. That includes
+the LPC words: Model 2 (**LPC**) is pinned *below* the word banks and only
+ever sings vowels, so selecting it is not the way to reach the phrases.
+
+**Quick start: singing a word or phrase**
+
+1. **Model** (#9, page 3) → **Blend**. This is the default.
+2. **Harmonics** (#3, page 1) picks the **bank**: 43 Puccini I, 54 Puccini II,
+   64 Puccini III, 74 Puccini IV, 84 Kyrie, 96 Mantra. These values select the
+   same bank whichever way you turned the knob to reach them (see
+   [LPC word banks](#lpc-word-banks) for the full ranges).
+3. **Phoneme** (#1, page 1) picks the **word** in that bank. The bank's
+   longest phrase is always at the top of the knob, so 100 sings "kyrie
+   eleison" in the Kyrie bank and the whole mantra in the Mantra bank.
+4. Trigger the pad or play a note: each trigger sings the selected word once.
+   Use Gate Mode **Trigger** or **Sustain** to hear whole phrases.
+5. Shape it: **Speed** (#5) sets the tempo (50 = as recorded), **Prosody**
+   (#6) brings in the phrase's own pitch contour, and **Gender** / **Timbre** /
+   **Style** change the voice without changing the tempo.
 
 **Parameters (24):**
 
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Phoneme | Vowel / phoneme selection; word selection in the LPC word region (0-100%) |
-| 2 | Timbre | Vocal register / formant shift (0-100%) |
-| 3 | Harmonics | Model blend below 41%, LPC word bank above it (0-100%) |
-| 4 | Morph | Fine offset on the phoneme position (0-100%, centre 50). Inactive in the word region |
-| 5 | Speed | LPC word tempo — 50 = recorded tempo, 0 = 4× slower, 100 = 4× faster. Also the Staccato burst rate |
-| 6 | Prosody | Pitch-contour replay amount for LPC words (0-100%) |
-| 7 | Decay | Envelope decay AND release time, 5ms-5s (0-100%). In the word region only the release applies — see below |
-| 8 | Mix | Main/auxiliary output crossfade (0-100%) |
-| 9 | Model | Synthesis model (0-3, see table above) |
-| 10 | Gate Mode | Trigger / Sustain / Continuous / Staccato |
-| 11 | Voices | Unison voice count (1-4) |
-| 12 | Detune | Unison detune amount (0-100%) |
-| 13 | Spread | Stereo spread of unison voices (0-100%) |
-| 14 | Gender | Formant shift — bass (0) to soprano (100), neutral at 50 |
-| 15 | Attack | Envelope attack time, 1ms-2s (0-100%) |
-| 16 | Style | Vocal style (0-5, see table below) |
-| 17 | Key Mode | Phoneme selection mode (0-5, see table below) |
-| 18 | Gliss | Glissando time for pitch and phoneme passage (0-100%) |
-| 19 | Sustain | Envelope sustain level (0-100%) |
-| 20 | LFO Shape | None / Sine / Square / Saw |
-| 21 | LFO Dest | Modulation destination (see below) |
-| 22 | LFO Rate | 0.05 Hz to 20 Hz, exponential (0-100%) |
-| 23 | LFO Depth | Modulation depth (0-100%) |
+| # | Name | Default | Description |
+|---|------|---------|-------------|
+| 0 | Base Note | 60 (C4) | MIDI note for trigger pad (0-127) |
+| 1 | Phoneme | 50 | Vowel / phoneme selection; word selection in the LPC word region (0-100%) |
+| 2 | Timbre | 50 | Vocal register / formant shift (0-100%) |
+| 3 | Harmonics | 0 | Model blend below 41%, LPC word bank above it (0-100%). Only active with Model = Blend |
+| 4 | Morph | 50 | Fine offset on the phoneme position (0-100%, centre 50). Inactive in the word region |
+| 5 | Speed | 50 | LPC word tempo — 50 = recorded tempo, 0 = 4× slower, 100 = 4× faster. Also the Staccato burst rate |
+| 6 | Prosody | 0 | Pitch-contour replay amount for LPC words (0-100%). At the default of 0 a word is sung as a monotone on the played note; raise it to hear the phrase's own intonation |
+| 7 | Decay | 30 | Envelope decay AND release time, 5ms-5s (0-100%). In the word region only the release applies — see below |
+| 8 | Mix | 0 | Main/auxiliary output crossfade (0-100%) |
+| 9 | Model | Blend | Synthesis model: Naive / SAM / LPC / Blend (see table above) |
+| 10 | Gate Mode | Trigger | Trigger / Sustain / Continuous / Staccato |
+| 11 | Voices | 1 | Unison voice count (1-4) |
+| 12 | Detune | 30 | Unison detune amount (0-100%) |
+| 13 | Spread | 50 | Stereo spread of unison voices (0-100%) |
+| 14 | Gender | 50 | Formant shift — bass (0) to soprano (100), neutral at 50 |
+| 15 | Attack | 0 | Envelope attack time, 1ms-2s (0-100%) |
+| 16 | Style | Male | Vocal style (0-5, see table below) |
+| 17 | Key Mode | Normal | Phoneme selection mode (0-5, see table below) |
+| 18 | Gliss | 0 | Glissando time for pitch and phoneme passage (0-100%) |
+| 19 | Sustain | 100 | Envelope sustain level (0-100%) |
+| 20 | LFO Shape | None | None / Sine / Square / Saw |
+| 21 | LFO Dest | Pitch | Modulation destination (see below) |
+| 22 | LFO Rate | 30 | 0.05 Hz to 20 Hz, exponential (0-100%) |
+| 23 | LFO Depth | 0 | Modulation depth (0-100%) |
 
 **Envelope (ADSR):** Attack, Decay, Sustain and Gliss-free Release form a
 full ADSR — the release always reuses the Decay time. Gate Mode changes
@@ -690,25 +748,37 @@ Base-Note changes while a note is sounding. All six apply in phoneme
 space; with an LPC word bank loaded the Phoneme knob goes back to
 selecting the word, in every key mode.
 
+<a name="lpc-word-banks"></a>
 **LPC word banks (Italian / liturgical):** in **Blend** mode, Harmonics at
 **41% or above** selects one of 6 word banks, and the Phoneme knob selects
 the word within it; each trigger sings it. The banks are Madama Butterfly
 fragments and liturgical phrases, synthesized as LPC10 bitstreams by
 `tools/generate_lpc_words.py`.
 
-The bank boundaries are not evenly guessable, so here they are exactly —
-the Harmonics column is what the knob has to read, and each word's length
-is what it plays for at Speed=50:
+The bank boundaries are not evenly guessable, so here they are exactly.
+The Harmonics column is what the knob has to read; each word is preceded by
+the Phoneme range that selects it, and followed by how long it plays at
+Speed=50:
 
-| Harmonics | Bank | Words (Phoneme knob, low → high) |
-|-----------|------|----------------------------------|
+| Harmonics | Bank | Words (Phoneme range → word) |
+|-----------|------|------------------------------|
 | 0–40 | *(none)* | phoneme space: Naive / SAM / LPC vowels, no words |
-| **41**–51 | Puccini I | "un bel" (0.48 s) · "dì" (0.48 s) · "bello" (0.58 s) |
-| **52**–61 | Puccini II | "giunto" (0.48 s) · "il tempo" (0.70 s) · "così" (0.58 s) |
-| **62**–71 | Puccini III | "fan" (0.50 s) · "tutto" (0.53 s) · "pronto" (0.58 s) |
-| **72**–81 | Puccini IV | "dolce" (0.58 s) · "notte" (0.53 s) · "quante" (0.55 s) · "stelle" (0.60 s) |
-| **82**–91 | Kyrie | "kyrie" (0.45 s) · "eleison" (0.73 s) · "kyrie eleison" (1.20 s) |
-| **92**–100 | Mantra | "oṃ" · "maṇi" · "padme" · "hūṃ" (~0.5 s each) · "oṃ maṇi padme hūṃ" (2.10 s) |
+| **41**–51 | Puccini I | 0–33 "un bel" (0.48 s) · 34–66 "dì" (0.48 s) · 67–100 "bello" (0.58 s) |
+| **52**–61 | Puccini II | 0–33 "giunto" (0.48 s) · 34–66 "il tempo" (0.70 s) · 67–100 "così" (0.58 s) |
+| **62**–71 | Puccini III | 0–33 "fan" (0.50 s) · 34–66 "tutto" (0.53 s) · 67–100 "pronto" (0.58 s) |
+| **72**–81 | Puccini IV | 0–24 "dolce" (0.58 s) · 25–49 "notte" (0.53 s) · 50–75 "quante" (0.55 s) · 76–100 "stelle" (0.60 s) |
+| **82**–91 | Kyrie | 0–33 "kyrie" (0.45 s) · 34–66 "eleison" (0.73 s) · 67–100 "kyrie eleison" (1.20 s) |
+| **92**–100 | Mantra | 0–19 "oṃ" · 20–40 "maṇi" · 41–59 "padme" · 60–80 "hūṃ" (~0.5 s each) · 81–100 "oṃ maṇi padme hūṃ" (2.10 s) |
+
+**Which way you turn Harmonics matters near a boundary.** The ranges above
+are what you get turning the knob **up**. The bank selector has hysteresis
+(Plaits' own), so turning the knob **down** each bank holds on five points
+lower before giving way: the ranges become 36–45 Puccini I, 46–56 Puccini II,
+57–66 Puccini III, 67–76 Puccini IV, 77–86 Kyrie and 87–100 Mantra. So 46–51
+is Puccini I if you turned up to it, but Puccini II if you came down from a
+higher bank. The values in both lists, 41–45, 52–56, 62–66, 72–76, 82–86 and
+92–100, select the same bank from either direction; use those when it has to
+be right first time: **43, 54, 64, 74, 84, 96**.
 
 The three Butterfly banks hold their words separately rather than as one
 utterance each — "un bel" and "dì" are two words of Puccini I, not one —
@@ -718,13 +788,15 @@ Act I love duet, "Dolce notte! Quante stelle!".
 
 The Phoneme knob splits evenly across the words in the bank, so the long
 phrases — the ones most people are after — live at the **top** of the knob:
-above 67% for "kyrie eleison", above 81% for the full mantra.
+67 and above for "kyrie eleison", 81 and above for the full mantra.
 
 Speed changes the word tempo, Prosody replays each phrase's pitch
 contour (rising "così", falling mantra endings), and Gender/Timbre
-shift the singer's formants without touching the tempo.
+shift the singer's formants without touching the tempo. Prosody defaults to
+0, which sings every word as a monotone on the played note.
 
-Word selection belongs to the Phoneme knob alone. Everything else that
+Word selection belongs to the Phoneme knob alone, plus the LFO when LFO Dest
+is set to Phoneme. Everything else that
 shapes the phoneme control — Key Mode, the vowel-warping styles (Alien,
 Religious), the Morph knob's ±half offset and the Gliss glide — operates
 in *phoneme* space, and steps aside once a bank is loaded. Each of them
@@ -757,7 +829,7 @@ itself, not the glide.
 - Key Mode=KeySyl C + Gliss=40 gives chant-like syllabic singing across the keyboard
 - Style=Religious + Voices=4 + Gate=Sustain + long Attack/Decay = gregorian choir pad
 - Blend + Harmonics=86 + Phoneme=90 sings the whole "kyrie eleison"; drop Speed to 30 to draw it out
-- Blend + Harmonics=46, Phoneme sweeping 20→50→80, one trigger per step: "un bel · dì · bello" assembled a word at a time
+- Blend + Harmonics=43, Phoneme sweeping 20→50→80, one trigger per step: "un bel · dì · bello" assembled a word at a time
 - Blend + Harmonics=76 + Phoneme=10/40/60/90 across four pads gives "Dolce notte! Quante stelle!" as a four-step phrase
 - Blend + Harmonics=86 + Gate=Staccato stutters the opening of the phrase in rhythm — see the note under Gate Mode about why you never hear the whole word there
 - Gate=Continuous + Blend + Harmonics≥41: slowly turn Phoneme to scrub through an opera phrase as a drone
@@ -769,6 +841,54 @@ Base Note
 *(Drumlogue only)*
 
 The **Base Note** parameter sets the MIDI note played when the drumlogue's trigger pad fires (`unit_gate_on`). This allows tuning the oscillator to a specific pitch without external MIDI. Default is 60 (middle C). MIDI note-on events (`unit_note_on`) still play the received note directly, ignoring Base Note.
+
+Installation
+====
+
+**prologue / minilogue xd / NTS-1:** transfer the `.prlgunit` /
+`.mnlgxdunit` / `.ntkdigunit` files with KORG's librarian software for your
+instrument (for the prologue, the Sound Librarian). If the transfer times
+out, see [Known Issues](#known-issues).
+
+**drumlogue:** the drumlogue keeps each type of user unit in its own folder
+under `Units/` on its USB drive. Everything in this repository is a **synth**
+except CloudsFX, which is a **delay effect**:
+
+| File | Shown on the drumlogue as | Unit type | Copy it to |
+|------|---------------------------|-----------|------------|
+| `clouds_fx.drmlgunit` | CloudsFX | Delay effect (delfx) | **`Units/DelayFXs/`** |
+| `mo2_va`, `mo2_wsh`, `mo2_fm`, `mo2_grn`, `mo2_add`, `mo2_string` | VirtAnalog, Waveshaper, FM, Granular, Additive, String | Synth | **`Units/Synths/`** |
+| `mo2_wta` … `mo2_wtf` | Wavetable A … Wavetable F | Synth | **`Units/Synths/`** |
+| `modal_strike`, `modal_strike_16_nolimit`, `modal_strike_24_nolimit`, `elements_full` | ModalStrike, Strike16, Strike24, ElementsFull | Synth | **`Units/Synths/`** |
+| `rings`, `clouds`, `mussola` | Rings, Clouds, Mussola | Synth | **`Units/Synths/`** |
+
+(All file names end in `.drmlgunit`.)
+
+1. Start the drumlogue in USB mass storage mode and connect it to your
+   computer (see the drumlogue owner's manual).
+2. Copy the synth units into `Units/Synths/` and `clouds_fx.drmlgunit` into
+   `Units/DelayFXs/`. Mind the two names: `clouds.drmlgunit` is the Clouds
+   *synth* and goes with the other synths. Only `clouds_fx.drmlgunit` is the
+   effect.
+3. Eject the drive and restart the drumlogue. Units are loaded in
+   alphabetical order; to force a different order, prefix the file names
+   with a number (e.g. `01_mussola.drmlgunit`).
+4. The synth units appear in a part's synth selection. CloudsFX is selected
+   as the drumlogue's delay effect and processes whatever the parts send to
+   the delay.
+
+The build does not sort the units into those folders for you.
+`./build_drumlogue.sh --collect` gathers all of them, `clouds_fx` included,
+into one flat folder, `build/drumlogue/`, so move `clouds_fx.drmlgunit` to
+`Units/DelayFXs/` as you copy. A single-project build leaves its file in
+`drumlogue/<project>/` (or `drumlogue/<project>/build/`). `make` never builds
+CloudsFX, because it has no `osc_*.mk`, so it is not in the
+`eurorack_drumlogue.zip` package either; build it with
+`./build_drumlogue.sh clouds_fx`.
+
+The drumlogue loads every installed unit, synths and effects alike, into one
+address space. **Cross-unit isolation**, under [Building](#building), explains
+why that matters and what this repository does about it.
 
 Drumlogue Architecture
 ====
@@ -1149,19 +1269,13 @@ re-sync when the submodule moves.
 - `.prlgunit` files for prologue
 - `.mnlgxdunit` files for minilogue-xd
 - `.ntkdigunit` files for nutekt-digital
-- `.drmlgunit` files for drumlogue
+- `.drmlgunit` files for drumlogue: synths go in `Units/Synths/`, `clouds_fx.drmlgunit` in `Units/DelayFXs/` (see [Installation](#installation))
 
-**Installation:**
-
-*Prologue / minilogue xd / NTS-1:* Use the Korg Sound Librarian to transfer `.prlgunit` / `.mnlgxdunit` / `.ntkdigunit` files.
-
-*Drumlogue:*
-1. Power on drumlogue in USB mass storage mode
-2. Place `.drmlgunit` files in the `Units/Synths/` directory
-3. Restart drumlogue to load the new synth units
-4. Units will be loaded in alphabetical order
-
-**Note:** Only tested on macOS, but should work on Linux with appropriate toolchains installed.
+**Host platforms:** CI runs on Linux (`.github/workflows/ci.yml`): the host
+test suites, the sanitizer battery, and a set of drumlogue units
+cross-compiled and run under QEMU. `build_drumlogue.sh` also runs on macOS
+and on Windows under Git Bash / MSYS2. The original prologue-class builds
+were developed on macOS.
 
 Acknowledgements
 ====

@@ -255,7 +255,9 @@ make test-rings
 ./build_drumlogue.sh rings
 
 # 4. Install on drumlogue
-# Copy the resulting .drmlgunit to Units/Synths/
+# Copy the resulting .drmlgunit to Units/Synths/ -- that is the folder for
+# synth units. An effect unit goes in its own folder instead: a delay
+# effect such as clouds_fx in Units/DelayFXs/.
 ```
 
 ## Stereo Output Modules
