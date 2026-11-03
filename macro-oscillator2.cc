@@ -39,6 +39,18 @@ enum GateMode {
   GateModeContinuous = 2 /* Always full amplitude (drone) */
 };
 
+/* Square, as a transfer curve: full scale with the sign of its input.
+ *
+ * LFO1 arrives from outside as a cosine (the wrapper's own oscillator on
+ * drumlogue, the host's shape LFO on prologue), so its sign is a 50% square
+ * at the same rate and phase -- and the LFO2 Square below is the sign of
+ * LFO2's cosine for the same reason, so the two LFOs' squares line up.
+ * Exactly zero stays zero: that is what an LFO at Rate 0 sends, and Rate 0
+ * has to mean no modulation for this shape as for the others. */
+static inline float lfo_square(float x) {
+  return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f);
+}
+
 /* LFO waveshape transfer function for LFO1 (shape LFO modulation).
  * Shapes the incoming modulation value through different curves. */
 static inline float apply_lfo1_shape(float x) {
@@ -58,6 +70,8 @@ static inline float apply_lfo1_shape(float x) {
         return 0.f; }
     case 4: /* Fat Sine: soft-clip / fatten (boosted mid-range) */
       return clip1m1f(x * (1.5f - 0.5f * x * x));
+    case 5: /* Square: the sign of the incoming LFO -- see lfo_square() */
+      return lfo_square(x);
   }
 }
 
@@ -335,6 +349,9 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
           raw = cos_val * (1.5f - 0.5f * cos_val * cos_val);
           raw = (raw > 1.0f) ? 1.0f : ((raw < -1.0f) ? -1.0f : raw);
           break;
+        case 5: /* Square: the cosine's sign, high for the first quarter */
+          raw = (lfo2_phase < 0.25f || lfo2_phase >= 0.75f) ? 1.0f : -1.0f;
+          break;
       }
       lfo2 = raw * depth;
     }
@@ -478,10 +495,10 @@ void OSC_PARAM(uint16_t index, uint16_t value)
     shiftshape = param_val_to_f32(value);
     break;
 
-  case 11: /* LFO1 Shape (0-4) */
+  case 11: /* LFO1 Shape (0-5) */
     lfo1_shape_value = value;
     break;
-  case 12: /* LFO2 Shape (0-4) */
+  case 12: /* LFO2 Shape (0-5) */
     lfo2_shape_value = value;
     break;
   case 13: /* Gate Mode (0-2) */

@@ -561,14 +561,14 @@ static void probe_density(unit_t *u) {
 /* ---- Chord must retune the strings ------------------------------------
  *
  * Rings' quantized sympathetic-strings model tunes its strings from a chord
- * table, and this port appends three rows to that table (see the fork note in
- * eurorack-opt/rings/dsp/part.cc).  A wrong row is not a crash and not a
- * silence: it is a chord that sounds like a different chord, which every
- * other check in this file is happy to pass.
+ * table, and this port appends five rows to that table (see the fork note in
+ * eurorack-opt/rings/dsp/part.cc), plus an Off below the first.  A wrong row
+ * is not a crash and not a silence: it is a chord that sounds like a
+ * different chord, which every other check in this file is happy to pass.
  *
  * So listen instead.  Strum each chord and measure the energy at a fixed set
  * of intervals above the root with a Goertzel, which is one bandpass per
- * interval and cheap enough to run fourteen times.  Two of the probe
+ * interval and cheap enough to run seventeen times.  Two of the probe
  * intervals are deliberately not in equal temperament -- 2.4 semitones is a
  * slendro step, 9.69 is the septimal seventh -- and each sits next to its
  * tempered neighbour in the list.  That pairing is the point: a chord table
@@ -578,14 +578,20 @@ static void probe_density(unit_t *u) {
  * ---------------------------------------------------------------------- */
 
 static const float kChordProbeTones[] = {
-  0.0f,  2.0f,  2.4f,  3.0f,  4.0f, 5.0f, 7.0f, 9.0f,
+  0.0f,  2.0f,  2.4f,  3.0f,  4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f,
   9.69f, 10.0f, 12.0f, 14.0f, 15.0f, 17.0f, 19.0f
 };
 #define NUM_CHORD_TONES ((int)(sizeof kChordProbeTones / sizeof kChordProbeTones[0]))
 #define CHORD_TONE_2_4  2   /* index of the slendro step */
 #define CHORD_TONE_2_0  1   /* ... and its tempered neighbour */
-#define CHORD_TONE_9_69 8   /* index of the septimal seventh */
-#define CHORD_TONE_10   9   /* ... and its tempered neighbour */
+#define CHORD_TONE_3    3   /* minor third */
+#define CHORD_TONE_4    4   /* major third */
+#define CHORD_TONE_5    5   /* fourth */
+#define CHORD_TONE_6    6   /* tritone */
+#define CHORD_TONE_8    8   /* minor sixth */
+#define CHORD_TONE_9    9   /* major sixth */
+#define CHORD_TONE_9_69 10  /* index of the septimal seventh */
+#define CHORD_TONE_10   11  /* ... and its tempered neighbour */
 
 /* Strum note 60 and return one Goertzel magnitude per probe tone.
  *
@@ -691,11 +697,12 @@ static void probe_chords(unit_t *u) {
 
   const int lo = u->hdr->params[chord_id].min;
   const int hi = u->hdr->params[chord_id].max;
-  if (hi - lo + 1 > 16) return;                 /* not the parameter we mean */
+  if (hi - lo + 1 > 24) return;                 /* not the parameter we mean */
 
-  /* Chord only reaches the strings in the quantized sympathetic model, which
-   * is also this unit's default -- take it from the header rather than
-   * hard-coding 4, so renumbering the models cannot quietly defeat the test.
+  /* The quantized sympathetic model tunes its strings to the chord, and is
+   * this unit's default -- take it from the header rather than hard-coding
+   * 4, so renumbering the models cannot quietly defeat the test.  (The other
+   * models strike chords instead; those are checked further down.)
    *
    * Damping goes to maximum: the strings then ring for longer than the
    * analysis window instead of decaying inside it, which is what lets a long
@@ -705,7 +712,7 @@ static void probe_chords(unit_t *u) {
     if (strcmp(u->hdr->params[p].name, "Damping") == 0)
       u->setp((uint8_t)p, u->hdr->params[p].max);
 
-  static float mag[16][NUM_CHORD_TONES];
+  static float mag[24][NUM_CHORD_TONES];
   int silent = -1;
   for (int c = lo; c <= hi; ++c) {
     u->setp((uint8_t)chord_id, c);
@@ -771,6 +778,54 @@ static void probe_chords(unit_t *u) {
       CHECK(m[CHORD_TONE_10] > 4.0f * m[CHORD_TONE_9_69],
             "%s: min7 rings the tempered 7th (%.2f vs %.2f)", u->hdr->name,
             m[CHORD_TONE_10], m[CHORD_TONE_9_69]);
+    } else if (strcmp(nm, "Hirajo") == 0) {
+      CHECK(m[CHORD_TONE_8] > 4.0f * m[CHORD_TONE_9],
+            "%s: Hirajo rings its minor sixth, not a major one (%.2f vs %.2f)",
+            u->hdr->name, m[CHORD_TONE_8], m[CHORD_TONE_9]);
+    } else if (strcmp(nm, "Mystic") == 0) {
+      CHECK(m[CHORD_TONE_6] > 4.0f * m[CHORD_TONE_5],
+            "%s: Mystic rings its tritone, not a fourth (%.2f vs %.2f)",
+            u->hdr->name, m[CHORD_TONE_6], m[CHORD_TONE_5]);
+    }
+  }
+
+  /* Struck chords.  Every model other than the quantized sympathetic one
+   * plays a chord by striking a voice per chord tone, which is a different
+   * path to the strings or modes entirely -- so check it on two of them,
+   * one modal and one string, with the minor and major triads, which differ
+   * in nothing but the third.  Structure goes to 25%, where String has no
+   * dispersion and sits at its nominal pitch; at 50% its partials are
+   * stretched far enough to land in the neighbouring probe bins. */
+  {
+    static const char *const kStruckModels[] = {"Modal", "String"};
+    int min_c = -999, maj_c = -999;
+    for (int c = lo; c <= hi; ++c) {
+      const char *nm = u->getstr ? u->getstr((uint8_t)chord_id, c) : NULL;
+      if (nm && strcmp(nm, "min") == 0) min_c = c;
+      if (nm && strcmp(nm, "Maj") == 0) maj_c = c;
+    }
+    for (size_t k = 0; k < 2 && min_c > -999 && maj_c > -999; ++k) {
+      int model = -1;
+      for (int v = u->hdr->params[model_id].min;
+           v <= u->hdr->params[model_id].max; ++v) {
+        const char *nm = u->getstr ? u->getstr((uint8_t)model_id, v) : NULL;
+        if (nm && strcmp(nm, kStruckModels[k]) == 0) model = v;
+      }
+      if (model < 0) continue;
+      float mn[NUM_CHORD_TONES], mj[NUM_CHORD_TONES];
+      u->setp((uint8_t)model_id, model);
+      for (uint32_t p = 0; p < u->hdr->num_params; ++p)
+        if (strcmp(u->hdr->params[p].name, "Structure") == 0)
+          u->setp((uint8_t)p, 25);
+      u->setp((uint8_t)chord_id, min_c);
+      render_chord_spectrum(u, mn);
+      u->setp((uint8_t)chord_id, maj_c);
+      render_chord_spectrum(u, mj);
+      CHECK(mn[CHORD_TONE_3] > 4.0f * mn[CHORD_TONE_4] &&
+                mj[CHORD_TONE_4] > 4.0f * mj[CHORD_TONE_3],
+            "%s: %s strikes the chord (min %.2f vs %.2f, Maj %.2f vs %.2f)",
+            u->hdr->name, kStruckModels[k], mn[CHORD_TONE_3],
+            mn[CHORD_TONE_4], mj[CHORD_TONE_4], mj[CHORD_TONE_3]);
     }
   }
 

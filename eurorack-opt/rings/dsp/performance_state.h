@@ -27,7 +27,7 @@
 // FORKED AND MODIFIED for the drumlogue port.
 //
 // Original: eurorack/rings/dsp/performance_state.h at 58b9125.
-// One line differs: kNumChords, 11 -> 14.  See eurorack-opt/README.md.
+// One line differs: kNumChords, 11 -> 16.  See eurorack-opt/README.md.
 //
 // The three added chords live in eurorack-opt/rings/dsp/part.cc, which is
 // forked alongside this header because the two have to move together: the
@@ -40,11 +40,14 @@
 //
 // One other file keys off this constant: rings/dsp/string_synth_part.cc has a
 // parallel chord table of its own, also dimensioned [.][kNumChords][.].  It is
-// left unforked, so its three new rows initialise to zero, which reads as a
+// left unforked, so its five new rows initialise to zero, which reads as a
 // unison on the root rather than as garbage.  That is dead code in this port
 // -- StringSynthPart is Rings' polyphonic string-synth easter egg and nothing
-// here instantiates it -- but if a later change ever reaches it, those three
+// here instantiates it -- but if a later change ever reaches it, those five
 // rows are the thing to fill in.
+//
+// chord is also allowed to be negative now, meaning Off: see Part::Process()
+// and RenderStringVoice() in the forked part.cc.
 //
 // -----------------------------------------------------------------------------
 //
@@ -55,8 +58,9 @@
 
 namespace rings {
 
-// 11 upstream; the drumlogue port adds Quartal, Just7 and Slendro on the end.
-const int32_t kNumChords = 14;
+// 11 upstream; the drumlogue port adds Quartal, Just7, Slendro, Hirajoshi and
+// Mystic on the end.
+const int32_t kNumChords = 16;
 
 struct PerformanceState {
   bool strum;

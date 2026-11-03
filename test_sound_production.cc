@@ -352,6 +352,140 @@ STEST(note_off_eventually_silences) {
 }
 
 /* ===========================================================================
+ * LFO Square
+ *
+ * Square is the one shape whose whole point is that it has no in-between:
+ * full scale one way, then the other.  Aim an LFO at Pitch with a range of
+ * 12 semitones and the note sits two octaves apart at the two ends of its
+ * swing, so the zero-crossing rate over short windows -- which scales with
+ * pitch whatever the waveform -- should fall into two clusters a factor of
+ * four apart, with nothing between them but the windows that straddle an
+ * edge.  Triangle, over the same windows, spends most of its time between
+ * them; that is checked too, so a test that cannot tell the two apart fails.
+ * ======================================================================== */
+
+/* Plaits layout: see header.c. */
+enum {
+  kPlaitsLfoTarget = 5, kPlaitsLfo1Shape = 6, kPlaitsLfo1Rate = 7,
+  kPlaitsLfo2Rate = 8, kPlaitsLfo2Depth = 9, kPlaitsLfo2Target = 10,
+  kPlaitsLfo2Shape = 11, kPlaitsGateMode = 12, kPlaitsPitchRange = 14
+};
+static const int kShapeTriangle = 1, kShapeRampUp = 2, kShapeSquare = 5;
+static const int kTargetPitch = 4;
+
+/* Fraction of 20 ms windows whose zero-crossing rate sits on the low or the
+ * high level, over 2.4 s -- three LFO cycles at Rate 40.  A level is the
+ * median of the windows on its side of the geometric mean, and a window is
+ * on it within 20% or one crossing, whichever is more: counts this small are
+ * quantised, and the low level is five or six crossings. */
+static float lfo_two_level_fraction(int lfo, int shape, float *ratio) {
+  unit_runtime_desc_t desc = make_valid_desc();
+  unit_init(&desc);
+  for (uint8_t p = 0; p < UNIT_MAX_PARAM_COUNT; ++p)
+    unit_set_param_value(p, unit_header.params[p].init);
+  unit_set_param_value(kPlaitsGateMode, 2);       /* continuous */
+  unit_set_param_value(kPlaitsPitchRange, 12);
+  if (lfo == 1) {
+    unit_set_param_value(kPlaitsLfoTarget, kTargetPitch);
+    unit_set_param_value(kPlaitsLfo1Shape, shape);
+    unit_set_param_value(kPlaitsLfo1Rate, 40);
+  } else {
+    unit_set_param_value(kPlaitsLfo2Target, kTargetPitch);
+    unit_set_param_value(kPlaitsLfo2Shape, shape);
+    unit_set_param_value(kPlaitsLfo2Rate, 40);
+    unit_set_param_value(kPlaitsLfo2Depth, 100);
+  }
+  unit_note_on(60, 127);
+
+  static float stereo[64 * 2];
+  const int window = 960, nwin = 120;             /* 20 ms, 2.4 s */
+  float zcr[120];
+  float prev = 0.0f;
+  int n = 0, w = 0, crossings = 0;
+  for (int b = 0; b < 40; ++b) unit_render(nullptr, stereo, 64);
+  while (w < nwin) {
+    unit_render(nullptr, stereo, 64);
+    for (int i = 0; i < 64 && w < nwin; ++i) {
+      const float x = stereo[i * 2];
+      if ((x >= 0.0f) != (prev >= 0.0f)) ++crossings;
+      prev = x;
+      if (++n == window) {
+        zcr[w++] = (float)crossings;
+        n = 0;
+        crossings = 0;
+      }
+    }
+  }
+  unit_teardown();
+
+  float lo = 1e9f, hi = 0.0f;
+  for (int i = 0; i < nwin; ++i) {
+    if (zcr[i] < lo) lo = zcr[i];
+    if (zcr[i] > hi) hi = zcr[i];
+  }
+  const float mid = sqrtf(lo * hi);
+  float below[120], above[120];
+  int nb = 0, na = 0;
+  for (int i = 0; i < nwin; ++i) {
+    if (zcr[i] < mid) below[nb++] = zcr[i];
+    else above[na++] = zcr[i];
+  }
+  /* Medians, by insertion sort: 120 values, once. */
+  for (int pass = 0; pass < 2; ++pass) {
+    float *v = pass ? above : below;
+    const int count = pass ? na : nb;
+    for (int i = 1; i < count; ++i)
+      for (int j = i; j > 0 && v[j] < v[j - 1]; --j) {
+        const float t = v[j]; v[j] = v[j - 1]; v[j - 1] = t;
+      }
+  }
+  const float low = nb ? below[nb / 2] : lo;
+  const float high = na ? above[na / 2] : hi;
+  const float tol_low = fmaxf(1.0f, 0.2f * low);
+  const float tol_high = fmaxf(1.0f, 0.2f * high);
+  int on_level = 0;
+  for (int i = 0; i < nwin; ++i)
+    if (fabsf(zcr[i] - low) <= tol_low || fabsf(zcr[i] - high) <= tol_high)
+      ++on_level;
+  *ratio = low > 0.0f ? high / low : 0.0f;
+  if (getenv("LFO_DEBUG")) {
+    printf("\n   ");
+    for (int i = 0; i < nwin; ++i) printf(" %d", (int)zcr[i]);
+    printf("\n    on a level: %.2f, levels %.0f and %.0f\n",
+           (double)on_level / nwin, (double)low, (double)high);
+  }
+  return (float)on_level / (float)nwin;
+}
+
+STEST(lfo2_square_has_two_levels) {
+  float ratio, triangle_ratio;
+  const float square = lfo_two_level_fraction(2, kShapeSquare, &ratio);
+  const float triangle = lfo_two_level_fraction(2, kShapeTriangle, &triangle_ratio);
+  /* Two octaves apart: a factor of four in crossing rate, and nearly every
+   * window on one level or the other.  Triangle's two "levels" are just the
+   * medians of each half of a continuum, much closer together (measured,
+   * 8 and 15 crossings against Square's 5 and 21). */
+  ASSERT_TRUE(ratio > 3.4f && ratio < 4.6f);
+  ASSERT_TRUE(square > 0.85f);
+  ASSERT_TRUE(triangle_ratio < 2.8f);
+  (void)triangle;
+}
+
+/* LFO1's shapes are transfer curves on the cosine the wrapper runs, not
+ * waveforms of their own, and its Triangle is an S-curve that flattens the
+ * cosine's peaks -- so it lingers near the two ends almost as Square does,
+ * and is no contrast.  Ramp Up, x * |x|, lingers near the middle instead. */
+STEST(lfo1_square_has_two_levels) {
+  float ratio, ramp_ratio;
+  const float square = lfo_two_level_fraction(1, kShapeSquare, &ratio);
+  const float ramp = lfo_two_level_fraction(1, kShapeRampUp, &ramp_ratio);
+  ASSERT_TRUE(ratio > 3.4f && ratio < 4.6f);
+  ASSERT_TRUE(square > 0.85f);
+  ASSERT_TRUE(ramp_ratio < 2.8f);
+  (void)ramp;
+}
+
+/* ===========================================================================
  * Main
  * ======================================================================== */
 
@@ -372,6 +506,10 @@ int main(void) {
   run_stest_output_amplitude_reasonable();
   run_stest_multiple_render_calls_continuous();
   run_stest_note_off_eventually_silences();
+
+  printf("\nLFO shapes:\n");
+  run_stest_lfo2_square_has_two_levels();
+  run_stest_lfo1_square_has_two_levels();
 
   printf("\n=== Results: %d/%d passed",
          g_tests_passed, g_tests_run);

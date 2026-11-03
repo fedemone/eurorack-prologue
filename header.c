@@ -47,7 +47,7 @@
  *    id 2:  Structure   (0-100%)     -> k_user_osc_param_shiftshape
  *    id 3:  Brightness  (0-100%)     -> k_user_osc_param_id1
  *    id 4:  Damping     (0-100%)     -> k_user_osc_param_id2
- *    id 5:  Chord       (0-13)       -> k_user_osc_param_id3
+ *    id 5:  Chord       (-1 Off, 0-15) -> k_user_osc_param_id3 (int16 in a uint16)
  *    id 6:  Model       (strings)    -> custom OSC_PARAM index 8
  *    id 7:  Polyphony   (strings)    -> custom OSC_PARAM index 9
  *    id 8:  Arp         (strings)    -> custom OSC_PARAM index 10
@@ -624,16 +624,23 @@ const __unit_header unit_header_t unit_header = {
         // Page 2
         /* id 4: Damping (resonance / decay time) */
         {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"Damping"}},
-        /* id 5: Chord (chord type for sympathetic strings).
-         * 0-10 are Rings' own; 11-13 are added by this port (Quartal, a just
-         * dominant seventh, and the gamelan slendro scale).  The max must
-         * track kNumChords in eurorack-opt/rings/dsp/performance_state.h --
+        /* id 5: Chord.  -1 is Off, the default: every model plays as it
+         * does upstream (Sympathetic Quantized tunes from Structure, like
+         * Sympathetic String).  0-10 are Rings' own chords; 11-15 are added
+         * by this port (Quartal, a just dominant seventh, the gamelan slendro
+         * scale, the Japanese hirajoshi scale and Scriabin's mystic chord).
+         * Every model plays them: Sympathetic Quantized on its sympathetic
+         * strings, the rest as struck chords (see part.cc).
+         *
+         * Off sits below the first chord, not in front of it, so the chords
+         * keep the numbers saved projects recorded.  The max must track
+         * kNumChords in eurorack-opt/rings/dsp/performance_state.h --
          * rings-resonator.cc clamps against it, so a stale value here costs a
          * chord rather than an out-of-range index. */
-        {0, 13, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
+        {-1, 15, -1, -1, k_unit_param_type_strings, 0, 0, 0, {"Chord"}},
         /* id 6: Model (resonator type: Modal/SympStr/String/FM/...).
-         * Default 4 = SympStrQ so the Chord parameter is effective on load
-         * (Chord only affects the quantized sympathetic-strings model). */
+         * Default 4 = SympStrQ, which with Chord Off plays like Sympathetic
+         * String and with a chord rings it on its sympathetic strings. */
         {0, 5, 4, 4, k_unit_param_type_strings, 0, 0, 0, {"Model"}},
         /* id 7: Polyphony (number of voices 1-4) */
         {1, 4, 1, 1, k_unit_param_type_strings, 0, 0, 0, {"Polyphony"}},
@@ -659,7 +666,7 @@ const __unit_header unit_header_t unit_header = {
          * LFO1 can reach. */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Target"}},
         /* id 13: LFO1 Shape (transfer curve for the incoming shape LFO) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
         /* id 14: LFO1 Rate (drumlogue has no host shape LFO, so the wrapper
          * runs one; 0 leaves LFO1 silent, which is the default) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
@@ -672,7 +679,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 16: LFO2 Target (the six shared destinations) */
         {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 17: LFO2 Shape */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
         /* id 18: LFO2 Rate */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO2 Rate"}},
         /* id 19: LFO2 Depth */
@@ -722,7 +729,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 8: LFO Target (which param the shape LFO modulates) */
         {0, 8, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
         /* id 9: LFO1 Shape (waveshape for shape LFO modulation) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
         /* id 10: LFO1 Rate (internal shape LFO frequency) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
         /* id 11: LFO2 Rate */
@@ -734,7 +741,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 13: LFO2 Target (which param LFO2 modulates) */
         {0, 6, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 14: LFO2 Shape (waveform for LFO2) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
     }
 
 #elif defined(OSC_STRING)
@@ -767,7 +774,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 5: LFO Target (which param the shape LFO modulates) */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
         /* id 6: LFO1 Shape (waveshape for shape LFO modulation) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
         /* id 7: LFO1 Rate (internal shape LFO frequency) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
 
@@ -779,7 +786,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 10: LFO2 Target (which param LFO2 modulates) */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 11: LFO2 Shape (waveform for LFO2) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
 
         // Page 4
         /* id 12: Gate Mode (envelope/gate behavior) */
@@ -827,7 +834,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 5: LFO Target (which param the shape LFO modulates) */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO Target"}},
         /* id 6: LFO1 Shape (waveshape for shape LFO modulation) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO1 Shape"}},
         /* id 7: LFO1 Rate (internal shape LFO frequency) */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"LFO1 Rate"}},
 
@@ -839,7 +846,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 10: LFO2 Target (which param LFO2 modulates) */
         {0, 7, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Target"}},
         /* id 11: LFO2 Shape (waveform for LFO2) */
-        {0, 4, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
+        {0, 5, 0, 0, k_unit_param_type_strings, 0, 0, 0, {"LFO2 Shape"}},
 
         // Page 4
         /* id 12: Gate Mode (envelope/gate behavior) */

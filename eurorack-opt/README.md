@@ -26,8 +26,9 @@ commit **58b9125**.
 | `clouds/dsp/pvoc/phase_vocoder.{h,cc}` | **one channel per call, spread across the hop**; **`CLOUDS_PVOC_HOP_RATIO` 2**; **transform moved to a worker thread** | Spectral, stereo |
 | `clouds/dsp/wsola_sample_player.h` | **`LoadCorrelator()` split across two blocks**, including at POSITION 0 | Stretch |
 | `stmlib/fft/shy_fft.h` | NEON butterfly | Spectral |
-| `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **three chords added**, table sized by `kNumChords` | Rings' Chord parameter |
-| `rings/dsp/part.{h,cc}`, `rings/dsp/string.h` | **Model/Polyphony changes keep what is ringing**; **String + Reverb's reverb rings out**; **sympathetic strings retune with a glide**; **a caller's boost goes ahead of the limiter** | Rings' Model and Polyphony, sympathetic models |
+| `rings/dsp/part.cc`, `rings/dsp/performance_state.h` | **five chords added**, table sized by `kNumChords`; **Chord Off** (a negative chord) | Rings' Chord parameter |
+| `rings/dsp/part.{h,cc}` | **struck chords on every model** | Rings' Chord parameter, all models but Sympathetic Quantized |
+| `rings/dsp/part.{h,cc}`, `rings/dsp/string.h` | **Model/Polyphony changes keep what is ringing**; **a string that would be dragged further than two semitones is cleared instead**; **String + Reverb's reverb rings out, and comes in over 30 ms**; **sympathetic strings retune with a glide**; **a caller's boost goes ahead of the limiter** | Rings' Model and Polyphony, sympathetic models |
 | `plaits/dsp/speech/lpc_speech_synth_words.h` | **`LPC_SPEECH_SYNTH_NUM_WORD_BANKS` 5 → 6** | Mussola's word banks |
 
 Why forked, and what changed
@@ -592,17 +593,27 @@ Measured under `qemu-arm` with Granular mode as a control for run-to-run
 noise, the Spectral/Granular cost ratio went 1.24–1.33 → 1.13–1.16 across
 three paired runs: roughly half of the FFT's excess cost.
 
-### `rings/dsp/part.cc`, `rings/dsp/performance_state.h` — three more chords
+### `rings/dsp/part.cc`, `rings/dsp/performance_state.h` — five more chords, and Off
 
-The only fork here that adds a feature rather than saving time. Rings' Chord
-parameter selects a row of string tunings; upstream ships eleven, and three
+The first fork here that adds a feature rather than saving time. Rings' Chord
+parameter selects a row of string tunings; upstream ships eleven, and five
 more are appended: `4ths` (stacked perfect fourths), `Just7` (a just-intoned
-dominant seventh, harmonics 4:5:6:7) and `Slendro` (the gamelan pentatonic,
-five equal steps to the octave). Two of the three are microtonal, which is the
-reason for picking them: on a resonator each string is tuned and rings
-independently, so a septimal seventh audibly stops beating against the root
-where a tempered one does not. `kNumChords` goes 11 → 14 in the header, and
-`rings-resonator.cc` carries the matching arpeggiator intervals.
+dominant seventh, harmonics 4:5:6:7), `Slendro` (the gamelan pentatonic, five
+equal steps to the octave), `Hirajoshi` (the Japanese pentatonic 0-2-3-7-8)
+and `Mystic` (Scriabin's Prometheus chord, C F# Bb E A D). Two of them are
+microtonal, which is the reason for picking them: on a resonator each string
+is tuned and rings independently, so a septimal seventh audibly stops beating
+against the root where a tempered one does not. The last two are simply rare:
+a scale a koto is tuned to, whose semitone pairs beat on sympathetic strings,
+and a chord of mixed fourths that never resolves. `kNumChords` goes 11 → 16 in
+the header, and `rings-resonator.cc` carries the matching arpeggiator
+intervals (six to a row now, so both scales are walked whole).
+
+A negative chord is Off.  `RenderStringVoice()` then tunes Sympathetic
+Quantized's sympathetic strings from Structure, as it does Sympathetic
+String's, and the struck chords below do nothing; the port's panel puts Off at
+-1, below the first chord, so the chords keep the numbers saved projects
+recorded.
 
 There is a second reason this had to be a fork rather than a header tweak.
 Upstream states the table's length twice — once as `kNumChords` in
@@ -621,8 +632,11 @@ this port instantiates `StringSynthPart` (it is Rings' polyphonic string-synth
 easter egg), so that is dead data; if anything ever reaches it, those rows are
 the thing to fill in.
 
-Verified by `make test-arm`, which strums each of the fourteen chords on the
-shipped binary and measures the result with a Goertzel per probe interval. The
+Verified by `make test-arm`, which strums each of the sixteen chords (and Off)
+on the shipped binary and measures the result with a Goertzel per probe
+interval -- `Hirajo` must ring its minor sixth rather than a major one,
+`Mystic` its tritone rather than a fourth -- and strikes a minor and a major
+triad on Modal and on String, which must differ in their third. The
 checks are within-recording comparisons of adjacent bins — `Just7` must ring
 9.69 semitones rather than 10.0, `min7` and `4ths` the other way round,
 `Slendro` 2.4 rather than 2.0 — because comparing whole spectra between chords
@@ -631,6 +645,36 @@ a second harmonic an octave up, and a bare fifth came out closer to a major
 ninth than one chord did to a second recording of itself. Two bins a third of
 a semitone apart in the same recording share whatever overtones land there, so
 what is left between them is the fundamental. Margins are 60× to 11000×.
+
+### `rings/dsp/part.{h,cc}` — struck chords
+
+With a chord selected, every model other than Sympathetic Quantized (which
+keeps tuning its sympathetic strings to it, as upstream) plays the chord as a
+*struck* chord: voices strike in groups, one chord tone each. Part therefore
+tells two polyphonies apart -- `requested_polyphony_`, what `set_polyphony()`
+was given, and `polyphony_`, the voices rendered -- and `chord_layout()`
+decides between them: a group takes as many voices as the polyphony leaves
+spare out of `kMaxPolyphony`, so four tones at Polyphony 1, two at 2, and none
+at 3 or 4, where every voice already carries a note of its own. No more than
+`kMaxPolyphony` voices are ever rendered, so a struck chord costs what the
+same model at Polyphony 4 does; measured per render under QEMU, within the
+run-to-run noise of that (String 21.8% against 21%, FM 21.6 against 19.6,
+String + Reverb 28.5 against 26, Modal 31 against 37).
+
+Voice `v` is chord tone `v / groups_` of group `v % groups_`, which is upstream's
+own layout when there is one voice per group, so with Chord off nothing in
+`Process()` changes. The chord's intervals (`kStruckChords`, root first, the
+defining interval second for groups of two) are added to every group's note
+each block, so changing the chord retunes what is ringing, and the main
+strings of a struck chord glide like sympathetic strings do except on the
+block that strikes them. A group's voices are summed with both pickups
+added, as one voice at Polyphony 1 is -- upstream's polyphonic sum subtracts
+the second pickup, and on a string the two are close to in phase, which left
+a struck chord on String 10.7 dB below the same note without one -- and each
+is scaled by the group size to the -1/4. Turning a chord on or off changes
+how many voices are rendered, so it goes through `ConfigureResonators()` like
+a polyphony change (`set_chord_enabled()`, and a third argument to
+`KeepsStateFor()`).
 
 ### `rings/dsp/part.{h,cc}`, `rings/dsp/string.h` — changes that keep sounding
 
@@ -656,14 +700,31 @@ than decay, to come back ringing when the resolution went up.
 
 `string.h` is forked for one setter, `set_dispersion_enabled()`, because the
 dispersion flag was only reachable through `Init()`, which also clears the
-delay line. `part.h` is forked for the bookkeeping -- what was last configured
+delay line -- and for a getter, `frequency()`, for the next point.
+
+Carrying a string across is not always the right thing, though. A string
+whose new voice or role is tuned far from what it is ringing at gets dragged
+there by the glide, reading through hundreds of samples of its delay line in
+a few milliseconds: a chirp, which measured as a click 23 times the
+surrounding programme on a Polyphony 4 -> 1 change in Sympathetic Quantized.
+So the first render after a reconfiguration that kept the strings
+(`carry_check_`) clears any string it would retune by more than two
+semitones (`kCarryRatio`) and tunes it outright, and leaves the caller's
+bridge to cover the energy that goes with it. The strings of a voice that
+render strikes are left alone: the strike retunes them anyway, and checked
+against the new note they would be cleared just as the strike was about to
+set them ringing. `part.h` is forked for the bookkeeping -- what was last configured
 -- and for `KeepsStateFor()`, which tells the caller in advance whether a
 change carries the sound across. `rings-resonator.cc` bridges every change
 made while something is sounding (2 ms crossfade into a frozen copy of the
-last 85 ms of output, the change, then either a 24 ms crossfade back to the
-continuing strings or a decay under the new engine), which also covers the
-level, mix and gain differences between configurations that would otherwise
-step at the change. Together, with a note ringing:
+last 85 ms of output, the change, then a 24 ms hand-back in which the frozen
+copy makes up whatever the new configuration does not carry on, by level,
+and dies away under it), which also covers the level, mix and gain
+differences between configurations that would otherwise step at the change.
+The table below is from when the hand-back was a plain crossfade back to the
+continuing strings or a decay under a new engine; the measured-on-level
+hand-back, the carry check above and `make test-rings-transitions` came
+after, and the README has their numbers. Together, with a note ringing:
 
 | Change | Before | After |
 |---|---|---|
@@ -674,7 +735,17 @@ step at the change. Together, with a note ringing:
 | Modal -> String | silence, 1764x | continues, 2.3x |
 | Model knob swept 0-5, one step per 30 ms | silence after step 1 | continues, 3.4x |
 
-**2. The String + Reverb reverb rings out.** Leaving that model for String --
+**2. The String + Reverb reverb rings out, and comes in gently.** Coming *into*
+String + Reverb with a note ringing, the reverb's input used to step from
+nothing to the whole string between two samples; its delay taps played that
+step back as a tick about 48 ms later, after the caller's bridge had
+finished. The input now comes up over 30 ms (`reverb_fade_in_`), unless a
+strike arrives, whose attack covers the onset and should not be faded out of
+the tail. The wet/dry amount is deliberately not ramped as well: tried, it
+moved the dry string's duck past the end of the bridge, where nothing made up
+for it, and the dip got worse.
+
+Leaving that model for String --
 whose strings now carry on -- the reverb is fed silence for four seconds, the
 last of which fades its time and level to zero, instead of stopping mid-tail.
 That costs what String + Reverb itself spent on it, about 17k instructions per
@@ -735,7 +806,7 @@ port layer instantiates (`GranularProcessor` directly; `FFT`, hence
 translation units see these headers and others see the submodule's links
 without complaint and then corrupts memory at run time. The Rings pair has the
 same shape for a different reason: a `part.cc` compiled against the
-submodule's `kNumChords` would index a fourteen-row parameter into an
+submodule's `kNumChords` would index a sixteen-row parameter into an
 eleven-row table. The forked `part.h` changes `sizeof(Part)` as well:
 `rings-resonator.cc` instantiates `Part`, so it and `part.cc` must both see the
 fork. (`string.h` adds only an inline setter; its layout is unchanged.)
@@ -848,10 +919,12 @@ For the Rings files the re-sync is mechanical. The chord fork is the upstream
 file with three rows appended to each of the two chord tables and the
 dimension named rather than spelled `11`; if upstream ever changes those
 tables, the rows to keep are the ones marked "Added for the drumlogue port".
-The other changes are each marked `FORK:` -- `ConfigureResonators()` and
-`KeepsStateFor()`, the reverb tail and the limiter boost at the end of
-`Process()`, the glide cap in `RenderStringVoice()`, the members and setters
-in `part.h`, and `set_dispersion_enabled()` in `string.h`.
+The other changes are each marked `FORK:` -- `ConfigureResonators()`,
+`KeepsStateFor()` and `chord_layout()`, the struck-chord voice groups and
+pickup sum in `Process()`, the reverb tail, its fade-in and the limiter boost
+at the end of `Process()`, the glide cap, the carry check and Chord Off in
+`RenderStringVoice()`, the members and setters in `part.h`, and
+`set_dispersion_enabled()` and `frequency()` in `string.h`.
 
 The Plaits header is the same kind of re-sync: take upstream's file and change
 the one constant back to 6. If upstream ever changes the count itself, the

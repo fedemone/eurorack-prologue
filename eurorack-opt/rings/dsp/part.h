@@ -37,6 +37,11 @@
 // String + Reverb model's reverb ring out after a change to another model,
 // and an output boost the limiter applies (set_output_boost()).
 //
+// And struck chords (set_chord_enabled(), see part.cc): voices strike in
+// groups, one chord tone each, so every model can play the Chord parameter.
+// The polyphony asked for and the number of voices rendered are therefore
+// two different numbers, requested_polyphony_ and polyphony_.
+//
 // Group of voices.
 
 #ifndef RINGS_DSP_PART_H_
@@ -94,14 +99,29 @@ class Part {
   inline bool bypass() const { return bypass_; }
   inline void set_bypass(bool bypass) { bypass_ = bypass; }
 
-  inline int32_t polyphony() const { return polyphony_; }
+  // FORK: the polyphony asked for.  What is rendered can be more voices than
+  // this -- see set_chord_enabled() -- and is settled, with the new voices'
+  // notes, by ConfigureResonators(), which is where upstream's note set-up
+  // for a polyphony increase now lives too.
+  inline int32_t polyphony() const { return requested_polyphony_; }
   inline void set_polyphony(int32_t polyphony) {
-    int32_t old_polyphony = polyphony_;
-    polyphony_ = std::min(polyphony, kMaxPolyphony);
-    for (int32_t i = old_polyphony; i < polyphony_; ++i) {
-      note_[i] = note_[0] + i * 0.05f;
-    }
+    requested_polyphony_ = std::max(std::min(polyphony, kMaxPolyphony),
+                                    static_cast<int32_t>(1));
     dirty_ = true;
+  }
+
+  // FORK: struck chords.  With a chord selected, every model other than
+  // Sympathetic Quantized (which tunes its sympathetic strings to the chord
+  // instead, as upstream) strikes a group of voices at once, one per chord
+  // tone, out of the voices the polyphony leaves spare.  The chord itself is
+  // PerformanceState::chord; a negative chord is Off.  Turning it on or off
+  // can change how many voices are rendered, so it reconfigures like a
+  // polyphony change does.
+  inline void set_chord_enabled(bool enabled) {
+    if (enabled != chord_enabled_) {
+      chord_enabled_ = enabled;
+      dirty_ = true;
+    }
   }
 
   inline ResonatorModel model() const { return model_; }
@@ -112,12 +132,14 @@ class Part {
     }
   }
 
-  // FORK: true when reconfiguring to (model, polyphony) carries on from the
-  // current state -- every string, mode set or FM voice the new configuration
-  // renders either keeps ringing or was silent anyway.  False for a change
-  // between the modal, string and FM families, and for a modal polyphony
-  // change; those start from silence, and the caller can bridge the gap.
-  bool KeepsStateFor(ResonatorModel model, int32_t polyphony) const;
+  // FORK: true when reconfiguring to (model, polyphony, chord on/off) carries
+  // on from the current state -- every string, mode set or FM voice the new
+  // configuration renders either keeps ringing or was silent anyway.  False
+  // for a change between the modal, string and FM families, and for a modal
+  // change in the number of voices rendered; those start from silence, and
+  // the caller can bridge the gap.
+  bool KeepsStateFor(ResonatorModel model, int32_t polyphony,
+                     bool chord_enabled) const;
 
   // FORK: extra gain ahead of the output limiter, for a caller that wants a
   // model louder than upstream balances it (the drumlogue port lifts the two
@@ -170,6 +192,15 @@ class Part {
     return x;
   }
 
+  // FORK: voice v belongs to group v % groups_, as chord tone v / groups_,
+  // and the group struck last is active_voice_.
+  inline bool is_active(int32_t voice) const {
+    return voice % groups_ == active_voice_;
+  }
+  inline float voice_note(int32_t voice) const {
+    return note_[voice] + chord_offset_[voice / groups_];
+  }
+
   void ComputeSympatheticStringsNotes(
       float tonic,
       float note,
@@ -193,8 +224,24 @@ class Part {
   // model next uses it).
   int32_t reverb_tail_;
   bool reverb_stale_;
+  // FORK: samples since the String + Reverb model was entered from another
+  // model, while its reverb's input is being brought up; see Process().
+  int32_t reverb_fade_in_;
   // FORK: see set_output_boost().
   float output_boost_;
+  // FORK: struck chords.  requested_polyphony_ is what set_polyphony() was
+  // given; polyphony_ is the number of voices rendered, which is
+  // groups_ * group_size_; chord_offset_ is each chord tone's interval, by
+  // position in the group, for the chord being played.
+  int32_t requested_polyphony_;
+  bool chord_enabled_;
+  int32_t groups_;
+  int32_t group_size_;
+  float chord_offset_[kMaxPolyphony];
+  // FORK: set by a reconfiguration that kept the strings; the next render
+  // clears any string it would have to retune further than a carry allows,
+  // rather than drag it there.  See RenderStringVoice().
+  bool carry_check_;
 
   int32_t num_voices_;
   int32_t active_voice_;

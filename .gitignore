@@ -50,7 +50,9 @@ test_clouds_grain_window_stock
 test_clouds_grain_window_fork
 test_clouds_grain_window_asan
 .grain_window_*.txt
+.wsola_*.txt
 .asan/
+.rings_host/
 .param_routing_bin
 .param_routing_now.txt
 .param_routing_diff.txt

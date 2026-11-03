@@ -39,6 +39,9 @@
 // the delay line, damping filters and pitch carry straight across; the
 // dispersion path's own small state is reset when it is switched back on.
 //
+// Also frequency(), a getter for the current tuning, which Part uses to
+// decide whether a string carried across a change is retuned or cleared.
+//
 // Comb filter / KS string.
 
 #ifndef RINGS_DSP_STRING_H_
@@ -123,6 +126,10 @@ class String {
   inline void set_frequency(float frequency, float coefficient) {
     frequency_ += coefficient * (frequency - frequency_);
   }
+
+  // FORK: what the string is tuned to now, so Part can tell how far a change
+  // would retune a string that is ringing.  See Part::RenderStringVoice().
+  inline float frequency() const { return frequency_; }
 
   inline void set_dispersion(float dispersion) {
     dispersion_ = dispersion;

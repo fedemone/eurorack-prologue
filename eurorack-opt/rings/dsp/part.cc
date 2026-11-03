@@ -52,8 +52,21 @@
 //     few hundred samples inside one 24-sample block, a chirp that measured as
 //     a click on most note changes in the sympathetic models at polyphony 4.
 //
-//  5. Three chords added to the end of each table, and the tables sized with
+//  5. Five chords added to the end of each table, and the tables sized with
 //     kNumChords instead of a literal 11 -- the rest of this note.
+//
+//  6. A string carried across a change but due to be retuned by more than
+//     kCarryRatio is cleared instead (RenderStringVoice()).  Dragged there by
+//     the glide it chirps -- reading its delay line through hundreds of
+//     samples in a few milliseconds -- which measured as a click 23 times the
+//     surrounding programme on a Polyphony 4 -> 1 change in Sympathetic
+//     Quantized.  The caller's bridge makes up the energy that is lost.
+//
+//  7. Struck chords: with a chord selected, every model but Sympathetic
+//     Quantized strikes a group of voices at once, one chord tone each.  See
+//     "Struck chords" below.  A negative chord is Off, and Off is also what
+//     Sympathetic Quantized does without a chord: it tunes its sympathetic
+//     strings from Structure, as Sympathetic String does.
 //
 // The literal was a hazard, not just a style point.  performance_state.chord
 // reaches this table through Part::Process() with no bounds check between the
@@ -65,12 +78,13 @@
 // whatever the next polyphony block holds, on the audio thread.  Naming the
 // constant in the dimension is what makes the two move together.
 //
-// The three additions are deliberately not more triads.  Upstream's eleven
-// cover the common tonal ground already, and a resonator is an unusually good
-// place to hear things that ordinary keyboards cannot play: every string is
-// tuned independently and rings sympathetically, so intervals that are merely
-// out of tune on a piano lock or beat audibly here.  So the new rows are one
-// modern-tonal, one microtonal-consonant and one non-Western:
+// The first three additions are deliberately not more triads.  Upstream's
+// eleven cover the common tonal ground already, and a resonator is an
+// unusually good place to hear things that ordinary keyboards cannot play:
+// every string is tuned independently and rings sympathetically, so intervals
+// that are merely out of tune on a piano lock or beat audibly here.  So the
+// new rows are one modern-tonal, one microtonal-consonant and one
+// non-Western, and two more after them that are rare in any chord list:
 //
 //   Quartal (4ths)  Stacked perfect fourths rather than stacked thirds.  Has
 //                   no third at all, so it reads as neither major nor minor --
@@ -91,6 +105,16 @@
 //                   semitones each).  Every interval is foreign to twelve-tone
 //                   equal temperament, which is the point: struck and left to
 //                   ring it is recognisably gong-like.
+//
+//   Hirajoshi       The Japanese pentatonic 0-2-3-7-8, as a koto is tuned to
+//   (Hirajo)        it.  Two semitone pairs, so on sympathetic strings the
+//                   neighbours beat against each other; the arpeggiator walks
+//                   it as the scale it is.
+//
+//   Mystic          Scriabin's "Prometheus" chord, C F# Bb E A D: fourths,
+//                   but a tritone, a diminished and an augmented fourth among
+//                   them, so it is whole-tone coloured and never resolves.
+//                   Distinct from 4ths, whose fourths are all perfect.
 //
 // Only Just7 and Slendro need the table's float type to mean anything -- the
 // fractional entries upstream already has are detunings of a semitone or two,
@@ -115,6 +139,14 @@ namespace rings {
 using namespace std;
 using namespace stmlib;
 
+namespace {
+
+// FORK: how long the String + Reverb model takes to let its reverb's input
+// in when it is switched to with something ringing: 30 ms.
+const int32_t kReverbFadeInSamples = 1440;
+
+}  // namespace
+
 void Part::Init(uint16_t* reverb_buffer) {
   active_voice_ = 0;
   
@@ -129,7 +161,14 @@ void Part::Init(uint16_t* reverb_buffer) {
   configured_polyphony_ = polyphony_;
   reverb_tail_ = 0;
   reverb_stale_ = false;
+  reverb_fade_in_ = kReverbFadeInSamples;
   output_boost_ = 1.0f;
+  requested_polyphony_ = 1;
+  chord_enabled_ = false;
+  groups_ = 1;
+  group_size_ = 1;
+  fill(&chord_offset_[0], &chord_offset_[kMaxPolyphony], 0.0f);
+  carry_check_ = false;
   
   for (int32_t i = 0; i < kMaxPolyphony; ++i) {
     excitation_filter_[i].Init();
@@ -197,9 +236,61 @@ const int32_t kReverbFadeSamples = 48000;
 // every step in both models.
 const float kSympatheticGlideMax = 0.2f;
 
+// FORK: furthest a string carried across a reconfiguration may be retuned
+// rather than cleared: two semitones, as a frequency ratio.  Within that the
+// glide is a short portamento; past it, see the note at the top of the file.
+const float kCarryRatio = 1.122462f;
+
+// FORK: struck chords -- the intervals the voices of a group are tuned to,
+// one row per chord, root first.  A group of two takes the first two, so the
+// second entry is each chord's defining interval rather than its next tone
+// up: the seventh of min7, the ninth of min9, the septimal seventh of Just7.
+// Chords of fewer than four tones double one at the octave.  Upstream's
+// sympathetic voicings put the struck string an octave below the root and
+// spread six or seven others over two octaves; four struck voices cannot do
+// that and stay a chord, so these are closer, and the five-tone chords (the
+// ninths, the eleventh, 6/9) leave out the fifth, as a pianist would.
+const float kStruckChords[kNumChords][kMaxPolyphony] = {
+  { 0.0f, 12.0f,  24.0f, -12.0f },  // Oct
+  { 0.0f,  7.0f,  12.0f,  19.0f },  // 5th
+  { 0.0f,  5.0f,   7.0f,  12.0f },  // sus4
+  { 0.0f,  3.0f,   7.0f,  12.0f },  // min
+  { 0.0f, 10.0f,   3.0f,   7.0f },  // min7
+  { 0.0f, 14.0f,   3.0f,  10.0f },  // min9
+  { 0.0f, 17.0f,   3.0f,  10.0f },  // min11
+  { 0.0f,  9.0f,   4.0f,  14.0f },  // 69
+  { 0.0f, 14.0f,   4.0f,  11.0f },  // Maj9
+  { 0.0f, 11.0f,   4.0f,   7.0f },  // Maj7
+  { 0.0f,  4.0f,   7.0f,  12.0f },  // Maj
+  { 0.0f,  5.0f,  10.0f,  15.0f },  // 4ths
+  { 0.0f,  9.69f,  3.86f,  7.02f }, // Just7
+  { 0.0f,  7.2f,   2.4f,   4.8f },  // Slendro
+  { 0.0f,  8.0f,   2.0f,   7.0f },  // Hirajoshi
+  { 0.0f,  6.0f,  10.0f,  16.0f },  // Mystic
+};
+
+// FORK: how a polyphony and a chord on/off become groups.  A group takes as
+// many voices as the polyphony leaves spare out of kMaxPolyphony, so a chord
+// is four voices at Polyphony 1, two at Polyphony 2, and nothing at 3 or 4,
+// where every voice already carries a note of its own.  The voices rendered
+// never exceed kMaxPolyphony, so a chord costs no more than Polyphony 4 of
+// the same model already does.  Sympathetic Quantized plays chords on its
+// sympathetic strings instead, and is laid out exactly as without one.
+inline void chord_layout(ResonatorModel model, int32_t polyphony,
+                         bool chord_enabled, int32_t* voices,
+                         int32_t* group_size) {
+  int32_t size = 1;
+  if (chord_enabled && model != RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED) {
+    size = kMaxPolyphony / polyphony;
+  }
+  *voices = polyphony * size;
+  *group_size = size;
+}
+
 }  // namespace
 
-bool Part::KeepsStateFor(ResonatorModel model, int32_t polyphony) const {
+bool Part::KeepsStateFor(ResonatorModel model, int32_t polyphony,
+                         bool chord_enabled) const {
   if (!configured_) {
     return true;  // Nothing has rendered since Init(): nothing to keep.
   }
@@ -208,10 +299,14 @@ bool Part::KeepsStateFor(ResonatorModel model, int32_t polyphony) const {
   }
   // A modal resonator keeps its modes' state privately, and the modes past a
   // lower resolution would freeze rather than decay -- to come back, ringing,
-  // the next time the resolution went up.  So a modal polyphony change (which
-  // is a resolution change) starts from silence.
-  return family_of(model) != FAMILY_MODAL ||
-      std::min(polyphony, kMaxPolyphony) == configured_polyphony_;
+  // the next time the resolution went up.  So a modal change in the number
+  // of voices rendered (which is a resolution change) starts from silence.
+  int32_t voices, group_size;
+  chord_layout(model,
+               std::max(std::min(polyphony, kMaxPolyphony),
+                        static_cast<int32_t>(1)),
+               chord_enabled, &voices, &group_size);
+  return family_of(model) != FAMILY_MODAL || voices == configured_polyphony_;
 }
 
 // FORK: keep what is already ringing.
@@ -239,8 +334,26 @@ void Part::ConfigureResonators() {
     return;
   }
 
-  const bool keep = configured_ && KeepsStateFor(model_, polyphony_);
+  const bool keep = configured_ &&
+      KeepsStateFor(model_, requested_polyphony_, chord_enabled_);
   const int32_t old_polyphony = keep ? configured_polyphony_ : 0;
+
+  // Struck chords: how many voices to render, in groups of how many.  New
+  // voices take their group's note -- they are silent until struck, and a
+  // strike sets it anyway -- which is upstream's set_polyphony() set-up,
+  // moved here because this is where the voice count is now decided.
+  {
+    int32_t voices, group_size;
+    chord_layout(model_, requested_polyphony_, chord_enabled_,
+                 &voices, &group_size);
+    const int32_t previous = configured_ ? configured_polyphony_ : 1;
+    polyphony_ = voices;
+    group_size_ = group_size;
+    groups_ = voices / group_size;
+    for (int32_t i = previous; i < polyphony_; ++i) {
+      note_[i] = note_[i % groups_ < previous ? i % groups_ : 0];
+    }
+  }
 
   switch (model_) {
     case RESONATOR_MODEL_MODAL:
@@ -314,6 +427,13 @@ void Part::ConfigureResonators() {
       reverb_.Clear();
       reverb_stale_ = false;
     }
+    // Entered from another model with the reverb silent: let its input in
+    // gradually, see reverb_fade_in_.  Not when the reverb is still ringing
+    // out from the last visit, which it then simply carries on from.
+    if (configured_ && configured_model_ != RESONATOR_MODEL_STRING_AND_REVERB &&
+        reverb_tail_ <= 0) {
+      reverb_fade_in_ = 0;
+    }
     reverb_tail_ = 0;
   } else if (leaving_reverb && model_ == RESONATOR_MODEL_STRING) {
     reverb_tail_ = kReverbTailSamples;
@@ -322,9 +442,10 @@ void Part::ConfigureResonators() {
     reverb_tail_ = 0;
   }
 
-  if (active_voice_ >= polyphony_) {
+  if (active_voice_ >= groups_) {
     active_voice_ = 0;
   }
+  carry_check_ = keep && family_of(model_) == FAMILY_STRING;
   configured_model_ = model_;
   configured_polyphony_ = polyphony_;
   configured_ = true;
@@ -350,7 +471,9 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     // Added for the drumlogue port -- see the fork note at the top.
     { -12.0f, -5.0f,  0.0f,  5.0f, 10.0f,  15.0f,  20.0f,  20.01f }, // 4ths
     { -12.0f, -4.98f, 0.0f,  3.86f, 7.02f,  9.69f, 12.0f,  15.86f }, // Just7
-    { -12.0f, -4.8f,  0.0f,  2.4f,  4.8f,   7.2f,   9.6f,  12.0f }   // Slendro
+    { -12.0f, -4.8f,  0.0f,  2.4f,  4.8f,   7.2f,   9.6f,  12.0f },  // Slendro
+    { -12.0f, -5.0f,  0.0f,  2.0f,  3.0f,   7.0f,   8.0f,  12.0f },  // Hirajoshi
+    { -12.0f, -6.0f,  0.0f,  6.0f, 10.0f,  14.0f,  16.0f,  21.0f }   // Mystic
   },
   {
     { -12.0f, 0.0f,  0.01f, 12.0f }, // OCT
@@ -368,6 +491,8 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 5.0f,   10.0f, 15.0f }, // 4ths
     { -12.0f, 3.86f,  7.02f,  9.69f }, // Just7
     { -12.0f, 2.4f,   7.2f,   9.6f },  // Slendro
+    { -12.0f, 2.0f,   7.0f,   8.0f },  // Hirajoshi
+    { -12.0f, 6.0f,  10.0f,  16.0f },  // Mystic
   },
   {
     { 0.0f, -12.0f },
@@ -383,10 +508,13 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 12.0f },
     // Added for the drumlogue port -- see the fork note at the top.  Two
     // strings is not enough to state a chord, so these are the defining
-    // interval of each: the fourth, the septimal seventh, the slendro fifth.
+    // interval of each: the fourth, the septimal seventh, the slendro fifth,
+    // hirajoshi's minor sixth over the root, the mystic chord's tritone.
     { 0.0f, 5.0f },
     { 0.0f, 9.69f },
-    { 0.0f, 7.2f }
+    { 0.0f, 7.2f },
+    { 0.0f, 8.0f },
+    { 0.0f, 6.0f }
   },
   {
     { 0.0f, -12.0f },
@@ -402,10 +530,13 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 12.0f },
     // Added for the drumlogue port -- see the fork note at the top.  Two
     // strings is not enough to state a chord, so these are the defining
-    // interval of each: the fourth, the septimal seventh, the slendro fifth.
+    // interval of each: the fourth, the septimal seventh, the slendro fifth,
+    // hirajoshi's minor sixth over the root, the mystic chord's tritone.
     { 0.0f, 5.0f },
     { 0.0f, 9.69f },
-    { 0.0f, 7.2f }
+    { 0.0f, 7.2f },
+    { 0.0f, 8.0f },
+    { 0.0f, 6.0f }
   }
 };
 
@@ -431,7 +562,9 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     // leaving it short would be an out-of-bounds read rather than a fallback.
     { -12.0f, -5.0f,  0.0f,  5.0f, 10.0f,  15.0f,  20.0f,  20.01f },
     { -12.0f, -4.98f, 0.0f,  3.86f, 7.02f,  9.69f, 12.0f,  15.86f },
-    { -12.0f, -4.8f,  0.0f,  2.4f,  4.8f,   7.2f,   9.6f,  12.0f }
+    { -12.0f, -4.8f,  0.0f,  2.4f,  4.8f,   7.2f,   9.6f,  12.0f },
+    { -12.0f, -5.0f,  0.0f,  2.0f,  3.0f,   7.0f,   8.0f,  12.0f },
+    { -12.0f, -6.0f,  0.0f,  6.0f, 10.0f,  14.0f,  16.0f,  21.0f }
   },
   { 
     { -12.0f, 0.0f, 0.01f, 12.0f },
@@ -448,6 +581,8 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 5.0f,   10.0f, 15.0f },
     { -12.0f, 3.86f,  7.02f,  9.69f },
     { -12.0f, 2.4f,   7.2f,   9.6f },
+    { -12.0f, 2.0f,   7.0f,   8.0f },
+    { -12.0f, 6.0f,  10.0f,  16.0f },
   },
   {
     { 0.0f, -12.0f },
@@ -463,7 +598,9 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 12.0f },
     { 0.0f, 5.0f },
     { 0.0f, 9.69f },
-    { 0.0f, 7.2f }
+    { 0.0f, 7.2f },
+    { 0.0f, 8.0f },
+    { 0.0f, 6.0f }
   },
   {
     { 0.0f, -12.0f },
@@ -479,7 +616,9 @@ float chords[kMaxPolyphony][kNumChords][8] = {
     { -12.0f, 12.0f },
     { 0.0f, 5.0f },
     { 0.0f, 9.69f },
-    { 0.0f, 7.2f }
+    { 0.0f, 7.2f },
+    { 0.0f, 8.0f },
+    { 0.0f, 6.0f }
   }
 };
 
@@ -551,7 +690,7 @@ void Part::RenderModalVoice(
     size_t size) {
   // Internal exciter is a pulse, pre-filter.
   if (performance_state.internal_exciter &&
-      voice == active_voice_ &&
+      is_active(voice) &&
       performance_state.strum) {
     resonator_input_[0] += 0.25f * SemitonesToRatio(
         filter_cutoff * filter_cutoff * 24.0f) / filter_cutoff;
@@ -579,7 +718,7 @@ void Part::RenderFMVoice(
     size_t size) {
   FMVoice& v = fm_voice_[voice];
   if (performance_state.internal_exciter &&
-      voice == active_voice_ &&
+      is_active(voice) &&
       performance_state.strum) {
     v.TriggerInternalEnvelope();
   }
@@ -607,12 +746,15 @@ void Part::RenderStringVoice(
   if (model_ == RESONATOR_MODEL_SYMPATHETIC_STRING ||
       model_ == RESONATOR_MODEL_SYMPATHETIC_STRING_QUANTIZED) {
     num_strings = 2 * kMaxPolyphony / polyphony_;
-    float parameter = model_ == RESONATOR_MODEL_SYMPATHETIC_STRING
+    // FORK: with Chord off (negative) the quantized model has no chord to
+    // tune to, and tunes from Structure like the unquantized one.
+    float parameter = (model_ == RESONATOR_MODEL_SYMPATHETIC_STRING ||
+                       performance_state.chord < 0)
         ? patch.structure
-        : 2.0f + performance_state.chord;
+        : 2.0f + min(performance_state.chord, kNumChords - 1);
     ComputeSympatheticStringsNotes(
         performance_state.tonic + performance_state.fm,
-        performance_state.tonic + note_[voice] + performance_state.fm,
+        performance_state.tonic + voice_note(voice) + performance_state.fm,
         parameter,
         frequencies,
         num_strings);
@@ -623,7 +765,8 @@ void Part::RenderStringVoice(
     frequencies[0] = frequency;
   }
 
-  if (voice == active_voice_) {
+  const bool active = is_active(voice);
+  if (active) {
     const float gain = 1.0f / Sqrt(static_cast<float>(num_strings) * 2.0f);
     for (size_t i = 0; i < size; ++i) {
       resonator_input_[i] *= gain;
@@ -636,7 +779,7 @@ void Part::RenderStringVoice(
 
   // Add noise burst.
   if (performance_state.internal_exciter) {
-    if (voice == active_voice_ && performance_state.strum) {
+    if (active && performance_state.strum) {
       plucker_[voice].Trigger(frequency, filter_cutoff * 8.0f, patch.position);
     }
     plucker_[voice].Process(noise_burst_buffer_, size);
@@ -662,7 +805,11 @@ void Part::RenderStringVoice(
     float brightness = patch.brightness;
     float damping = patch.damping;
     float position = patch.position;
-    float glide = 1.0f;
+    // FORK: in a struck chord the main strings are retuned while they ring,
+    // whenever the chord changes, so they glide like sympathetic strings do
+    // -- except on the block that strikes them, where the strike covers it.
+    float glide = (group_size_ > 1 && !(active && performance_state.strum))
+        ? kSympatheticGlideMax : 1.0f;
     float string_index = static_cast<float>(string) / static_cast<float>(num_strings);
     const float* input = resonator_input_;
     
@@ -685,6 +832,26 @@ void Part::RenderStringVoice(
       input = sympathetic_resonator_input_;
     }
     
+    // FORK: a string carried across a reconfiguration that would now have to
+    // travel further than kCarryRatio is cleared and tuned outright; see the
+    // note at the top of the file.  A string the reconfiguration has just
+    // initialised lands here too, and is tuned outright instead of gliding up
+    // from Init()'s 220 Hz.  Not the strings of a voice this block strikes:
+    // the strike retunes them anyway, and covers the jump, as it always has.
+    // Checked, they were measured against the new note's tuning rather than
+    // the old one's, so a note arriving with a Model change cleared the
+    // sympathetic strings it would have set ringing -- 8 dB down on the
+    // struck note.
+    const bool struck_now = active && performance_state.strum;
+    if (carry_check_ && !struck_now) {
+      const float ratio = frequencies[string] / s.frequency();
+      if (ratio > kCarryRatio || ratio < 1.0f / kCarryRatio) {
+        s.Init(model_ == RESONATOR_MODEL_STRING ||
+               model_ == RESONATOR_MODEL_STRING_AND_REVERB);
+        glide = 1.0f;
+      }
+    }
+
     s.set_dispersion(dispersion);
     s.set_frequency(frequencies[string], glide);
     s.set_brightness(brightness);
@@ -728,17 +895,44 @@ void Part::Process(
       performance_state.note,
       performance_state.strum);
 
+  // FORK: voices are allocated by group, which is a voice of its own unless
+  // a chord is struck; see "Struck chords".
   if (performance_state.strum) {
-    note_[active_voice_] = note_filter_.stable_note();
-    if (polyphony_ > 1 && polyphony_ & 1) {
+    for (int32_t v = active_voice_; v < polyphony_; v += groups_) {
+      note_[v] = note_filter_.stable_note();
+    }
+    if (groups_ > 1 && groups_ & 1) {
       active_voice_ = kPingPattern[step_counter_ % 8];
       step_counter_ = (step_counter_ + 1) % 8;
     } else {
-      active_voice_ = (active_voice_ + 1) % polyphony_;
+      active_voice_ = (active_voice_ + 1) % groups_;
     }
   }
   
-  note_[active_voice_] = note_filter_.note();
+  for (int32_t v = active_voice_; v < polyphony_; v += groups_) {
+    note_[v] = note_filter_.note();
+  }
+
+  // FORK: the chord tones for this block.  They apply to every group, not
+  // only the one struck last, so a chord change retunes what is ringing --
+  // as it does the sympathetic strings of Sympathetic Quantized.
+  if (group_size_ > 1 && performance_state.chord >= 0) {
+    const float* chord = kStruckChords[min(performance_state.chord,
+                                           kNumChords - 1)];
+    for (int32_t k = 0; k < group_size_; ++k) {
+      chord_offset_[k] = chord[k];
+    }
+  } else {
+    fill(&chord_offset_[0], &chord_offset_[kMaxPolyphony], 0.0f);
+  }
+  // FORK: a struck chord is louder than one note of it, but not by its
+  // number of voices: each is scaled by group_size_ to the -1/4, half the
+  // equal-power compensation.  Measured against the same note without a
+  // chord, that puts min7 at +3 dB on Modal and -2 to -5 dB on String, FM
+  // and String + Reverb.  Sympathetic String comes out lower still, because
+  // a voice of a struck chord has one sympathetic string instead of seven.
+  const float voice_gain = group_size_ > 1
+      ? 1.0f / Sqrt(Sqrt(static_cast<float>(group_size_))) : 1.0f;
   
   fill(&out[0], &out[size], 0.0f);
   fill(&aux[0], &aux[size], 0.0f);
@@ -746,19 +940,20 @@ void Part::Process(
     // Compute MIDI note value, frequency, and cutoff frequency for excitation
     // filter.
     float cutoff = patch.brightness * (2.0f - patch.brightness);
-    float note = note_[voice] + performance_state.tonic + performance_state.fm;
+    const bool active = is_active(voice);
+    float note = voice_note(voice) + performance_state.tonic + performance_state.fm;
     float frequency = SemitonesToRatio(note - 69.0f) * a3;
     float filter_cutoff_range = performance_state.internal_exciter
       ? frequency * SemitonesToRatio((cutoff - 0.5f) * 96.0f)
       : 0.4f * SemitonesToRatio((cutoff - 1.0f) * 108.0f);
-    float filter_cutoff = min(voice == active_voice_
+    float filter_cutoff = min(active
       ? filter_cutoff_range
       : (10.0f / kSampleRate), 0.499f);
     float filter_q = performance_state.internal_exciter ? 1.5f : 0.8f;
 
     // Process input with excitation filter. Inactive voices receive silence.
     excitation_filter_[voice].set_f_q<FREQUENCY_DIRTY>(filter_cutoff, filter_q);
-    if (voice == active_voice_) {
+    if (active) {
       copy(&in[0], &in[size], &resonator_input_[0]);
     } else {
       fill(&resonator_input_[0], &resonator_input_[size], 0.0f);
@@ -784,11 +979,24 @@ void Part::Process(
     } else {
       // Dispatch odd/even voices to individual outputs.
       float* destination = voice & 1 ? aux : out;
-      for (size_t i = 0; i < size; ++i) {
-        destination[i] += out_buffer_[i] - aux_buffer_[i];
+      if (group_size_ > 1) {
+        // FORK: a struck chord's voices are summed as one voice at
+        // Polyphony 1 is -- both pickups added -- not as upstream sums a
+        // polyphonic voice, with the second pickup subtracted.  On a string
+        // the two pickups are close to in phase, so the difference cancels:
+        // measured, a struck chord on String came out 10.7 dB below the same
+        // note without one, and Sympathetic String 14.3 dB.
+        for (size_t i = 0; i < size; ++i) {
+          destination[i] += (out_buffer_[i] + aux_buffer_[i]) * voice_gain;
+        }
+      } else {
+        for (size_t i = 0; i < size; ++i) {
+          destination[i] += out_buffer_[i] - aux_buffer_[i];
+        }
       }
     }
   }
+  carry_check_ = false;
   
   if (model_ == RESONATOR_MODEL_STRING_AND_REVERB) {
     for (size_t i = 0; i < size; ++i) {
@@ -800,7 +1008,25 @@ void Part::Process(
     reverb_.set_amount(0.1f + patch.damping * 0.5f);
     reverb_.set_diffusion(0.625f);
     reverb_.set_time(0.35f + 0.63f * patch.damping);
-    reverb_.set_input_gain(0.2f);
+    // FORK: entered with a note ringing, the reverb's input used to step from
+    // nothing to the whole string between two samples -- a step its delay
+    // taps then played back as a tick about 48 ms later, after the caller's
+    // bridge had finished.  Brought up over kReverbFadeInSamples instead.
+    // (Not the wet/dry amount: ramped, it moved the dry string's duck past
+    // the end of the bridge, where nothing makes up for it -- the bridge only
+    // covers what happens while it plays.)
+    // A strike ends it: the attack covers the onset, and fading it out of
+    // the reverb would take the loudest part of the note out of the tail.
+    float input_gain = 0.2f;
+    if (performance_state.strum) {
+      reverb_fade_in_ = kReverbFadeInSamples;
+    }
+    if (reverb_fade_in_ < kReverbFadeInSamples) {
+      input_gain *= static_cast<float>(reverb_fade_in_) /
+          static_cast<float>(kReverbFadeInSamples);
+      reverb_fade_in_ += static_cast<int32_t>(size);
+    }
+    reverb_.set_input_gain(input_gain);
     reverb_.set_lp(0.3f + patch.brightness * 0.6f);
     reverb_.Process(out, aux, size);
     for (size_t i = 0; i < size; ++i) {
