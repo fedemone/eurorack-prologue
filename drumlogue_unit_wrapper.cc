@@ -402,7 +402,7 @@ void unit_aftertouch(uint8_t note, uint8_t aftertouch) {
  *   id 2  -> shiftshape (10-bit: 0-1023)  [Structure]
  *   id 3  -> id1        (0-100 percent)   [Brightness]
  *   id 4  -> id2        (0-100 percent)   [Damping]
- *   id 5  -> id3        (0-10 chord)      [Chord]
+ *   id 5  -> id3        (-1 Off, 0-15)   [Chord, as a uint16 two's complement]
  *   id 6  -> custom 8   (0-5 model)       [Model]
  *   id 7  -> custom 9   (1-4 polyphony)   [Polyphony]
  *
@@ -503,10 +503,12 @@ int32_t unit_get_param_value(uint8_t id) {
 }
 
 /* ---- LFO shape names (shared by LFO1 Shape and LFO2 Shape params) ---- */
+/* Square was appended rather than slotted in beside Cosine, so the shapes a
+ * saved project already selects keep their numbers. */
 static const char * const s_lfo_shape_names[] = {
-  "Cosine", "Triangle", "Ramp Up", "Ramp Down", "Fat Sine"
+  "Cosine", "Triangle", "Ramp Up", "Ramp Down", "Fat Sine", "Square"
 };
-#define NUM_LFO_SHAPES 5
+#define NUM_LFO_SHAPES 6
 
 #if defined(MUSSOLA_VOCAL)
 /* ---- Mussola model and gate mode names ---- */
@@ -567,15 +569,19 @@ static const char * const s_rings_model_names[] = {
 };
 #define NUM_RINGS_MODELS 6
 
-/* The last three are added by this port; see the fork note in
+/* The last five are added by this port; see the fork note in
  * eurorack-opt/rings/dsp/part.cc.  "4ths" is a quartal voicing, "Just7" a
- * just-intoned dominant seventh, "Slendro" the gamelan pentatonic. */
+ * just-intoned dominant seventh, "Slendro" the gamelan pentatonic, "Hirajo"
+ * the Japanese hirajoshi pentatonic, "Mystic" Scriabin's Prometheus chord.
+ *
+ * Off is -1, below the first chord rather than in front of it, so that the
+ * chords keep the numbers projects saved with earlier builds recorded. */
 static const char * const s_rings_chord_names[] = {
   "Oct", "5th", "sus4", "min", "min7",
   "min9", "min11", "69", "Maj9", "Maj7", "Maj",
-  "4ths", "Just7", "Slendro"
+  "4ths", "Just7", "Slendro", "Hirajo", "Mystic"
 };
-#define NUM_RINGS_CHORDS 14
+#define NUM_RINGS_CHORDS 16
 
 static const char * const s_rings_poly_names[] = {
   "1", "2", "3", "4"
@@ -687,6 +693,8 @@ const char * unit_get_param_str_value(uint8_t id, int32_t value) {
 #elif defined(RINGS_RESONATOR)
   switch (id) {
     case 5: /* Chord */
+      if (value == -1)
+        return "Off";
       if (value >= 0 && value < NUM_RINGS_CHORDS)
         return s_rings_chord_names[value];
       break;

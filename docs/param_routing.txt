@@ -19,7 +19,7 @@
  5 LFO Target        7 -> osc[2] = 7
  6 LFO1 Shape        0 -> osc[11] = 0
  6 LFO1 Shape        2 -> osc[11] = 2
- 6 LFO1 Shape        4 -> osc[11] = 4
+ 6 LFO1 Shape        5 -> osc[11] = 5
  7 LFO1 Rate         0 -> wrapper
  7 LFO1 Rate        50 -> wrapper
  7 LFO1 Rate       100 -> wrapper
@@ -34,7 +34,7 @@
 10 LFO2 Target       7 -> osc[5] = 7
 11 LFO2 Shape        0 -> osc[12] = 0
 11 LFO2 Shape        2 -> osc[12] = 2
-11 LFO2 Shape        4 -> osc[12] = 4
+11 LFO2 Shape        5 -> osc[12] = 5
 12 Gate Mode         0 -> osc[13] = 0
 12 Gate Mode         1 -> osc[13] = 1
 12 Gate Mode         2 -> osc[13] = 2
@@ -65,7 +65,7 @@
  5 LFO Target        7 -> osc[2] = 7
  6 LFO1 Shape        0 -> osc[11] = 0
  6 LFO1 Shape        2 -> osc[11] = 2
- 6 LFO1 Shape        4 -> osc[11] = 4
+ 6 LFO1 Shape        5 -> osc[11] = 5
  7 LFO1 Rate         0 -> wrapper
  7 LFO1 Rate        50 -> wrapper
  7 LFO1 Rate       100 -> wrapper
@@ -80,7 +80,7 @@
 10 LFO2 Target       7 -> osc[5] = 7
 11 LFO2 Shape        0 -> osc[12] = 0
 11 LFO2 Shape        2 -> osc[12] = 2
-11 LFO2 Shape        4 -> osc[12] = 4
+11 LFO2 Shape        5 -> osc[12] = 5
 12 Gate Mode         0 -> osc[13] = 0
 12 Gate Mode         1 -> osc[13] = 1
 12 Gate Mode         2 -> osc[13] = 2
@@ -120,7 +120,7 @@
  8 LFO Target        8 -> osc[5] = 8
  9 LFO1 Shape        0 -> osc[11] = 0
  9 LFO1 Shape        2 -> osc[11] = 2
- 9 LFO1 Shape        4 -> osc[11] = 4
+ 9 LFO1 Shape        5 -> osc[11] = 5
 10 LFO1 Rate         0 -> wrapper
 10 LFO1 Rate        50 -> wrapper
 10 LFO1 Rate       100 -> wrapper
@@ -135,7 +135,7 @@
 13 LFO2 Target       6 -> osc[10] = 6
 14 LFO2 Shape        0 -> osc[12] = 0
 14 LFO2 Shape        2 -> osc[12] = 2
-14 LFO2 Shape        4 -> osc[12] = 4
+14 LFO2 Shape        5 -> osc[12] = 5
 # Rings: 21 params
  0 Base Note         0 -> wrapper
  0 Base Note        63 -> wrapper
@@ -152,9 +152,9 @@
  4 Damping           0 -> osc[1] = 0
  4 Damping          50 -> osc[1] = 50
  4 Damping         100 -> osc[1] = 100
- 5 Chord             0 -> osc[2] = 0
- 5 Chord             6 -> osc[2] = 6
- 5 Chord            13 -> osc[2] = 13
+ 5 Chord            -1 -> osc[2] = 65535
+ 5 Chord             7 -> osc[2] = 7
+ 5 Chord            15 -> osc[2] = 15
  6 Model             0 -> osc[8] = 0
  6 Model             2 -> osc[8] = 2
  6 Model             5 -> osc[8] = 5
@@ -178,7 +178,7 @@
 12 LFO1 Target       7 -> osc[3] = 7
 13 LFO1 Shape        0 -> osc[14] = 0
 13 LFO1 Shape        2 -> osc[14] = 2
-13 LFO1 Shape        4 -> osc[14] = 4
+13 LFO1 Shape        5 -> osc[14] = 5
 14 LFO1 Rate         0 -> wrapper
 14 LFO1 Rate        50 -> wrapper
 14 LFO1 Rate       100 -> wrapper
@@ -190,7 +190,7 @@
 16 LFO2 Target       5 -> osc[15] = 5
 17 LFO2 Shape        0 -> osc[16] = 0
 17 LFO2 Shape        2 -> osc[16] = 2
-17 LFO2 Shape        4 -> osc[16] = 4
+17 LFO2 Shape        5 -> osc[16] = 5
 18 LFO2 Rate         0 -> osc[4] = 0
 18 LFO2 Rate        50 -> osc[4] = 50
 18 LFO2 Rate       100 -> osc[4] = 100

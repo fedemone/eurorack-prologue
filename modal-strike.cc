@@ -89,6 +89,14 @@ uint16_t lfo2_target_value = 0;
 static uint16_t lfo1_shape_value = 0;
 static uint16_t lfo2_shape_value = 0;
 
+/* Square, as a transfer curve: full scale with the sign of its input.  LFO1
+ * arrives as a cosine, so this is a 50% square at its rate and phase, lined
+ * up with LFO2's Square below.  Zero stays zero, so Rate 0 still means no
+ * modulation.  Same definition as macro-oscillator2.cc. */
+static inline float lfo_square(float x) {
+  return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f);
+}
+
 /* LFO waveshape transfer function for LFO1 (shape LFO modulation). */
 static inline float apply_lfo1_shape(float x) {
   switch (lfo1_shape_value) {
@@ -102,6 +110,7 @@ static inline float apply_lfo1_shape(float x) {
               if (x < 0.f) { float s = 1.0f + x; return -(1.0f - s * s); }
               return 0.f; }
     case 4: return clipminusone_plusonef(x * (1.5f - 0.5f * x * x));
+    case 5: return lfo_square(x);
   }
 }
 
@@ -296,6 +305,9 @@ void OSC_CYCLE(const user_osc_param_t *const params, int32_t *yn, const uint32_t
         case 4: raw_lfo = cos_val * (1.5f - 0.5f * cos_val * cos_val);
                 raw_lfo = (raw_lfo > 1.0f) ? 1.0f : ((raw_lfo < -1.0f) ? -1.0f : raw_lfo);
                 break;
+        case 5: /* Square: the cosine's sign */
+                raw_lfo = (lfo2_phase < 0.25f || lfo2_phase >= 0.75f) ? 1.0f : -1.0f;
+                break;
       }
       lfo2 = raw_lfo * depth;
     }
@@ -489,10 +501,10 @@ void OSC_PARAM(uint16_t index, uint16_t value)
   case 10: /* LFO2 Target (enum) */
     lfo2_target_value = value;
     break;
-  case 11: /* LFO1 Shape (0-4) */
+  case 11: /* LFO1 Shape (0-5) */
     lfo1_shape_value = value;
     break;
-  case 12: /* LFO2 Shape (0-4) */
+  case 12: /* LFO2 Shape (0-5) */
     lfo2_shape_value = value;
     break;
 #endif

@@ -37,7 +37,7 @@ $(OSCILLATORS):
 	@rm -fR .dep ./build
 	@PLATFORM=drumlogue VERSION=$(VERSION) $(MAKE) -f $@ all
 
-.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola test-mussola-words bench
+.PHONY: $(TOPTARGETS) $(OSCILLATORS) drumlogue test test-sound test-all test-elements test-rings test-rings-transitions test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-engine-opt test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-clouds-fx-preset test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-mussola test-mussola-words bench
 
 SDK_COMMON  := logue-sdk/platform/drumlogue/common
 ARM_CC      ?= arm-linux-gnueabihf-gcc
@@ -721,7 +721,7 @@ test-clouds-fft:
 	 $(QEMU_ARM) -L $(ARM_SYSROOT) ./test_clouds_fft_arm
 
 # Run all tests
-test-all: test test-elements test-rings test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-mussola-words test-sound test-param-routing
+test-all: test test-elements test-rings test-rings-transitions test-clouds test-clouds-sample test-clouds-cola test-clouds-fft test-clouds-pvoc-rr test-clouds-pvoc-worker test-clouds-pvoc-defer test-clouds-wsola-split test-clouds-stretch-clicks test-clouds-engine-opt test-clouds-warp test-clouds-grain-window test-clouds-synth test-clouds-fx test-clouds-fx-reconfig test-clouds-fx-worker test-clouds-src-response test-mussola test-mussola-words test-sound test-param-routing
 
 ##############################################################################
 # ARM unit tests: build the real .drmlgunit binaries and run them under QEMU
@@ -872,6 +872,30 @@ asan-unit:
 	    $(UDEFS) -I$(SDK_COMMON) $(patsubst %,-I%,$(UINCDIR)) \
 	    $(CSRC) $(CXXSRC) -o $(ASAN_DIR)/$(ASAN_UNIT).so -lm \
 	    -Wl,--version-script=drumlogue/unit_exports.map
+
+##############################################################################
+# Rings transitions: what the unit sounds like while Model, Polyphony and
+# Chord on/off are changed with a note ringing -- clicks, holes, level steps,
+# and a strike that arrives with a Model change.  Every failure it was written
+# against renders finite, in-range audio, so nothing else here could see it.
+# See test_rings_transitions.c for the measurements and the limits.
+#
+# The unit is the same host build test-asan makes, from the same config.mk,
+# just without the sanitizers (they slow the renders down and are not what
+# this is looking for).  No ARM toolchain, no QEMU.
+#
+# Usage: make test-rings-transitions
+##############################################################################
+
+RINGS_HOST_DIR := .rings_host
+
+.PHONY: test-rings-transitions
+test-rings-transitions:
+	@$(MAKE) --no-print-directory asan-unit ASAN_UNIT=rings \
+	    ASAN_DIR=$(RINGS_HOST_DIR) ASAN_FLAGS="-O2 -DTEST"
+	@$(CC) -std=gnu11 -O2 -I$(SDK_COMMON) test_rings_transitions.c \
+	    -o $(RINGS_HOST_DIR)/test_rings_transitions -ldl -lm
+	@./$(RINGS_HOST_DIR)/test_rings_transitions $(RINGS_HOST_DIR)/rings.so
 
 # Benchmark: per-render cost distribution for the shipped .drmlgunit binaries,
 # measured through the drumlogue ABI at the buffer size the firmware asks for.

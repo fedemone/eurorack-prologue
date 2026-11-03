@@ -181,12 +181,12 @@ In the Multi-engine menu you can find additional parameters for the oscillators.
 | 3 | Param 1 | Engine-specific parameter, bipolar (0-100%, center=50) |
 | 4 | Param 2 | Engine-specific parameter (0-100%) |
 | 5 | LFO Target | Which parameter the shape LFO modulates |
-| 6 | LFO1 Shape | Waveform of the shape LFO |
+| 6 | LFO1 Shape | Waveform of the shape LFO: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square |
 | 7 | LFO1 Rate | Shape LFO speed (0-100%) |
 | 8 | LFO2 Rate | Second LFO speed (0-100%) |
 | 9 | LFO2 Depth | Second LFO amount (0-100%) |
 | 10 | LFO2 Target | Which parameter LFO2 modulates |
-| 11 | LFO2 Shape | Waveform of LFO2 |
+| 11 | LFO2 Shape | Waveform of LFO2 (same six shapes) |
 | 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
 | 13 | LFO1 Depth | Shape LFO amount (0-100%, default 100%) |
 | 14 | Pitch Range | Semitones of pitch modulation at full LFO swing (0-24, default 1) |
@@ -233,6 +233,17 @@ Both are appended after `Gate Mode` rather than slotted in beside the other
 LFO controls, because these units are in released binaries and renumbering
 would repoint every saved project's knobs.
 
+`Square` is the sixth shape on both LFOs, here and on the Elements and Rings
+ports (Mussola has had one all along). It is full scale one way and then the
+other, 50% duty: aimed at `Pitch` it is a trill between two notes `Pitch Range`
+apart, aimed at a timbre control it flips between two settings. It is the sign
+of the cosine, so LFO1's and LFO2's squares line up at the same rate and phase,
+and like every other shape it sends nothing while its LFO's Rate is 0. Appended
+after `Fat Sine` for the same reason as above: a saved project's shape keeps
+its number. `make test-sound` checks it against the real Plaits engine — the
+pitch has to sit on two levels two octaves apart with nothing in between,
+where Triangle spends its time between them.
+
 For more information please read the excellent [Mutable Instruments Plaits documentation](https://mutable-instruments.net/modules/plaits/manual/).
 
 ### Plaits Tips
@@ -278,12 +289,12 @@ Modal Resonator (based on Elements)
 | 6 | Damping | How quickly resonances decay (0-100%) |
 | 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
 | 8 | LFO Target | Which parameter the shape LFO modulates |
-| 9 | LFO1 Shape | Waveform of the shape LFO |
+| 9 | LFO1 Shape | Waveform of the shape LFO: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square |
 | 10 | LFO1 Rate | Shape LFO speed (0-100%) |
 | 11 | LFO2 Rate | Second LFO speed (0-100%) |
 | 12 | LFO2 Depth | Second LFO amount (0-100%) |
 | 13 | LFO2 Target | Which parameter LFO2 modulates |
-| 14 | LFO2 Shape | Waveform of LFO2 |
+| 14 | LFO2 Shape | Waveform of LFO2 (same six shapes) |
 
 **Elements LFO Target values:** 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
 
@@ -351,7 +362,7 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
 | 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
 | 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for the Sympathetic Quantized model (0-13, see below) |
+| 5 | Chord | `Off` (default) or one of 16 chords, played on every model — see below |
 | 6 | Model | Resonator type (0-5, see table above; default 4 = Sympathetic Quantized) |
 | 7 | Polyphony | Number of voices (1-4) |
 | 8 | Arp | Arpeggiator pattern: Off, Up, Down, Up-Dn, Dn-Up, Up-P-Dn, Up-Dn-P, Dn-P-Up, Dn-Up-P |
@@ -359,7 +370,7 @@ Based on Mutable Instruments **Rings**, a resonator module with six distinct mod
 | 10 | Arp Rate | Tempo-synced step length: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 |
 | 11 | Arp Oct | Octave span of the sequence (1-4) |
 | 12 | LFO1 Target | What LFO1 modulates: Position, Struct., Bright., Damping, Note, Chord, LFO2 Frq, LFO2 Dep |
-| 13 | LFO1 Shape | Transfer curve: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine |
+| 13 | LFO1 Shape | Transfer curve: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square |
 | 14 | LFO1 Rate | 0-100% (0 = LFO1 off) |
 | 15 | LFO1 Depth | 0-100% (default 100%) |
 | 16 | LFO2 Target | As LFO1 Target, minus the two LFO2 entries — LFO2 cannot modulate itself |
@@ -387,28 +398,67 @@ engine:
   it selects a table of string tunings rather than naming a quantity. Slow, it
   is a chord sequencer; fast, it is closer to a broken arpeggio. It clamps
   rather than wraps, so `Chord` itself decides where in the list the sweep sits
-  — put it mid-list for a symmetric one.
+  — put it mid-list for a symmetric one. It never reaches `Off`, and does
+  nothing while `Chord` is `Off`: turning a chord on or off reconfigures the
+  engine (see below), which is not something to do at LFO rate.
 
-**Chords:** the first eleven — `Oct`, `5th`, `sus4`, `min`, `min7`, `min9`, `min11`,
-`69`, `Maj9`, `Maj7`, `Maj` — are Rings' own. Three more are added here, chosen for
-things a resonator can do that a keyboard cannot:
+**Chords:** `Chord` starts at `Off`, the default, where every model plays as it does
+on the module: one note per strike, and Sympathetic Quantized tunes its sympathetic
+strings from Structure, exactly like Sympathetic String. After `Off` come sixteen
+chords. The first eleven — `Oct`, `5th`, `sus4`, `min`, `min7`, `min9`, `min11`, `69`,
+`Maj9`, `Maj7`, `Maj` — are Rings' own. Five more are added here, chosen for things a
+resonator can do that a keyboard cannot, or that hardly any chord list has:
 
 | | | |
 |---|---|---|
 | 11 | `4ths` | Stacked perfect fourths. No third at all, so it is neither major nor minor — open and unresolved. Not the same as `sus4`, which is a triad with the third moved; this is fourths all the way up. |
 | 12 | `Just7` | A just-intoned dominant seventh — harmonics 4:5:6:7 of the root. The seventh is 31 cents flat of the tempered one, so instead of beating against the root it locks into its overtone series and the chord fuses into a single tone. |
 | 13 | `Slendro` | The Javanese gamelan pentatonic, as five equal steps to the octave. Every interval is foreign to equal temperament; struck and left to ring it is recognisably gong-like. |
+| 14 | `Hirajo` | Hirajōshi, the Japanese pentatonic a koto is tuned to: 0-2-3-7-8. Two semitone pairs, so on sympathetic strings the neighbours beat against each other; the arpeggiator walks all five tones as the scale it is. |
+| 15 | `Mystic` | Scriabin's "Prometheus" chord, C F♯ B♭ E A D. Built in fourths like `4ths`, but a tritone, a diminished and an augmented fourth among them, so it is whole-tone coloured and never resolves. The arpeggiator walks it as the Prometheus scale it comes from (0 2 4 6 9 10). |
 
-The last two are microtonal, which is why they are worth having on *this* engine
-specifically: each string is tuned independently and rings sympathetically, so
+`Just7` and `Slendro` are microtonal, which is why they are worth having on *this*
+engine specifically: each string is tuned independently and rings sympathetically, so
 intervals that merely sound out of tune on a piano audibly lock or beat here. The
 arpeggiator walks the same intervals, fractions included.
+
+`Off` sits *below* the first chord (it is −1), not in front of it, so the chords keep
+the numbers they had: a project saved with an earlier build recalls the same chord.
+Its default was `Oct`, so such a project still plays `Oct`; a new one starts at `Off`.
+
+**Chords on every model:** with a chord selected, Sympathetic Quantized rings it on its
+sympathetic strings, as it always has. Every other model — Modal, Sympathetic String,
+String, FM and String + Reverb — now plays it too, as a *struck* chord: each strike
+hits a group of voices at once, one per chord tone, each its own resonator, string or
+FM voice. The voices come out of the ones Polyphony leaves spare, the same budget Rings
+already splits between voices:
+
+| Polyphony | Struck chord |
+|---|---|
+| 1 | four chord tones per strike |
+| 2 | two per strike — the root and the chord's defining interval (min7's seventh, Just7's septimal seventh, Mystic's tritone…) — and two strikes ring at once |
+| 3, 4 | none: every voice already carries a note of its own, so the chord has nothing to play on |
+
+Never more than four voices are rendered, so a chord costs what the same model at
+Polyphony 4 already costs. Chords of fewer than four tones double one at the octave,
+and the five-tone chords — the ninths, the eleventh and 6/9 — leave out the fifth to
+fit in four voices, as a pianist would. A struck chord is
+voiced close (four voices cannot spread two octaves and stay a chord), which is why it
+sounds different from the same chord on Sympathetic Quantized. Each voice is scaled by
+the group size to the −¼, so a chord is a little louder than one of its notes but not
+four times as loud; on Sympathetic String it comes out quieter, because each voice of a
+struck chord has one sympathetic string instead of seven. Changing the chord retunes
+what is ringing, as it does Sympathetic Quantized's strings, and turning a chord on or
+off is bridged like a Model change. With the arpeggiator running every step strikes the
+whole chord: `Arp Src = Octaves` walks it up and down in octaves, `Arp Src = Chord`
+planes it along its own tones.
 
 **Arpeggiator:** Rings sounds one held note at a time, so the built-in arpeggiator
 builds a sequence of pitches and re-strums the resonator step-by-step, synced to the
 drumlogue's tempo. The `Arp Src` knob picks what the sequence is built from — the tones
 of the currently-selected `Chord` (so the Chord knob is musically useful on *every*
-model, not just Sympathetic Quantized) or plain octaves of the root. `Arp Oct` spreads
+model, not just Sympathetic Quantized) or plain octaves of the root; with `Chord` at
+`Off` the root is the only chord tone, so the two sources play the same. `Arp Oct` spreads
 the sequence across up to four octaves. The `-P-` patterns insert a silent rest step,
 letting the resonance ring through the gap. Set `Arp` to `Off` for normal single-note
 playing. (Tempo comes from the host clock; if a platform never reports a tempo the arp
@@ -422,16 +472,43 @@ as reverb. In Sympathetic String the strings that are not struck keep ringing at
 previous pitch, so the steps sit inside a sustained chord; that is the model, not the
 arp — shorten Damping to hear the steps more clearly.
 
-**Changing Model or Polyphony:** these no longer stop the sound. Between the four string
-models (Sympathetic, String, Sympathetic Quantized, String + Reverb) and for any
-polyphony change outside the Modal model, the strings that are ringing keep ringing and
-move to their new tuning; String + Reverb's reverb rings out for up to four seconds when
-you leave it for String (into the other models it fades quickly instead: letting it ring
-there would cost more CPU than any setting of the unit otherwise does). A change between the Modal, string and FM engines
-(or a Modal polyphony change), which has to start the new engine from silence, leaves
-the old sound behind as a short tail that dies away under the new one — faster at low
-Damping, slower at high. Every change made while something sounds is crossfaded over a
-few milliseconds, so sweeping the Model knob through all six models plays continuously.
+**Changing Model, Polyphony or Chord on/off:** these do not stop the sound, and are
+meant not to be heard as anything but the change itself. Between the four string models
+(Sympathetic, String, Sympathetic Quantized, String + Reverb) and for any polyphony
+change outside the Modal model, the strings that are ringing keep ringing and move to
+their new tuning — unless that would drag a ringing string more than two semitones,
+which comes out as a chirp; such a string is cleared instead and its sound is covered as
+below. String + Reverb's reverb rings out for up to four seconds when you leave it for
+String (into the other models it fades quickly instead: letting it ring there would cost
+more CPU than any setting of the unit otherwise does), and coming into String + Reverb
+its reverb is let in over 30 ms rather than switched on. A change between the Modal,
+string and FM engines (or a Modal polyphony change) has to start the new engine from
+silence.
+
+Every change made while something sounds is bridged: the last 85 ms of output are
+frozen, the old configuration is crossfaded into that over 2 ms, the change is made,
+and the new configuration is handed back over 24 ms, with the frozen tail making up
+whatever the new configuration does not carry on — the voices a lower polyphony
+drops, the sympathetic strings String does not have, or the whole sound when the engine
+starts from silence — and dying away under it (faster at low Damping, slower at high).
+The tail is played as a granular freeze whose grains are placed in phase with each
+other and with the sound they continue, so a sustained note continues as a note. When
+the new configuration is louder than the old, it is brought in at the old level and
+rises to its own over about a third of a second instead of stepping up. A note that
+arrives together with a change — which is what motion-sequencing `Model` does — is held
+for the 2 ms until the change is in, and then struck on the new configuration.
+
+`make test-rings-transitions` measures all of this on the real unit: every Model change
+at Polyphony 1, polyphony changes up and down on every model, Chord on and off, the
+Model knob swept, and a Model change riding on a note-on. Against the build before it:
+
+| Change, note ringing | Before | Now |
+|---|---|---|
+| Polyphony 4 → 1, String or FM | silence (the ringing voices were dropped) | continues, dip −5 dB |
+| Sympathetic String → String | note falls 34 dB | continues, dip −5 dB |
+| Polyphony 4 → 1, Sympathetic Quantized | click, 23× the programme | 3.2× (programme is 2–4) |
+| Model knob swept, a step every 30 ms | 12–16 dB hole at every step | dips of 2–4 dB |
+| Modal → FM with a note-on in the same step | note lost, −42 dB | struck at full level |
 
 **Changing the note:** a new note reaches what is sounding only with a strike. Turning
 (or motion-sequencing) Base Note between steps, a note-on that arrives while the previous
@@ -460,16 +537,18 @@ at all at the default Position of 50%, only the reverb's stereo difference, abou
 down on the other models. `out - aux` is the dry string plus the full reverb.
 
 **Sound design tips:**
-- The default model is 4 (Sympathetic Quantized) so the Chord parameter works right away — sweep Chord for different strummed voicings
+- The default is Model 4 (Sympathetic Quantized) with Chord `Off`, which plays like Sympathetic String — turn `Chord` to ring a chord on the sympathetic strings, or switch model to strike it
 - `Just7` and `Slendro` show their character best with Damping high and Polyphony 1: the strings need time to ring before the tuning is audible as tuning rather than as a chord shape
 - Point an LFO at `Chord` with a slow rate and a high `Damping` to get a chord sequence that overlaps itself — each change retunes the strings while the previous chord is still ringing
 - `Note Range` is what decides whether `Note` is an effect or a gesture: 1-3 semitones is vibrato, 12 turns a slow LFO into an octave sweep, and 7 with a Ramp shape steps the whole arpeggio up a fifth and drops it back
 - Turn on the `Arp` with `Arp Src = Chord` for instant tempo-synced strum patterns; try `Arp Oct = 2-3` for wider runs
-- Sweep `Model` while a chord rings: the string models hand the ringing strings to one another, and a jump to Modal or FM leaves a short frozen tail behind
+- Sweep `Model` while a chord rings: the string models hand the ringing strings to one another, and a jump to Modal or FM leaves the old sound dying away under the new one
+- At Polyphony 1, pick a chord and switch between Modal, String and FM: the same chord struck as a bell, a plucked string and an electric piano
+- Polyphony 2 with a chord gives dyads that overlap — `Just7` there is a root and a septimal seventh, which on Modal is very nearly a gamelan gong
 - Switch to Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
 - Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord only affects Model 4 (Sympathetic Quantized) *as a resonator voicing*; the arpeggiator, however, uses the Chord selection on any model to build its note sequence
+- A chord plays on every model at Polyphony 1 and 2 (struck), and on Sympathetic Quantized at any polyphony (on its sympathetic strings); the arpeggiator uses the Chord selection on any model to build its note sequence
 
 For more information please read the excellent [Mutable Instruments Rings documentation](https://mutable-instruments.net/modules/rings/manual/).
 
@@ -943,6 +1022,10 @@ make test-clouds-engine-opt     # eurorack-opt/ fork vs the stock submodule
 make test-clouds-grain-window   # grain envelope, fork vs stock, plus an ASan
                                 # run over the endpoint that used to read one
                                 # element past lut_window
+make test-rings-transitions     # Rings changed while a note rings -- Model,
+                                # Polyphony, Chord on/off, the Model knob swept,
+                                # a Model change riding on a note-on: clicks,
+                                # holes, level steps, lost strikes
 make test-param-routing         # where every panel knob goes, for every unit,
                                 # against docs/param_routing.txt
 make test-clouds-warp           # Spectral with the identity-warp skip on and

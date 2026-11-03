@@ -1075,10 +1075,24 @@ TEST(rings_param_damping) {
 
 TEST(rings_param_chord) {
   init_unit();
-  /* Chord: id 5, 0-10 -> id3 */
+  /* Chord: id 5, -1 (Off) .. 15 -> id3 */
   unit_set_param_value(5, 7);
   ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
   ASSERT_EQ(7, g_mock.last_param_value);
+  /* Off is -1, and reaches the oscillator as the uint16 two's complement
+   * rings-resonator.cc reads back as a negative chord. */
+  unit_set_param_value(5, -1);
+  ASSERT_EQ(k_user_osc_param_id3, g_mock.last_param_index);
+  ASSERT_EQ(0xFFFF, g_mock.last_param_value);
+  ASSERT_EQ(-1, unit_get_param_value(5));
+  /* Off is the default, and sits below the first chord rather than in front
+   * of it, so the chords keep the numbers saved projects recorded. */
+  ASSERT_EQ(-1, unit_header.params[5].min);
+  ASSERT_EQ(-1, unit_header.params[5].init);
+  ASSERT_EQ(15, unit_header.params[5].max);
+  /* Below Off is clamped to Off, not wrapped into a chord. */
+  unit_set_param_value(5, -7);
+  ASSERT_EQ(-1, unit_get_param_value(5));
   teardown_unit();
 }
 
@@ -1188,6 +1202,13 @@ TEST(rings_param_lfo_str_values) {
   ASSERT_TRUE(unit_get_param_str_value(16, 6) == nullptr);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 0), "Cosine"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 4), "Fat Sine"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(13, 5), "Square"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(17, 5), "Square"));
+  ASSERT_TRUE(unit_get_param_str_value(13, 6) == nullptr);
+  for (int32_t v = unit_header.params[13].min; v <= unit_header.params[13].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(13, v) != nullptr);
+  for (int32_t v = unit_header.params[17].min; v <= unit_header.params[17].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(17, v) != nullptr);
   /* Both target lists must agree with what the header says is selectable. */
   for (int32_t v = unit_header.params[12].min; v <= unit_header.params[12].max; ++v)
     ASSERT_TRUE(unit_get_param_str_value(12, v) != nullptr);
@@ -1941,13 +1962,17 @@ TEST(param_str_value_lfo_shape_strings) {
   ASSERT_TRUE(unit_get_param_str_value(1, 50) == nullptr);
 #elif defined(RINGS_RESONATOR)
   /* Rings: Chord at id 5, Model at id 6, Polyphony at id 7 */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, -1), "Off"));
+  ASSERT_TRUE(unit_get_param_str_value(5, -2) == nullptr); /* out of range */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Oct"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 10), "Maj"));
-  /* 11-13 are this port's additions; 13 is the last, so 14 is out of range. */
+  /* 11-15 are this port's additions; 15 is the last, so 16 is out of range. */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 11), "4ths"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 12), "Just7"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 13), "Slendro"));
-  ASSERT_TRUE(unit_get_param_str_value(5, 14) == nullptr); /* out of range */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 14), "Hirajo"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 15), "Mystic"));
+  ASSERT_TRUE(unit_get_param_str_value(5, 16) == nullptr); /* out of range */
   /* Every name the Chord parameter can select must exist: a declared max
    * beyond the name table shows on the panel as a blank entry. */
   for (int32_t c = unit_header.params[5].min; c <= unit_header.params[5].max; ++c)
@@ -2007,7 +2032,17 @@ TEST(param_str_value_lfo_shape_strings) {
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 0), "Cosine"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 1), "Triangle"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 4), "Fat Sine"));
-  ASSERT_TRUE(unit_get_param_str_value(9, 5) == nullptr); /* out of range */
+  /* Square is appended, so the shapes saved projects use keep their numbers */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(9, 5), "Square"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(14, 5), "Square"));
+  ASSERT_TRUE(unit_get_param_str_value(9, 6) == nullptr); /* out of range */
+  /* The header's range and the name table have to agree, both LFOs. */
+  for (int32_t v = unit_header.params[9].min; v <= unit_header.params[9].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(9, v) != nullptr);
+  for (int32_t v = unit_header.params[14].min; v <= unit_header.params[14].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(14, v) != nullptr);
+  ASSERT_EQ(5, unit_header.params[9].max);
+  ASSERT_EQ(5, unit_header.params[14].max);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(14, 2), "Ramp Up"));
   /* LFO Target strings */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(8, 0), "Position"));
@@ -2021,7 +2056,17 @@ TEST(param_str_value_lfo_shape_strings) {
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 1), "Triangle"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 3), "Ramp Down"));
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 4), "Fat Sine"));
-  ASSERT_TRUE(unit_get_param_str_value(6, 5) == nullptr); /* out of range */
+  /* Square is appended, so the shapes saved projects use keep their numbers */
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(6, 5), "Square"));
+  ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 5), "Square"));
+  ASSERT_TRUE(unit_get_param_str_value(6, 6) == nullptr); /* out of range */
+  /* The header's range and the name table have to agree, both LFOs. */
+  for (int32_t v = unit_header.params[6].min; v <= unit_header.params[6].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(6, v) != nullptr);
+  for (int32_t v = unit_header.params[11].min; v <= unit_header.params[11].max; ++v)
+    ASSERT_TRUE(unit_get_param_str_value(11, v) != nullptr);
+  ASSERT_EQ(5, unit_header.params[6].max);
+  ASSERT_EQ(5, unit_header.params[11].max);
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(11, 2), "Ramp Up"));
   /* LFO Target strings */
   ASSERT_EQ(0, strcmp(unit_get_param_str_value(5, 0), "Shape"));
