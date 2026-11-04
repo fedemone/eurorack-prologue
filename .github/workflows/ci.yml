@@ -131,7 +131,7 @@ jobs:
       # The units are cross-compiled once and dlopen'd in whatever order the
       # command line gives, so the second run costs QEMU time and nothing else.
       - name: make test-arm
-        run: make test-arm ARM_UNITS="clouds clouds_fx mo2_va rings mussola modal_strike"
+        run: make test-arm ARM_UNITS="clouds clouds_fx mo2_va mo2_fm mo2_string rings mussola modal_strike"
 
       - name: make test-arm, units loaded in the opposite order
-        run: make test-arm ARM_UNITS="modal_strike mussola rings mo2_va clouds_fx clouds"
+        run: make test-arm ARM_UNITS="modal_strike mussola rings mo2_string mo2_fm mo2_va clouds_fx clouds"

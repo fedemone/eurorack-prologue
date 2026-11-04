@@ -147,8 +147,16 @@ void update_parameters() {
 #include "plaits/dsp/engine/fm_engine.h"
 plaits::FMEngine engine;
 float out_gain = 0.6f, aux_gain = 0.6f;
+/* FMEngine reads its ratio with Interpolate(lut_fm_frequency_quantizer,
+ * harmonics, 128), which touches the element after floor(harmonics * 128):
+ * at harmonics 1.0 -- ShiftShape at 100%, or an LFO pushing it there -- that
+ * is one past the end of the table.  Found by test-asan once FM was added to
+ * its sweep; on ARM the read lands in the next table and goes unnoticed.
+ * Same fix as kLutSafeMax in rings-resonator.cc: stay a hair below 1. */
+static const float kFmHarmonicsMax = 1.0f - 1.0f / 1024.0f;
 void update_parameters() {
-  parameters.harmonics = get_shift_shape();
+  const float harmonics = get_shift_shape();
+  parameters.harmonics = harmonics > kFmHarmonicsMax ? kFmHarmonicsMax : harmonics;
   parameters.timbre = get_shape();
   parameters.morph = get_param_id1();
   mix = get_param_id2();

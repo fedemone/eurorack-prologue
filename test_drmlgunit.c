@@ -680,6 +680,61 @@ static void reinit_unit(unit_t *u) {
   if (u->resume) u->resume();
 }
 
+/* ---- the declared defaults make a sound ---------------------------------
+ *
+ * A unit loaded fresh on the drumlogue starts at the defaults its header
+ * declares, and the first thing anyone does is hit the pad.  The String unit
+ * shipped with Shape and Shift-Shape at 0 -- a fully muted, fully dark string
+ * -- and on hardware that was reported as no sound at all: measured, the
+ * pitched part of the pluck was gone inside 100 ms, leaving a 10 Hz thump.
+ * Every other check here passed it, because what it produced was finite and
+ * in range.  So: defaults, one gate, and the loudest 100 ms of the output
+ * above 100 Hz, within the first second, has to reach -40 dBFS.  The
+ * one-pole high-pass is what keeps the thump from counting: the old String
+ * defaults peaked at -45.7, the quietest unit that does sound (Mussola) is
+ * near -30.  A second rather than less because Clouds defaults to fully wet
+ * and plays nothing until its grains reach recorded material, about 0.5 s at
+ * the default Position -- slow, but a sound.
+ * ---------------------------------------------------------------------- */
+
+static void probe_defaults_audible(unit_t *u) {
+  static float in[FRAMES * 2];
+  static float out[FRAMES * 2];
+  if (!u->is_synth || !(u->gateon || u->noteon)) return;
+  reinit_unit(u);
+  memset(in, 0, sizeof(in));
+  for (int b = 0; b < 10; ++b) u->render(in, out, FRAMES); /* reset lands */
+  if (u->gateon) u->gateon(100); else u->noteon(60, 100);
+  const float a = expf(-2.0f * 3.14159265f * 100.0f / 48000.0f);
+  float x1 = 0.0f, y = 0.0f;
+  double sum = 0.0, loudest = 0.0;
+  const int window = 4800 / FRAMES;               /* 100 ms, in blocks */
+  for (int b = 0; b < 10 * window; ++b) {
+    fill_input(in, b * FRAMES);   /* the FX unit needs something to process */
+    u->render(in, out, FRAMES);
+    for (int i = 0; i < FRAMES; ++i) {
+      const float x = 0.5f * (out[i * 2] + out[i * 2 + 1]);
+      y = a * (y + x - x1);
+      x1 = x;
+      sum += (double)y * y;
+    }
+    if ((b + 1) % window == 0) {
+      const double ms = sum / (window * FRAMES);
+      if (ms > loudest) loudest = ms;
+      sum = 0.0;
+    }
+  }
+  if (u->gateoff) u->gateoff();
+  const double db = 10.0 * log10(loudest + 1e-20);
+  CHECK(db > -40.0, "%s: audible at its defaults (loudest 100 ms above "
+        "100 Hz: %.1f dBFS)", u->hdr->name, db);
+  reinit_unit(u);
+  /* reinit_unit() latches a reset that lands on the next render and clears
+   * the gate; let it land here, so the next probe's note-on is not eaten. */
+  memset(in, 0, sizeof(in));
+  for (int b = 0; b < 4; ++b) u->render(in, out, FRAMES);
+}
+
 static void probe_chords(unit_t *u) {
   int chord_id = -1, model_id = -1;
   for (uint32_t p = 0; p < u->hdr->num_params; ++p) {
@@ -1189,6 +1244,9 @@ int main(int argc, char **argv) {
 
   printf("\n=== Rendering ===\n");
   for (int i = 0; i < s_num_units; ++i) exercise_unit(&s_units[i]);
+
+  printf("\n=== Audible at the declared defaults ===\n");
+  for (int i = 0; i < s_num_units; ++i) probe_defaults_audible(&s_units[i]);
 
   printf("\n=== Density / grain scheduling ===\n");
   for (int i = 0; i < s_num_units; ++i) probe_density(&s_units[i]);

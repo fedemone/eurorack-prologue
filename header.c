@@ -317,6 +317,18 @@ const unit_param_route_t unit_param_routes[] = {
  * same flags as every other source of the unit, so this says which one the
  * objects were built with.  `used` keeps it through LTO and strip.
  */
+/* Default Shape for the shared Plaits panel.  0 everywhere except FM, where
+ * Shape is the modulation index: at 0 the FM engine is a plain sine, so
+ * ShiftShape (the frequency ratio) and Param 1 (feedback) have nothing to act
+ * on, and an LFO aimed at either does nothing audible -- reported from
+ * hardware as "FM is not affected by LFO2".  At 50 every destination is
+ * heard.  Only the default moves; a saved project keeps its value. */
+#if defined(OSC_FM)
+#define PLAITS_SHAPE_INIT 50
+#else
+#define PLAITS_SHAPE_INIT 0
+#endif
+
 #if defined(__OPTIMIZE_SIZE__)
 #define UNIT_BUILD_OPT "-Os (size: rebuild clean for -O3)"
 #elif defined(__OPTIMIZE__)
@@ -761,10 +773,17 @@ const __unit_header unit_header_t unit_header = {
         // Page 1
         /* id 0: Base Note (MIDI note for gate trigger) */
         {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
-        /* id 1: Shape (morph) */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
-        /* id 2: Shift-Shape (timbre / exciter) */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"ShiftShape"}},
+        /* id 1: Shape (morph: the string's decay) and
+         * id 2: Shift-Shape (timbre: brightness of the excitation).
+         *
+         * Both used to default to 0, which is a fully muted, fully dark
+         * string: measured, the C4 pluck was gone inside 100 ms and what was
+         * left was a 10 Hz thump -- on the drumlogue, no sound at all, which
+         * is how it was reported.  60 / 50 is a clearly pitched pluck that
+         * rings for about a second.  Only the defaults move; a saved project
+         * keeps its own values. */
+        {0, 100, 0, 60, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
+        {0, 100, 0, 50, k_unit_param_type_percent, 0, 0, 0, {"ShiftShape"}},
         /* id 3: Harmonics (string structure / inharmonicity) */
         {0, 100, 50, 50, k_unit_param_type_percent, 0, 0, 0, {"Harmonics"}},
 
@@ -822,7 +841,7 @@ const __unit_header unit_header_t unit_header = {
         /* id 0: Base Note (MIDI note for gate trigger) */
         {0, 127, 60, 60, k_unit_param_type_midi_note, 0, 0, 0, {"Base Note"}},
         /* id 1: Shape */
-        {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
+        {0, 100, 0, PLAITS_SHAPE_INIT, k_unit_param_type_percent, 0, 0, 0, {"Shape"}},
         /* id 2: Shift-Shape */
         {0, 100, 0, 0, k_unit_param_type_percent, 0, 0, 0, {"ShiftShape"}},
         /* id 3: Param 1 (bipolar) */

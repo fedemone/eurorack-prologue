@@ -798,7 +798,7 @@ test-arm:
 # Usage: make test-asan [ASAN_UNITS="rings modal_strike"]
 ##############################################################################
 
-ASAN_UNITS ?= mo2_va rings mussola modal_strike clouds clouds_fx
+ASAN_UNITS ?= mo2_va mo2_fm mo2_string rings mussola modal_strike elements_full clouds clouds_fx
 ASAN_DIR   := .asan
 
 # -DTEST is stmlib's own switch for its portable fallbacks: without it,
