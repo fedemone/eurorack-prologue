@@ -51,6 +51,7 @@ test_clouds_grain_window_fork
 test_clouds_grain_window_asan
 .grain_window_*.txt
 .wsola_*.txt
+.pvoc_rr_*.txt
 .asan/
 .rings_host/
 .param_routing_bin

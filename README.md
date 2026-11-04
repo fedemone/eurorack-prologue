@@ -250,6 +250,22 @@ For more information please read the excellent [Mutable Instruments Plaits docum
 
 Many parameters 'neutral' settings are in center position, such as `va` Detune or `fm` Feedback, however the prologue defaults all parameters to the lowest value, hence get used to going into the menus and set the first parameter to 50% when instantiating the oscillator.
 
+**Defaults on drumlogue.** Two units start somewhere other than Shape 0 / Shift-shape 0,
+because that is where they make no usable sound:
+
+- **String** starts at Shape 60 / Shift-shape 50. Shape is the string's decay and
+  Shift-shape its brightness; at 0 / 0 the pluck was gone inside 100 ms and what was left
+  was a 10 Hz thump, which on the drumlogue is no sound at all.
+- **FM** starts at Shape 50. Shape is the modulation index, and at 0 the engine is a plain
+  sine, so Shift-shape (the ratio), Param 1 (feedback) and any LFO aimed at them do
+  nothing you can hear. It also explains half an LFO on Shape going missing at Shape 0:
+  modulation is added to the knob and clipped at its ends, so a bipolar LFO on a knob at
+  0 only acts for the half of its cycle that goes up.
+
+Only the defaults moved: a saved project keeps its own values, so an older project with
+String at 0 / 0 is still silent until those two knobs are turned up. `make test-asan`
+and `make test-arm` now check that every synth unit is audible at its declared defaults.
+
 Modal Resonator (based on Elements)
 ----
 *Physical modeling synthesis*
