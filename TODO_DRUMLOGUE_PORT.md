@@ -101,13 +101,13 @@ All tests run on the host compiler (x86) with no ARM toolchain required.
 | modal_strike | 24 | Yes | Strike exciter + modal resonator |
 | modal_strike_16_nolimit | 16 | No | Lighter variant (fewer modes) |
 | modal_strike_24_nolimit | 24 | No | Full modes, no limiter |
-| elements_full | 64 | Yes | Full Elements DSP (64 modes, extended exciter) |
+| elements_full | 64 | Yes | 64 modes, limiter, linear Mallet curve (same Strike exciter) |
 
 ### Rings — `rings-resonator.cc`, block size 24
 
 | Unit | Models | Description |
 |------|--------|-------------|
-| rings | 6 | Modal, Sympathetic String, Karplus-Strong, FM, Quantized, String+Reverb |
+| rings | 6 | Modal, Sympathetic String, Karplus-Strong, FM, Quantized, String+Reverb; Chord Off + 16 chords on every model |
 
 ### Clouds — `clouds-granular.cc`, block size 32
 
