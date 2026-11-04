@@ -61,12 +61,12 @@ exposes one engine with full parameter control.
 | 3 | Param 1 | Engine-specific parameter, bipolar (0-100%, center=50) |
 | 4 | Param 2 | Engine-specific parameter (0-100%) |
 | 5 | LFO Target | Which parameter the shape LFO modulates |
-| 6 | LFO1 Shape | Waveform of the shape LFO |
+| 6 | LFO1 Shape | Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square |
 | 7 | LFO1 Rate | Shape LFO speed (0-100%) |
 | 8 | LFO2 Rate | Second LFO speed (0-100%) |
 | 9 | LFO2 Depth | Second LFO amount (0-100%) |
 | 10 | LFO2 Target | Which parameter LFO2 modulates |
-| 11 | LFO2 Shape | Waveform of LFO2 |
+| 11 | LFO2 Shape | Same six shapes |
 | 12 | Gate Mode | Envelope/gate behavior (Trigger/Sustain/Continuous) |
 
 **LFO Target values**: 0=Shape, 1=ShiftShape, 2=Param1, 3=Param2, 4=Pitch, 5=Amplitude, 6=LFO2Freq, 7=LFO2Depth
@@ -87,9 +87,12 @@ metallic tones.
 | Unit File | Display Name | Modes | Limiter | Character |
 |-----------|-------------|-------|---------|-----------|
 | `modal_strike.drmlgunit` | ModalStrike | 24 | Yes | Standard modal — rich resonance, safe output levels |
-| `modal_strike_16_nolimit.drmlgunit` | Strike16 | 16 | No | Lighter CPU, fewer partials, more aggressive dynamics |
-| `modal_strike_24_nolimit.drmlgunit` | Strike24 | 24 | No | Full resonance, raw dynamics (can clip) |
-| `elements_full.drmlgunit` | ElementsFull | 64 | Yes | Maximum resonance detail, extended exciter range |
+| `modal_strike_16_nolimit.drmlgunit` | Strike16 | 16 | No | Lightest CPU, fewer partials, raw dynamics |
+| `modal_strike_24_nolimit.drmlgunit` | Strike24 | 24 | No | Raw dynamics (Strength sets the level; soft-limited, not clipped) |
+| `elements_full.drmlgunit` | ElementsFull | 64 | Yes | Richest low notes, limited and loud, linear Mallet curve, 2.2× the CPU, slower retune |
+
+The four are not interchangeable — see *Choosing a variant* in README.md for the
+measured differences (level, Strength response, Mallet curve, retune time, CPU).
 
 **Parameters (15 per unit):**
 
@@ -104,20 +107,20 @@ metallic tones.
 | 6 | Damping | How quickly resonances decay (0-100%) |
 | 7 | Brightness | Resonator spectral tilt — dark to bright (0-100%) |
 | 8 | LFO Target | Which parameter the shape LFO modulates |
-| 9 | LFO1 Shape | Waveform of the shape LFO |
+| 9 | LFO1 Shape | Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square |
 | 10 | LFO1 Rate | Shape LFO speed (0-100%) |
 | 11 | LFO2 Rate | Second LFO speed (0-100%) |
 | 12 | LFO2 Depth | Second LFO amount (0-100%) |
 | 13 | LFO2 Target | Which parameter LFO2 modulates |
-| 14 | LFO2 Shape | Waveform of LFO2 |
+| 14 | LFO2 Shape | Same six shapes |
 
 **LFO Target values**: 0=Position, 1=Geometry, 2=Strength, 3=Mallet, 4=Timbre, 5=Damping, 6=Brightness, 7=LFO2Freq, 8=LFO2Depth
 
 **Sound design tips:**
 - Position + Geometry define the fundamental character — sweep slowly for evolving tones
-- Mallet at 0 = rubber mallet, at 50 = wooden stick, at 100 = granular particles
+- Mallet runs from mallet (0) to bouncing particles (100); the reduced variants compress the bottom of the knob, ElementsFull is linear
 - Low Damping + high Brightness = ringing bells; high Damping = dull thuds
-- ElementsFull with 64 modes gives the richest resonance but uses more CPU
+- ElementsFull with 64 modes gives the richest low notes, but costs 2.2× the CPU of Strike24 and follows fast note changes more slowly
 
 ### Rings (1 variant)
 
@@ -140,24 +143,23 @@ Responds to both internal excitation and external triggers.
 | 4 | Sympathetic Quantized | Strings quantized to chords — strummed harmonics |
 | 5 | String + Reverb | String with integrated reverb — ambient, ethereal |
 
-**Parameters (8):**
+**Parameters (21):** Base Note, Position, Structure, Brightness, Damping, Chord,
+Model, Polyphony, Arp, Arp Src, Arp Rate, Arp Oct, then one page per LFO (Target,
+Shape, Rate, Depth) and Note Range. README.md has the full table.
 
-| # | Name | Description |
-|---|------|-------------|
-| 0 | Base Note | MIDI note for trigger pad (0-127, default C4) |
-| 1 | Position | Excitation point along the resonator (0-100%) |
-| 2 | Structure | Frequency ratio / inharmonicity (0-100%) |
-| 3 | Brightness | Spectral tilt — dark to bright (0-100%) |
-| 4 | Damping | Resonance decay time (0-100%) |
-| 5 | Chord | Chord voicing for sympathetic models (0-10) |
-| 6 | Model | Resonator type (0-5, see table above) |
-| 7 | Polyphony | Number of voices (1-4) |
+- **Chord**: `Off` (default) or one of 16 chords — Rings' eleven plus `4ths`, `Just7`,
+  `Slendro`, `Hirajo` and `Mystic`. Sympathetic Quantized rings the chord on its
+  sympathetic strings; every other model strikes it, one voice per chord tone (four
+  tones at Polyphony 1, two at 2, none at 3-4).
+- **LFO shapes**: Cosine, Triangle, Ramp Up, Ramp Down, Fat Sine, Square.
+- **Model / Polyphony / Chord on-off changes** are bridged so a ringing note carries
+  on; `make test-rings-transitions` measures it.
 
 **Sound design tips:**
 - Start with Model 0 (Modal) and sweep Structure for metallic to harmonic
 - Model 2 (Karplus-Strong) with low Damping makes excellent plucked bass/guitar
-- Increase Polyphony for chordal playing (uses more CPU per voice)
-- Chord parameter only affects sympathetic models (1 and 4)
+- At Polyphony 1 pick a chord and switch models: the same chord as bell, string and electric piano
+- Increase Polyphony for overlapping notes (each voice gets fewer resources)
 
 ### Clouds (1 variant)
 
@@ -337,14 +339,15 @@ cd logue-sdk && docker/build_image.sh && cd ..
 ### Testing (No Docker Required)
 
 ```bash
-make test          # 61 Plaits callback tests
-make test-elements # 64 Elements callback tests
-make test-rings    # 58 Rings callback tests
-make test-clouds   # 66 Clouds callback tests
+make test          # 66 Plaits callback tests
+make test-elements # 68 Elements callback tests
+make test-rings    # 67 Rings callback tests
+make test-rings-transitions  # 91 checks: Rings Model/Polyphony/Chord changes
+make test-clouds   # 69 Clouds callback tests
 make test-clouds-sample  # 28 Clouds sample tests
-make test-mussola  # 61 Mussola callback tests
-make test-sound    # 9 sound production tests (real Plaits engine)
-make test-all      # All 347 tests
+make test-mussola  # 72 Mussola callback tests
+make test-sound    # 11 sound production tests (real Plaits engine, LFO Square)
+make test-all      # every host suite, the Clouds ones included
 make bench         # Render throughput benchmark
 ```
 

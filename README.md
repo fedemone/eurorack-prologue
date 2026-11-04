@@ -259,7 +259,44 @@ Modal Resonator (based on Elements)
 | `modal_strike` | 24 | Yes | Strike exciter + modal resonator |
 | `modal_strike_16_nolimit` | 16 | No | Lighter variant (fewer modes) |
 | `modal_strike_24_nolimit` | 24 | No | Full modes, no limiter |
-| `elements_full` | 64 | Yes | Full Elements DSP (64 modes, extended exciter range) — drumlogue only |
+| `elements_full` | 64 | Yes | 64 modes, limiter, linear Mallet curve — drumlogue only |
+
+**Choosing a variant (drumlogue).** All four run the same strike exciter and modal
+resonator behind the same 15-parameter panel, but they are not interchangeable:
+different units to a saved project, and the same settings sound different on each.
+Measured on host builds at default settings, one note:
+
+| | `modal_strike_16_nolimit` | `modal_strike_24_nolimit` | `modal_strike` | `elements_full` |
+|---|---|---|---|---|
+| Resonator modes | 16 | 24 | 24 | 64 |
+| Limiter | no | no | yes | yes |
+| Mallet curve | compressed | compressed | compressed | linear |
+| Level at defaults (C4, RMS over 1 s) | −35 dBFS | −36 dBFS | −29 dBFS | −25 dBFS |
+| Peak, Strength 100 | 0.74 | 0.78 | 0.99 | 0.97 |
+| Strength 80 → 100 | +1.9 dB | +1.7 dB | −0.7 dB (limited) | 0.0 dB (limited) |
+| Full retune after a pitch or parameter change | 11 ms | 16 ms | 16 ms | 43 ms |
+| Cost per 64-frame render (ARM, `-O3`) | 6,700 | 8,800 | 9,200 | 19,500 instructions |
+
+- **Modes** matter most on low notes: at C2 `elements_full`'s spectral centroid is
+  391 Hz against 107 Hz for `modal_strike_24_nolimit`; at C6 the two are within 7%,
+  because the extra partials would sit above Nyquist anyway.
+- **Limiter**: the two limited units boost the strike 1.5× into a limiter, so they are
+  louder and Strength stops being a level control near the top. The `nolimit` units
+  keep raw dynamics; they do not hard-clip — the output stage soft-limits — but
+  their level follows Strength and the material.
+- **Mallet curve**: every variant spans the same exciters, mallet to bouncing
+  particles. The reduced builds compress the bottom of the knob (Mallet 40% is 0.25
+  of the span) and expand the top; `elements_full` maps it linearly (40% is 0.40). The
+  sample-player exciters of the original module are not in this Elements fork for any
+  variant.
+- **Retune time**: the resonator recomputes one mode per 0.67 ms block, so more modes
+  take longer to follow a new note or fast modulation — the upper partials of
+  `elements_full` lag a fast sequence by up to 43 ms.
+
+`elements_full` is closest to `modal_strike` (same limiter), differing in mode count
+and Mallet curve. Keep `modal_strike_24_nolimit` (or `_16_`) for the lighter CPU
+load, quicker response and dynamics that follow Strength. On prologue, minilogue xd
+and NTS-1 only the three 16/24-mode variants exist.
 
 ### Elements Parameters
 
@@ -330,7 +367,7 @@ Due to compute and memory (32K!) limitations in the prologue multi-engine quite 
 
 *Sounds pretty great IMO but go buy Elements for the real experience!*
 
-The drumlogue platform has significantly more CPU and memory, so `elements_full` runs with 64 resonator modes and the full exciter range.
+The drumlogue platform has significantly more CPU and memory, so `elements_full` runs with 64 resonator modes and a linear Mallet curve; it uses the same Strike exciter as the others (see *Choosing a variant* above).
 
 Rings Resonator (based on Rings)
 ----
